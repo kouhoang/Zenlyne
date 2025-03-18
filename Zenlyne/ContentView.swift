@@ -6,19 +6,31 @@
 //
 
 import SwiftUI
+import Firebase
 
 struct ContentView: View {
+    @EnvironmentObject var viewModel: AuthViewModel
+
     var body: some View {
-        VStack {
-            Image(systemName: "globe")
-                .imageScale(.large)
-                .foregroundStyle(.tint)
-            Text("Hello, world!")
+        Group {
+            if viewModel.userSessions != nil {
+                ProfileView()
+            } else {
+                LoginViewController()
+            }
         }
-        .padding()
+        .onAppear {
+        // Thực hiện hành động khi màn hình xuất hiện
+        if viewModel.userSessions == nil {
+            print("DEBUG: User is not signed in, showing login screen")
+        }
+    }
     }
 }
 
-#Preview {
-    ContentView()
+
+struct ContentView_Previews: PreviewProvider {
+    static var previews: some View {
+        ContentView()
+    }
 }
