@@ -10,7 +10,7 @@ import SwiftUI
 struct LoginViewController: View {
     @State private var email = ""
     @State private var password = ""
-    @State private var errorMessage: String?
+    @State private var showError = false
     @EnvironmentObject var viewModel: AuthViewModel
     
     var body: some View {
@@ -48,29 +48,33 @@ struct LoginViewController: View {
                         .foregroundColor(.gray).frame(maxWidth: .infinity, alignment: .leading)
                         .padding(.leading, 16).padding(.top, 1)
                     
+                    // Error message that only shows after a failed login attempt
+                    if showError {
+                        Text("Incorrect email or password")
+                            .foregroundColor(.red)
+                            .font(.system(size: 14))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.leading, 16)
+                            .padding(.top, 4)
+                    }
+                    
                     // form fields
                     VStack(spacing: 24) {
                         InputView(text: $email, title: "Email Address", placeholder: "name@example.com").autocapitalization(.none)
                         
-                        if let errorMessage = errorMessage {Text(errorMessage)
-                                .foregroundColor(.red).font(.footnote).padding(.top, 4)}
-                        
                         InputView(text: $password, title:"Password", placeholder: "Enter your password", isSecureField: true)
                         
-                        if let errorMessage = errorMessage {Text(errorMessage).foregroundColor(.red).font(.footnote).padding(.top, 4)}
                     }
                     .padding(.horizontal).padding(.top, 12)
                     
                     // sign in button
-                    
                     Button {
                         Task {
                             do {
                                 try await viewModel.signIn(withEmail: email, password: password)
-                                errorMessage = nil
-                            }
-                            catch {
-                                errorMessage = "Invalid account or password"
+                                showError = false
+                            } catch {
+                                showError = true
                             }
                         }
                     } label: {
@@ -86,7 +90,6 @@ struct LoginViewController: View {
                     Spacer()
                     
                     // sign up button
-                    
                     NavigationLink {
                         RegistrationViewController().navigationBarBackButtonHidden(true)
                     } label: {

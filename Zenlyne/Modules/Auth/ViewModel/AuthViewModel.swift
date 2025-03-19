@@ -30,13 +30,13 @@ class AuthViewModel: ObservableObject {
     }
     
     func signIn(withEmail email: String, password: String) async throws {
-
         do {
             let result = try await Auth.auth().signIn(withEmail: email, password: password)
             self.userSessions = result.user
             await fetchUser()
         } catch {
-            print("DEBUG: Faild to login with error \(error.localizedDescription)")
+            print("DEBUG: Failed to login with error \(error.localizedDescription)")
+            throw error  // Add this line to propagate the error
         }
     }
     
