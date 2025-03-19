@@ -17,9 +17,22 @@
 		F9D135F14B326939714176B7 /* Pods_Zenlyne.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_Zenlyne.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		849E22282D8A7B47005F6E10 /* Exceptions for "Zenlyne" folder in "Zenlyne" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 848733CA2D8407D900CB6FC1 /* Zenlyne */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		848733CD2D8407D900CB6FC1 /* Zenlyne */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				849E22282D8A7B47005F6E10 /* Exceptions for "Zenlyne" folder in "Zenlyne" target */,
+			);
 			path = Zenlyne;
 			sourceTree = "<group>";
 		};
@@ -327,6 +340,7 @@
 				DEVELOPMENT_ASSET_PATHS = "\"Zenlyne/Preview Content\"";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Zenlyne/Info.plist;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
@@ -357,6 +371,7 @@
 				DEVELOPMENT_ASSET_PATHS = "\"Zenlyne/Preview Content\"";
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Zenlyne/Info.plist;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;

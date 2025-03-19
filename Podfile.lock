@@ -1456,6 +1456,14 @@ PODS:
   - gRPC-Core/Privacy (1.69.0)
   - GTMSessionFetcher/Core (4.4.0)
   - leveldb-library (1.22.6)
+  - MapboxCommon (24.10.0):
+    - Turf (= 4.0.0)
+  - MapboxCoreMaps (11.10.2):
+    - MapboxCommon (~> 24.10)
+  - MapboxMaps (11.10.1):
+    - MapboxCommon (= 24.10.0)
+    - MapboxCoreMaps (= 11.10.2)
+    - Turf (= 4.0.0)
   - nanopb (3.30910.0):
     - nanopb/decode (= 3.30910.0)
     - nanopb/encode (= 3.30910.0)
@@ -1469,6 +1477,7 @@ PODS:
   - RxRelay (6.9.0):
     - RxSwift (= 6.9.0)
   - RxSwift (6.9.0)
+  - Turf (4.0.0)
 
 DEPENDENCIES:
   - Alamofire
@@ -1479,6 +1488,7 @@ DEPENDENCIES:
   - Firebase/Functions
   - Firebase/Messaging
   - Firebase/Storage
+  - MapboxMaps
   - RxCocoa
   - RxSwift
 
@@ -1511,12 +1521,16 @@ SPEC REPOS:
     - gRPC-Core
     - GTMSessionFetcher
     - leveldb-library
+    - MapboxCommon
+    - MapboxCoreMaps
+    - MapboxMaps
     - nanopb
     - PromisesObjC
     - RecaptchaInterop
     - RxCocoa
     - RxRelay
     - RxSwift
+    - Turf
 
 SPEC CHECKSUMS:
   abseil: a05cc83bf02079535e17169a73c5be5ba47f714b
@@ -1546,13 +1560,17 @@ SPEC CHECKSUMS:
   gRPC-Core: 860978b7db482de8b4f5e10677216309b5ff6330
   GTMSessionFetcher: 75b671f9e551e4c49153d4c4f8659ef4f559b970
   leveldb-library: cc8b8f8e013647a295ad3f8cd2ddf49a6f19be19
+  MapboxCommon: 363dbed6bcdaa9a08674098fc5c661e826049dc2
+  MapboxCoreMaps: ba391b7121c52d8ab656b0efa081d928648c8c6f
+  MapboxMaps: 5ec35b1ad72822b9b66c69955e6bb0a81129d4b0
   nanopb: fad817b59e0457d11a5dfbde799381cd727c1275
   PromisesObjC: f5707f49cb48b9636751c5b2e7d227e43fba9f47
   RecaptchaInterop: 11e0b637842dfb48308d242afc3f448062325aba
   RxCocoa: ac16414696ae706516be3e1ab00fcce5bdc9be8a
   RxRelay: 6b0c930e5cef57d5fe2032571e5e65b78e3cbdb1
   RxSwift: 31649ace6aceeb422e16ff71c60804f9c3281ed9
+  Turf: c9eb11a65d96af58cac523460fd40fec5061b081
 
-PODFILE CHECKSUM: 5a7b42fd3f0648f07b35d04d62853b46a4b6236d
+PODFILE CHECKSUM: ccfb8709f4995e09515cb5c8600845768b91914a
 
 COCOAPODS: 1.16.2

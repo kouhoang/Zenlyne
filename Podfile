@@ -14,6 +14,9 @@ target 'Zenlyne' do
   pod 'Firebase/Functions'
   pod 'Firebase/Core'
 
+  # Mapbox
+  pod 'MapboxMaps'
+
   # Networking
   pod 'Alamofire'
 	
