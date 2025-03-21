@@ -6,17 +6,71 @@
 //
 
 import SwiftUI
-import MapKit
+import MapboxMaps
+import CoreLocation
 
-struct MapView: View {
-    @State private var region = MKCoordinateRegion(
-        center: CLLocationCoordinate2D(latitude: 39.5, longitude: -98.0),
-        span: MKCoordinateSpan(latitudeDelta: 50, longitudeDelta: 50)
-    )
+struct MapViewController: View {
+    @StateObject private var viewModel = LocationViewModel()
     
     var body: some View {
-        Map(coordinateRegion: $region)
-            .edgesIgnoringSafeArea(.all)
-            .navigationTitle("Map")
+        ZStack {
+            // Map View
+            MapViewRepresentable(viewModel: viewModel)
+                .ignoresSafeArea()
+            
+            // UI Controls
+            VStack {
+                HStack {
+                    // User info section
+                    VStack(alignment: .leading) {
+                        Text(User.MOCK_USER.fullName)
+                            .font(.headline)
+                        if let location = viewModel.userLocation {
+                            Text(String(format: "%.4f, %.4f", location.latitude, location.longitude))
+                                .font(.caption)
+                        } else {
+                            Text("Location: Unknown")
+                                .font(.caption)
+                        }
+                    }
+                    .padding()
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.white)
+                            .shadow(radius: 2)
+                    )
+                    
+                    Spacer()
+                }
+                .padding()
+                
+                Spacer()
+                
+                // Bottom controls
+                HStack {
+                    Spacer()
+                    
+                    LocationButton(
+                        action: {
+                            if viewModel.isTrackingLocation {
+                                viewModel.focusOnUserLocation()
+                            } else {
+                                viewModel.startTrackingLocation()
+                            }
+                        },
+                        isTracking: viewModel.isTrackingLocation
+                    )
+                }
+                .padding(.bottom, 30)
+                .padding(.trailing)
+            }
+        }
+        .onAppear {
+            viewModel.startTrackingLocation()
+        }
     }
+}
+
+#Preview {
+    MapViewController()
 }
