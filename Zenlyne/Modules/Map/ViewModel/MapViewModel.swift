@@ -11,7 +11,7 @@ import CoreLocation
 import SwiftUI
 import Combine
 
-class LocationViewModel: ObservableObject {
+public class LocationViewModel: ObservableObject {
     // Published properties for view
     @Published var userLocation: CLLocationCoordinate2D?
     @Published var cameraOptions: CameraOptions
@@ -21,7 +21,7 @@ class LocationViewModel: ObservableObject {
     // Services
     private let locationService: LocationServiceProtocol
     private let firebaseService: FirebaseServiceProtocol
-    private let currentUser: User
+    var currentUser: User
     
     // Default initialization
     init(

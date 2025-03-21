@@ -10,6 +10,7 @@ import MapboxMaps
 import CoreLocation
 
 struct MapViewController: View {
+
     @StateObject private var viewModel = LocationViewModel()
     
     var body: some View {
@@ -20,33 +21,8 @@ struct MapViewController: View {
             
             // UI Controls
             VStack {
-                HStack {
-                    // User info section
-                    VStack(alignment: .leading) {
-                        Text(User.MOCK_USER.fullName)
-                            .font(.headline)
-                        if let location = viewModel.userLocation {
-                            Text(String(format: "%.4f, %.4f", location.latitude, location.longitude))
-                                .font(.caption)
-                        } else {
-                            Text("Location: Unknown")
-                                .font(.caption)
-                        }
-                    }
-                    .padding()
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(Color.white)
-                            .shadow(radius: 2)
-                    )
-                    
-                    Spacer()
-                }
-                .padding()
-                
                 Spacer()
                 
-                // Bottom controls
                 HStack {
                     Spacer()
                     
