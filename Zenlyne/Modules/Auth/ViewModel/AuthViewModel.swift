@@ -46,13 +46,15 @@ class AuthViewModel: ObservableObject {
             let result = try await Auth.auth().createUser(withEmail: email, password: password)
             // update user information into main thread
             self.userSessions = result.user
-            // create User with nessessary information
+            // create User with necessary information
             let user = User(id: result.user.uid, fullName: fullName, email: email)
-            // encode User object before saving into Firestore
-            let encodedUser = try Firestore.Encoder().encode(user)
             // save user information into Firestore
-            // QUAN TRỌNG: Đổi "user" thành "users" để đồng nhất với hàm fetchUser
-            try await Firestore.firestore().collection("users").document(user.id).setData(encodedUser)
+            let userData: [String: Any] = [
+                "id": user.id,
+                "fullName": user.fullName,
+                "email": user.email
+            ]
+            try await Firestore.firestore().collection("users").document(user.id).setData(userData)
             await fetchUser()
         } catch {
             print("DEBUG: Failed to create user with error \(error.localizedDescription)")
@@ -82,38 +84,50 @@ class AuthViewModel: ObservableObject {
         }
         
         do {
-            // Thêm print để debug
             print("DEBUG: Fetching user with ID: \(uid)")
             
-            // Chỉ truy cập vào collection "users"
             let usersSnapshot = try await Firestore.firestore().collection("users").document(uid).getDocument()
             
             if usersSnapshot.exists {
                 print("DEBUG: Document found in 'users' collection")
-                self.currentUser = try usersSnapshot.data(as: User.self)
-                print("DEBUG: Successfully decoded user data")
+                if let userData = usersSnapshot.data(),
+                   let fullName = userData["fullName"] as? String,
+                   let email = userData["email"] as? String {
+                    self.currentUser = User(id: uid, fullName: fullName, email: email)
+                    print("DEBUG: Successfully decoded user data")
+                }
             } else {
-                // Nếu không tìm thấy trong "users", thử tìm trong "user"
                 print("DEBUG: Document not found in 'users' collection, trying 'user' collection")
                 let userSnapshot = try await Firestore.firestore().collection("user").document(uid).getDocument()
                 
                 if userSnapshot.exists {
                     print("DEBUG: Document found in 'user' collection")
-                    self.currentUser = try userSnapshot.data(as: User.self)
-                    
-                    // Di chuyển dữ liệu từ "user" sang "users" collection
-                    let userData = userSnapshot.data() ?? [:]
-                    try await Firestore.firestore().collection("users").document(uid).setData(userData)
-                    print("DEBUG: Migrated user data from 'user' to 'users' collection")
+                    if let userData = userSnapshot.data(),
+                       let email = userData["email"] as? String,
+                       let fullName = userData["fullName"] as? String {
+                        let newUser = User(id: uid, fullName: fullName, email: email)
+                        
+                        // Migrate data to 'users' collection
+                        try await Firestore.firestore().collection("users").document(uid).setData([
+                            "id": newUser.id,
+                            "fullName": newUser.fullName,
+                            "email": newUser.email
+                        ])
+                        self.currentUser = newUser
+                        print("DEBUG: Migrated user data from 'user' to 'users' collection")
+                    }
                 } else {
                     print("DEBUG: No user document found in either collection")
-                    // Tạo một bản ghi mới nếu cần thiết
                     if let user = Auth.auth().currentUser {
                         let newUser = User(id: user.uid,
                                           fullName: user.displayName ?? "User",
                                           email: user.email ?? "")
-                        let encodedUser = try Firestore.Encoder().encode(newUser)
-                        try await Firestore.firestore().collection("users").document(uid).setData(encodedUser)
+                        
+                        try await Firestore.firestore().collection("users").document(uid).setData([
+                            "id": newUser.id,
+                            "fullName": newUser.fullName,
+                            "email": newUser.email
+                        ])
                         self.currentUser = newUser
                         print("DEBUG: Created new user document based on Auth info")
                     }
@@ -132,27 +146,24 @@ class AuthViewModel: ObservableObject {
     func updateUserProfileImage(imageUrl: String) {
         guard let uid = self.userSessions?.uid else { return }
         
-        // Cập nhật database
         let userRef = Firestore.firestore().collection("users").document(uid)
         userRef.updateData(["profileImageUrl": imageUrl]) { error in
             if let error = error {
                 print("DEBUG: Failed to update user data with error: \(error.localizedDescription)")
                 
-                // Nếu có lỗi khi update, có thể document chưa tồn tại, thử setData thay vì updateData
                 if let currentUser = self.currentUser {
-                    var userData: [String: Any] = [
+                    let userData: [String: Any] = [
                         "id": currentUser.id,
                         "fullName": currentUser.fullName,
                         "email": currentUser.email,
                         "profileImageUrl": imageUrl
                     ]
                     
-                    userRef.setData(userData) { error in
+                    userRef.setData(userData, merge: true) { error in
                         if let error = error {
                             print("DEBUG: Failed to set user data with error: \(error.localizedDescription)")
                         } else {
                             print("DEBUG: Successfully set user data with image URL")
-                            // Cập nhật local model
                             Task { @MainActor in
                                 await self.fetchUser()
                             }
@@ -163,7 +174,6 @@ class AuthViewModel: ObservableObject {
             }
             
             print("DEBUG: Successfully updated user data with image URL")
-            // Cập nhật local model
             Task { @MainActor in
                 await self.fetchUser()
             }

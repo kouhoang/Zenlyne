@@ -13,6 +13,9 @@ struct User: Identifiable, Codable {
     let fullName: String
     let email: String
     var profileImageUrl: String?
+    var friendIds: [String] = []
+    var friendRequests: [String] = []
+    var isOnline: Bool = false
     
     var initials: String {
         let formatter = PersonNameComponentsFormatter()
