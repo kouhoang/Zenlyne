@@ -10,16 +10,13 @@ import MapboxMaps
 import CoreLocation
 
 struct MapViewController: View {
-
     @StateObject private var viewModel = LocationViewModel()
     
     var body: some View {
         ZStack {
-            // Map View
             MapViewRepresentable(viewModel: viewModel)
                 .ignoresSafeArea()
             
-            // UI Controls
             VStack {
                 Spacer()
                 

@@ -16,6 +16,7 @@ struct User: Identifiable, Codable {
     var friendIds: [String] = []
     var friendRequests: [String] = []
     var isOnline: Bool = false
+    var lastLocation: UserLocation?
     
     var initials: String {
         let formatter = PersonNameComponentsFormatter()
