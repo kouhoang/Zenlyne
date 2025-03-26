@@ -51,6 +51,11 @@ public class LocationViewModel: ObservableObject {
         locationService.requestLocationPermission()
         locationService.startUpdatingLocation()
         isTrackingLocation = true
+        
+        // Nếu đã có vị trí, focus ngay lập tức
+        if let location = userLocation {
+            cameraOptions = CameraOptions(center: location, zoom: 15)
+        }
     }
     
     // Stop tracking location
@@ -94,10 +99,8 @@ extension LocationViewModel: LocationServiceDelegate {
             // Save to Firebase
             self?.saveLocationToFirebase(coordinate: location.coordinate)
             
-            // Update camera if tracking is enabled
-            if self?.isTrackingLocation == true {
-                self?.cameraOptions = CameraOptions(center: location.coordinate, zoom: 15)
-            }
+            // Tự động update camera khi có location mới
+            self?.cameraOptions = CameraOptions(center: location.coordinate, zoom: 15)
         }
     }
     

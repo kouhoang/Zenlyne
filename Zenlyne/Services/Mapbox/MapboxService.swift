@@ -14,6 +14,7 @@ protocol LocationServiceProtocol {
     func startUpdatingLocation()
     func stopUpdatingLocation()
     func requestLocationPermission()
+    func requestAlwaysAuthorization()
 }
 
 protocol LocationServiceDelegate: AnyObject {
@@ -31,14 +32,27 @@ class LocationService: NSObject, LocationServiceProtocol, CLLocationManagerDeleg
         setupLocationManager()
     }
     
-    private func setupLocationManager() {
-        locationManager.delegate = self
-        locationManager.desiredAccuracy = kCLLocationAccuracyBest
-        locationManager.distanceFilter = 10 // Update if user moves 10 meters
-    }
-    
+//    private func setupLocationManager() {
+//        locationManager.delegate = self
+//        locationManager.desiredAccuracy = kCLLocationAccuracyBest
+//        locationManager.distanceFilter = 10 // Update if user moves 10 meters
+//    }
+//    
     func requestLocationPermission() {
         locationManager.requestWhenInUseAuthorization()
+    }
+    
+    private func setupLocationManager() {
+            locationManager.delegate = self
+            locationManager.desiredAccuracy = kCLLocationAccuracyBest
+            locationManager.distanceFilter = 10 // Update if user moves 10 meters
+            locationManager.allowsBackgroundLocationUpdates = true // Cho phép update location trong background
+            locationManager.pausesLocationUpdatesAutomatically = false // Ngăn hệ thống tự động dừng location updates
+    }
+        
+        // Thêm phương thức request always authorization
+    func requestAlwaysAuthorization() {
+        locationManager.requestAlwaysAuthorization()
     }
     
     func startUpdatingLocation() {

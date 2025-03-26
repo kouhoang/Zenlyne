@@ -4,5 +4,9 @@
 <dict>
 	<key>MBXAccessToken</key>
 	<string>pk.eyJ1Ijoia291aG9hbmdpdCIsImEiOiJjbTg1bGk4YnQwNTl3MmxvZXR4ZDRpZHAyIn0.Dxa0BPTgAlHVYC_hCElOWg</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>location</string>
+	</array>
 </dict>
 </plist>

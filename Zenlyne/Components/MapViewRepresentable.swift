@@ -11,40 +11,42 @@ import CoreLocation
 
 public struct MapViewRepresentable: UIViewRepresentable {
     @ObservedObject public var viewModel: LocationViewModel
-    private var pointAnnotationManager: PointAnnotationManager?
-    
-    // Add public initializer
-    public init(viewModel: LocationViewModel) {
-        self.viewModel = viewModel
-    }
-    
-    public func makeUIView(context: Context) -> MapView {
-        let mapView = MapView(frame: .zero)
         
-        // Configure the map style
-        mapView.mapboxMap.loadStyle(.streets)
+        public init(viewModel: LocationViewModel) {
+            self.viewModel = viewModel
+        }
         
-        // Configure map with initial options
-        mapView.mapboxMap.onNext(event: .mapLoaded) { _ in
-            // Set camera to initial position
+        public func makeUIView(context: Context) -> MapView {
+            let mapView = MapView(frame: .zero)
+            
+            // Configure the map style
+            mapView.mapboxMap.loadStyle(.streets)
+            
+            // Configure map with initial options
+            mapView.mapboxMap.onNext(event: .mapLoaded) { _ in
+                // Set camera to initial position
+                mapView.camera.fly(to: viewModel.cameraOptions, duration: 0.25)
+                
+                // Setup point annotation manager for custom user marker
+                context.coordinator.setupUserAnnotation(for: mapView)
+            }
+            
+            return mapView
+        }
+        
+        public func updateUIView(_ mapView: MapView, context: Context) {
+            // Update camera position when viewModel changes
             mapView.camera.fly(to: viewModel.cameraOptions, duration: 0.25)
             
-            // Setup point annotation manager for custom user marker
-            context.coordinator.setupUserAnnotation(for: mapView)
+            // Luôn update user annotation khi có location
+            if let location = viewModel.userLocation {
+                context.coordinator.updateUserAnnotation(
+                    for: mapView,
+                    at: location,
+                    userName: viewModel.currentUser.fullName
+                )
+            }
         }
-        
-        return mapView
-    }
-    
-    public func updateUIView(_ mapView: MapView, context: Context) {
-        // Update camera position when viewModel changes
-        mapView.camera.fly(to: viewModel.cameraOptions, duration: 0.25)
-        
-        // Update user annotation when location changes
-        if let location = viewModel.userLocation {
-            context.coordinator.updateUserAnnotation(for: mapView, at: location, userName: viewModel.currentUser.fullName)
-        }
-    }
     
     public func makeCoordinator() -> Coordinator {
         Coordinator(viewModel: viewModel)

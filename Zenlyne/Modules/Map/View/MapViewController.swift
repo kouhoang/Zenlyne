@@ -25,11 +25,7 @@ struct MapViewController: View {
                     
                     LocationButton(
                         action: {
-                            if viewModel.isTrackingLocation {
-                                viewModel.focusOnUserLocation()
-                            } else {
-                                viewModel.startTrackingLocation()
-                            }
+                            viewModel.focusOnUserLocation()
                         },
                         isTracking: viewModel.isTrackingLocation
                     )
@@ -39,6 +35,7 @@ struct MapViewController: View {
             }
         }
         .onAppear {
+            // Bắt đầu tracking location ngay khi vào app
             viewModel.startTrackingLocation()
         }
     }
