@@ -24,6 +24,9 @@ target 'Zenlyne' do
   pod 'RxSwift'
   pod 'RxCocoa'
 
+  # Image Processing
+  pod 'Kingfisher'
+
   # Pods for Zenlyne
 
 end

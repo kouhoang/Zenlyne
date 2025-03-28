@@ -1455,6 +1455,7 @@ PODS:
   - gRPC-Core/Interface (1.69.0)
   - gRPC-Core/Privacy (1.69.0)
   - GTMSessionFetcher/Core (4.4.0)
+  - Kingfisher (8.3.1)
   - leveldb-library (1.22.6)
   - MapboxCommon (24.10.0):
     - Turf (= 4.0.0)
@@ -1488,6 +1489,7 @@ DEPENDENCIES:
   - Firebase/Functions
   - Firebase/Messaging
   - Firebase/Storage
+  - Kingfisher
   - MapboxMaps
   - RxCocoa
   - RxSwift
@@ -1520,6 +1522,7 @@ SPEC REPOS:
     - "gRPC-C++"
     - gRPC-Core
     - GTMSessionFetcher
+    - Kingfisher
     - leveldb-library
     - MapboxCommon
     - MapboxCoreMaps
@@ -1559,6 +1562,7 @@ SPEC CHECKSUMS:
   "gRPC-C++": cc207623316fb041a7a3e774c252cf68a058b9e8
   gRPC-Core: 860978b7db482de8b4f5e10677216309b5ff6330
   GTMSessionFetcher: 75b671f9e551e4c49153d4c4f8659ef4f559b970
+  Kingfisher: 3204d23de16b5ea53541c44ca5a8efb55741dec3
   leveldb-library: cc8b8f8e013647a295ad3f8cd2ddf49a6f19be19
   MapboxCommon: 363dbed6bcdaa9a08674098fc5c661e826049dc2
   MapboxCoreMaps: ba391b7121c52d8ab656b0efa081d928648c8c6f
@@ -1571,6 +1575,6 @@ SPEC CHECKSUMS:
   RxSwift: 31649ace6aceeb422e16ff71c60804f9c3281ed9
   Turf: c9eb11a65d96af58cac523460fd40fec5061b081
 
-PODFILE CHECKSUM: ccfb8709f4995e09515cb5c8600845768b91914a
+PODFILE CHECKSUM: c2aedcd5ccca82d389275de0478860bd0ba66b3d
 
 COCOAPODS: 1.16.2

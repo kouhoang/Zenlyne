@@ -9,10 +9,21 @@
 import Foundation
 import Firebase
 import FirebaseFirestore
+import CoreLocation
+
+struct FriendWithDistance: Identifiable {
+    let id: String
+    let name: String
+    let email: String
+    let profileImageUrl: String?
+    let distance: Double?
+}
 
 class FriendRequestViewModel: ObservableObject {
     @Published var friendRequests: [FriendRequest] = []
+    @Published var friends: [FriendWithDistance] = []
     private let db = Firestore.firestore()
+    private let locationManager = CLLocationManager()
     
     func sendFriendRequest(toEmail email: String, completion: @escaping (Bool, String) -> Void) {
         guard let currentUser = Auth.auth().currentUser else {
@@ -137,4 +148,103 @@ class FriendRequestViewModel: ObservableObject {
             }
         }
     }
+    
+    func fetchFriends(currentUserLocation: CLLocationCoordinate2D?, completion: @escaping () -> Void) {
+            guard let currentUser = Auth.auth().currentUser else {
+                completion()
+                return
+            }
+            
+            // Fetch current user's friends
+            db.collection("users").document(currentUser.uid)
+                .getDocument { [weak self] (document, error) in
+                    guard let document = document, document.exists,
+                          let friendIds = document.data()?["friendIds"] as? [String] else {
+                        completion()
+                        return
+                    }
+                    
+                    // Fetch details for each friend
+                    let group = DispatchGroup()
+                    var fetchedFriends: [FriendWithDistance] = []
+                    
+                    friendIds.forEach { friendId in
+                        group.enter()
+                        self?.fetchFriendDetails(friendId: friendId, currentUserLocation: currentUserLocation) { friend in
+                            if let friend = friend {
+                                fetchedFriends.append(friend)
+                            }
+                            group.leave()
+                        }
+                    }
+                    
+                    group.notify(queue: .main) {
+                        self?.friends = fetchedFriends.sorted {
+                            // Sort by distance, with nil (unknown distance) at the end
+                            if let dist1 = $0.distance, let dist2 = $1.distance {
+                                return dist1 < dist2
+                            }
+                            return $0.distance != nil
+                        }
+                        completion()
+                    }
+                }
+        }
+        
+        private func fetchFriendDetails(
+            friendId: String,
+            currentUserLocation: CLLocationCoordinate2D?,
+            completion: @escaping (FriendWithDistance?) -> Void
+        ) {
+            // Fetch friend's user document
+            db.collection("users").document(friendId).getDocument { [weak self] (document, error) in
+                guard let document = document, document.exists,
+                      let data = document.data(),
+                      let email = data["email"] as? String,
+                      let fullName = data["fullName"] as? String else {
+                    completion(nil)
+                    return
+                }
+                
+                // Fetch friend's location
+                var distance: Double? = nil
+                if let currentUserLocation = currentUserLocation {
+                    // Fetch friend's location from Firestore
+                    self?.db.collection("user_locations").document(friendId).getDocument { (locationDoc, error) in
+                        if let locationData = locationDoc?.data(),
+                           let lat = locationData["latitude"] as? Double,
+                           let lon = locationData["longitude"] as? Double {
+                            let friendLocation = CLLocation(latitude: lat, longitude: lon)
+                            let currentLocation = CLLocation(
+                                latitude: currentUserLocation.latitude,
+                                longitude: currentUserLocation.longitude
+                            )
+                            
+                            distance = currentLocation.distance(from: friendLocation) / 1000 // Convert to kilometers
+                        }
+                        
+                        let friend = FriendWithDistance(
+                            id: friendId,
+                            name: fullName,
+                            email: email,
+                            profileImageUrl: data["profileImageUrl"] as? String,
+                            distance: distance
+                        )
+                        
+                        completion(friend)
+                    }
+                } else {
+                    // If no current location, create friend without distance
+                    let friend = FriendWithDistance(
+                        id: friendId,
+                        name: fullName,
+                        email: email,
+                        profileImageUrl: data["profileImageUrl"] as? String,
+                        distance: nil
+                    )
+                    
+                    completion(friend)
+                }
+            }
+        }
 }
