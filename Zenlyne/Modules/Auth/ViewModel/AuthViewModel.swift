@@ -18,6 +18,7 @@ protocol AuthentiicationFormProtocol {
 class AuthViewModel: ObservableObject {
     @Published var userSessions: FirebaseAuth.User?
     @Published var currentUser: User?
+    @Published var isSignedOut = false
     
     init() {
         self.userSessions = Auth.auth().currentUser
@@ -34,6 +35,7 @@ class AuthViewModel: ObservableObject {
             let result = try await Auth.auth().signIn(withEmail: email, password: password)
             self.userSessions = result.user
             await fetchUser()
+            self.isSignedOut = false  // Reset sign out state on successful login
         } catch {
             print("DEBUG: Failed to login with error \(error.localizedDescription)")
             throw error
@@ -65,7 +67,7 @@ class AuthViewModel: ObservableObject {
     func signOut() {
         do {
             try Auth.auth().signOut() // sign out user on backend
-            self.userSessions = nil // sign out user session and takes us back to login screen
+            self.userSessions = nil // This will trigger navigation back to login
             self.currentUser = nil // wipe out current user data model
         }
         catch {

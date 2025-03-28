@@ -9,28 +9,20 @@ import SwiftUI
 import Firebase
 
 struct ContentView: View {
-    @EnvironmentObject var viewModel: AuthViewModel
-
+    @StateObject private var authViewModel = AuthViewModel()
+    
     var body: some View {
-        Group {
-            if viewModel.userSessions != nil {
-                MapViewController()
-            } else {
-                LoginViewController()
-            }
+        // Use userSessions to determine if user is logged in
+        if authViewModel.userSessions == nil {
+            LoginViewController()
+                .environmentObject(authViewModel)
+        } else {
+            MapViewController()
+                .environmentObject(authViewModel)
         }
-        .onAppear {
-        // Thực hiện hành động khi màn hình xuất hiện
-        if viewModel.userSessions == nil {
-            print("DEBUG: User is not signed in, showing login screen")
-        }
-    }
     }
 }
 
-
-struct ContentView_Previews: PreviewProvider {
-    static var previews: some View {
-        ContentView()
-    }
+#Preview {
+    ContentView()
 }
