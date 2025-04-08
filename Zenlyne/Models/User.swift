@@ -17,6 +17,15 @@ struct User: Identifiable, Codable {
     var friendRequests: [String] = []
     var isOnline: Bool = false
     var lastLocation: UserLocation?
+    var lastSeen: Date?
+    
+    // Hàm này trả về thời gian user ở online trong bao lâu (đơn vị: phút)
+    var timeAgoDisplay: String? {
+        guard let lastSeen = lastSeen else { return nil }
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter.localizedString(for: lastSeen, relativeTo: Date())
+    }
     
     var initials: String {
         let formatter = PersonNameComponentsFormatter()
@@ -30,6 +39,5 @@ struct User: Identifiable, Codable {
 }
 
 extension User {
-    static var MOCK_USER = User(id: NSUUID().uuidString, fullName: "Kou Hoang", email: "test@gmail.com")
+    static var MOCK_USER = User(id: NSUUID().uuidString, fullName: "Kou", email: "test@gmail.com")
 }
-

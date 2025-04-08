@@ -2,144 +2,214 @@
 //  FriendRequestsView.swift
 //  Zenlyne
 //
-//  Created by admin on 25/3/25.
+//  Created by admin on 8/4/25.
 //
 
 import SwiftUI
-import Kingfisher
+import FirebaseFirestore
 
 struct FriendRequestsView: View {
-    @StateObject private var friendRequestVM = FriendRequestViewModel()
-    @StateObject private var locationViewModel = LocationViewModel()
+    @StateObject private var viewModel = FriendRequestViewModel()
+    @State private var isLoading = true
+    @State private var showAlert = false
+    @State private var alertTitle = ""
+    @State private var alertMessage = ""
+    @EnvironmentObject var authViewModel: AuthViewModel
+    @Environment(\.dismiss) private var dismiss
     
     var body: some View {
         NavigationView {
-            List {
-                // Friend Requests Section
-                Section(header: Text("Lời mời kết bạn")) {
-                    if friendRequestVM.friendRequests.isEmpty {
+            VStack {
+                if isLoading {
+                    ProgressView()
+                        .progressViewStyle(CircularProgressViewStyle())
+                        .scaleEffect(1.5)
+                        .padding()
+                } else if viewModel.friendRequests.isEmpty {
+                    VStack(spacing: 20) {
+                        Image(systemName: "person.crop.circle.badge.questionmark")
+                            .font(.system(size: 60))
+                            .foregroundColor(.gray)
+                        
                         Text("Không có lời mời kết bạn")
+                            .font(.headline)
+                        
+                        Text("Khi có người gửi lời mời kết bạn, bạn sẽ thấy họ ở đây")
+                            .font(.subheadline)
                             .foregroundColor(.gray)
-                    } else {
-                        ForEach(friendRequestVM.friendRequests) { request in
-                            HStack {
-                                VStack(alignment: .leading) {
-                                    Text(request.senderEmail)
-                                        .font(.headline)
-                                    Text("Muốn kết bạn với bạn")
-                                        .font(.subheadline)
-                                        .foregroundColor(.gray)
-                                }
-                                
-                                Spacer()
-                                
-                                HStack(spacing: 10) {
-                                    Button(action: {
-                                        acceptFriendRequest(requestId: request.id)
-                                    }) {
-                                        Image(systemName: "checkmark.circle.fill")
-                                            .foregroundColor(.green)
-                                            .imageScale(.large)
-                                    }
-                                    
-                                    Button(action: {
-                                        declineFriendRequest(requestId: request.id)
-                                    }) {
-                                        Image(systemName: "xmark.circle.fill")
-                                            .foregroundColor(.red)
-                                            .imageScale(.large)
-                                    }
-                                }
-                            }
-                        }
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal)
                     }
-                }
-                
-                // Friends Section
-                Section(header: Text("Danh Sách Bạn Bè")) {
-                    if friendRequestVM.friends.isEmpty {
-                        Text("Bạn chưa có bạn bè")
-                            .foregroundColor(.gray)
-                    } else {
-                        ForEach(friendRequestVM.friends) { friend in
-                            HStack {
-                                // Profile Image or Initials
-                                if let imageUrl = friend.profileImageUrl, let url = URL(string: imageUrl) {
-                                    KFImage(url)
-                                        .resizable()
-                                        .scaledToFill()
-                                        .frame(width: 50, height: 50)
-                                        .clipShape(Circle())
-                                } else {
-                                    Text(getInitials(from: friend.name))
-                                        .font(.headline)
-                                        .foregroundColor(.white)
-                                        .frame(width: 50, height: 50)
-                                        .background(Color.gray)
-                                        .clipShape(Circle())
+                    .padding()
+                } else {
+                    List {
+                        ForEach(viewModel.friendRequests) { request in
+                            FriendRequestRow(
+                                request: request,
+                                onAccept: {
+                                    acceptFriendRequest(request)
+                                },
+                                onDecline: {
+                                    declineFriendRequest(request)
                                 }
-                                
-                                VStack(alignment: .leading) {
-                                    Text(friend.name)
-                                        .font(.headline)
-                                    Text(friend.email)
-                                        .font(.subheadline)
-                                        .foregroundColor(.gray)
-                                }
-                                
-                                Spacer()
-                                
-                                // Distance
-                                if let distance = friend.distance {
-                                    Text(String(format: "%.1f km", distance))
-                                        .font(.subheadline)
-                                        .foregroundColor(.gray)
-                                } else {
-                                    Text("Khoảng cách không xác định")
-                                        .font(.subheadline)
-                                        .foregroundColor(.gray)
-                                }
-                            }
+                            )
                         }
                     }
                 }
             }
-            .navigationTitle("Bạn Bè")
+            .navigationBarTitle("Lời mời kết bạn", displayMode: .inline)
+            .navigationBarItems(trailing: Button("Đóng") {
+                dismiss()
+            })
             .onAppear {
-                friendRequestVM.fetchFriendRequests {}
+                loadFriendRequests()
+            }
+            .alert(isPresented: $showAlert) {
+                Alert(
+                    title: Text(alertTitle),
+                    message: Text(alertMessage),
+                    dismissButton: .default(Text("OK")) {
+                        if alertTitle == "Thành công" {
+                            loadFriendRequests()
+                        }
+                    }
+                )
+            }
+        }
+    }
+    
+    func loadFriendRequests() {
+        isLoading = true
+        viewModel.fetchFriendRequests {
+            DispatchQueue.main.async {
+                isLoading = false
+            }
+        }
+    }
+    
+    func acceptFriendRequest(_ request: FriendRequest) {
+        viewModel.acceptFriendRequest(requestId: request.id) { success, message in
+            DispatchQueue.main.async {
+                alertTitle = success ? "Thành công" : "Lỗi"
+                alertMessage = message
+                showAlert = true
+            }
+        }
+    }
+    
+    func declineFriendRequest(_ request: FriendRequest) {
+        viewModel.declineFriendRequest(requestId: request.id) { success, message in
+            DispatchQueue.main.async {
+                alertTitle = success ? "Thành công" : "Lỗi"
+                alertMessage = message
+                showAlert = true
+            }
+        }
+    }
+}
+
+struct FriendRequestRow: View {
+    let request: FriendRequest
+    let onAccept: () -> Void
+    let onDecline: () -> Void
+    
+    @State private var senderName = ""
+    @State private var senderImage: String?
+    
+    var body: some View {
+        HStack {
+            // Avatar
+            ZStack {
+                Circle()
+                    .fill(Color.blue.opacity(0.2))
+                    .frame(width: 50, height: 50)
                 
-                // Fetch friends with current user's location
-                friendRequestVM.fetchFriends(
-                    currentUserLocation: locationViewModel.userLocation
-                ) {}
+                if senderImage == nil {
+                    Text(getInitials(from: senderName))
+                        .font(.title3)
+                        .foregroundColor(.blue)
+                } else {
+                    AsyncImage(url: URL(string: senderImage!)) { image in
+                        image
+                            .resizable()
+                            .scaledToFill()
+                    } placeholder: {
+                        Text(getInitials(from: senderName))
+                            .font(.title3)
+                            .foregroundColor(.blue)
+                    }
+                    .frame(width: 46, height: 46)
+                    .clipShape(Circle())
+                }
+            }
+            
+            VStack(alignment: .leading, spacing: 4) {
+                Text(senderName.isEmpty ? request.senderEmail : senderName)
+                    .font(.headline)
+                
+                Text("Muốn kết bạn với bạn")
+                    .font(.subheadline)
+                    .foregroundColor(.gray)
+            }
+            
+            Spacer()
+            
+            HStack(spacing: 10) {
+                // Decline button
+                Button(action: onDecline) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(.white)
+                        .padding(8)
+                        .background(Color.red)
+                        .clipShape(Circle())
+                }
+                
+                // Accept button
+                Button(action: onAccept) {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(.white)
+                        .padding(8)
+                        .background(Color.green)
+                        .clipShape(Circle())
+                }
+            }
+        }
+        .padding(.vertical, 4)
+        .onAppear {
+            loadSenderInfo()
+        }
+    }
+    
+    private func loadSenderInfo() {
+        let db = Firestore.firestore()
+        db.collection("users").document(request.senderId).getDocument { snapshot, error in
+            guard let data = snapshot?.data() else { return }
+            
+            if let name = data["fullName"] as? String {
+                self.senderName = name
+            }
+            
+            if let imageUrl = data["profileImageUrl"] as? String {
+                self.senderImage = imageUrl
             }
         }
     }
     
     private func getInitials(from name: String) -> String {
-        return name.components(separatedBy: " ")
-            .compactMap { $0.first }
-            .map { String($0) }
-            .prefix(2)
-            .joined()
-            .uppercased()
-    }
-    
-    private func acceptFriendRequest(requestId: String) {
-        friendRequestVM.acceptFriendRequest(requestId: requestId) { success, message in
-            // Handle message if needed
+        let formatter = PersonNameComponentsFormatter()
+        if let components = formatter.personNameComponents(from: name) {
+            formatter.style = .abbreviated
+            return formatter.string(from: components)
         }
-    }
-    
-    private func declineFriendRequest(requestId: String) {
-        friendRequestVM.declineFriendRequest(requestId: requestId) { success, message in
-            // Handle message if needed
-        }
+        return ""
     }
 }
 
 struct FriendRequestsView_Previews: PreviewProvider {
     static var previews: some View {
         FriendRequestsView()
+            .environmentObject(AuthViewModel())
     }
 }
