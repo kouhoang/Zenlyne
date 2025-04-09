@@ -6,14 +6,17 @@
 //
 
 import SwiftUI
+import FirebaseAuth
 
 struct FriendsListView: View {
     @ObservedObject var viewModel: LocationViewModel
-    @State private var showInviteFriendSheet = false
+    @StateObject private var friendViewModel = FriendRequestViewModel()
+    @State private var showAddFriendSheet = false
+    @State private var showFriendRequestsSheet = false
+    @State private var pendingRequestsCount = 0
     
     var body: some View {
         VStack {
-            // Header
             HStack {
                 Text("Bạn bè")
                     .font(.title)
@@ -21,10 +24,33 @@ struct FriendsListView: View {
                 
                 Spacer()
                 
+                // Badge shows the friend requests
                 Button(action: {
-                    showInviteFriendSheet = true
+                    showFriendRequestsSheet = true
                 }) {
-                    Image(systemName: "person.badge.plus")
+                    ZStack {
+                        Image(systemName: "person.badge.plus")
+                            .font(.system(size: 22))
+                            .foregroundColor(.blue)
+                        
+                        if pendingRequestsCount > 0 {
+                            Text("\(pendingRequestsCount)")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundColor(.white)
+                                .frame(width: 18, height: 18)
+                                .background(Color.red)
+                                .clipShape(Circle())
+                                .offset(x: 10, y: -10)
+                        }
+                    }
+                }
+                .padding(.trailing, 10)
+                
+                // Add new friedn button
+                Button(action: {
+                    showAddFriendSheet = true
+                }) {
+                    Image(systemName: "person.crop.circle.badge.plus")
                         .font(.system(size: 22))
                         .foregroundColor(.blue)
                 }
@@ -49,9 +75,9 @@ struct FriendsListView: View {
                         .padding(.horizontal)
                     
                     Button(action: {
-                        showInviteFriendSheet = true
+                        showAddFriendSheet = true
                     }) {
-                        Text("Mời bạn bè")
+                        Text("Thêm bạn bè")
                             .fontWeight(.semibold)
                             .foregroundColor(.white)
                             .padding(.vertical, 12)
@@ -75,16 +101,49 @@ struct FriendsListView: View {
                             }
                         )
                     }
+                    .onDelete(perform: removeFriend)
+                }
+                .refreshable {
+                    // Refresh friends list when pulled down
+                    viewModel.startTrackingLocation()
                 }
             }
         }
-        .sheet(isPresented: $showInviteFriendSheet) {
-            // Sheet chứa view mời bạn bè
-            InviteFriendView()
+        .sheet(isPresented: $showAddFriendSheet) {
+            AddFriendView()
+        }
+        .sheet(isPresented: $showFriendRequestsSheet) {
+            FriendRequestsView()
         }
         .onAppear {
-            // Đảm bảo danh sách bạn bè được refresh khi view xuất hiện
             viewModel.startTrackingLocation()
+            loadPendingRequestsCount()
+        }
+    }
+    
+    // Load unread friend request count
+    private func loadPendingRequestsCount() {
+        friendViewModel.getPendingFriendRequestsCount { count in
+            DispatchQueue.main.async {
+                pendingRequestsCount = count
+            }
+        }
+    }
+    
+    // Delete friend
+    private func removeFriend(at offsets: IndexSet) {
+        guard let user = Auth.auth().currentUser else { return }
+        
+        offsets.forEach { index in
+            let friend = viewModel.friends[index]
+            let firebaseService = FirebaseService()
+            
+            firebaseService.removeFriend(currentUserId: user.uid, friendId: friend.id) { success in
+                if success {
+                    // Cập nhật danh sách bạn bè sau khi xóa
+                    viewModel.startTrackingLocation()
+                }
+            }
         }
     }
 }
@@ -97,14 +156,13 @@ struct FriendRow: View {
     var body: some View {
         Button(action: onTap) {
             HStack {
-                // Avatar
                 ZStack {
                     Circle()
                         .fill(Color.blue.opacity(0.2))
                         .frame(width: 50, height: 50)
                     
                     if let profileImage = friend.profileImageUrl {
-                        // Nếu có hình đại diện, sẽ load từ URL (cần thêm extension Image)
+                        // If have avater, will load from URL
                         AsyncImage(url: URL(string: profileImage)) { image in
                             image
                                 .resizable()
@@ -166,15 +224,28 @@ struct FriendRow: View {
             .padding(.vertical, 8)
         }
         .buttonStyle(PlainButtonStyle())
+        .contextMenu {
+            Button(role: .destructive, action: {
+                // Friend delete feature in context menu
+                if let currentUser = Auth.auth().currentUser {
+                    let firebaseService = FirebaseService()
+                    firebaseService.removeFriend(currentUserId: currentUser.uid, friendId: friend.id) { _ in }
+                }
+            }) {
+                Label("Xóa bạn bè", systemImage: "person.badge.minus")
+            }
+        }
     }
 }
 
+// Invite friend view by email (not Firebase)
 struct InviteFriendView: View {
     @State private var email = ""
     @State private var isLoading = false
     @State private var showAlert = false
     @State private var alertMessage = ""
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject var authViewModel: AuthViewModel
     
     var body: some View {
         NavigationView {
@@ -228,19 +299,33 @@ struct InviteFriendView: View {
             .navigationBarItems(trailing: Button("Đóng") {
                 dismiss()
             })
+            .onTapGesture {
+                hideKeyboard()
+            }
         }
     }
     
     func sendInvite() {
-        // Đây chỉ là placeholder, bạn cần xây dựng chức năng gửi lời mời thực tế
         isLoading = true
         
-        // Giả lập việc gửi lời mời
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+        guard let user = authViewModel.currentUser else {
             isLoading = false
-            alertMessage = "Đã gửi lời mời đến \(email)"
+            alertMessage = "Không thể xác định người dùng hiện tại"
             showAlert = true
-            email = ""
+            return
+        }
+        
+        let firebaseService = FirebaseService()
+        firebaseService.inviteFriendByEmail(email: email, from: user) { success, message in
+            DispatchQueue.main.async {
+                isLoading = false
+                alertMessage = message
+                showAlert = true
+                
+                if success {
+                    email = ""
+                }
+            }
         }
     }
 }
@@ -249,5 +334,6 @@ struct FriendsListView_Previews: PreviewProvider {
     static var previews: some View {
         let viewModel = LocationViewModel()
         FriendsListView(viewModel: viewModel)
+            .environmentObject(AuthViewModel())
     }
 }

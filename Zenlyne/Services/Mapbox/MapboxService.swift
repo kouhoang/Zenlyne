@@ -32,12 +32,6 @@ class LocationService: NSObject, LocationServiceProtocol, CLLocationManagerDeleg
         setupLocationManager()
     }
     
-//    private func setupLocationManager() {
-//        locationManager.delegate = self
-//        locationManager.desiredAccuracy = kCLLocationAccuracyBest
-//        locationManager.distanceFilter = 10 // Update if user moves 10 meters
-//    }
-//    
     func requestLocationPermission() {
         locationManager.requestWhenInUseAuthorization()
     }
@@ -46,8 +40,8 @@ class LocationService: NSObject, LocationServiceProtocol, CLLocationManagerDeleg
             locationManager.delegate = self
             locationManager.desiredAccuracy = kCLLocationAccuracyBest
             locationManager.distanceFilter = 10 // Update if user moves 10 meters
-            locationManager.allowsBackgroundLocationUpdates = true // Cho phép update location trong background
-            locationManager.pausesLocationUpdatesAutomatically = false // Ngăn hệ thống tự động dừng location updates
+            locationManager.allowsBackgroundLocationUpdates = true // Allow location update in background
+            locationManager.pausesLocationUpdatesAutomatically = false // Prevent the system from automatically stopping location updates
     }
         
         // Thêm phương thức request always authorization

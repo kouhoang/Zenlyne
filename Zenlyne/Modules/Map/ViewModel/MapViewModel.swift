@@ -11,7 +11,6 @@ import SwiftUI
 import Combine
 
 public class LocationViewModel: ObservableObject {
-    // Published properties for view
     @Published var userLocation: CLLocationCoordinate2D?
     @Published var cameraOptions: CameraOptions
     @Published var isTrackingLocation: Bool = false
@@ -19,12 +18,11 @@ public class LocationViewModel: ObservableObject {
     @Published var friendLocations: [String: UserLocation] = [:]
     @Published var friends: [User] = []
     
-    // Services
     private let locationService: LocationServiceProtocol
     private let firebaseService: FirebaseServiceProtocol
     var currentUser: User
     
-    // Timer để tự động refresh vị trí của bạn bè
+    // Timer to automatically refresh your friends' locations
     private var refreshTimer: Timer?
     
     // Default initialization
@@ -37,11 +35,9 @@ public class LocationViewModel: ObservableObject {
         self.firebaseService = firebaseService
         self.currentUser = user
         
-        // Default location settings
         let defaultLocation = CLLocationCoordinate2D(latitude: 21.019900, longitude: -100.000000)
         self.cameraOptions = CameraOptions(center: defaultLocation, zoom: 15)
         
-        // Set up location service
         if let locationService = locationService as? LocationService {
             locationService.delegate = self
         }
@@ -49,7 +45,7 @@ public class LocationViewModel: ObservableObject {
         // Load the last known location from Firebase
         loadLastKnownLocation()
         
-        // Bắt đầu timer để refresh vị trí của bạn bè mỗi 30 giây
+        // Start timer to refresh friend's location every 30 seconds
         startRefreshTimer()
     }
     
@@ -58,18 +54,17 @@ public class LocationViewModel: ObservableObject {
         firebaseService.stopObservingFriendLocations()
     }
     
-    // Start tracking location
     func startTrackingLocation() {
         locationService.requestLocationPermission()
         locationService.startUpdatingLocation()
         isTrackingLocation = true
         
-        // Nếu đã có vị trí, focus ngay lập tức
+        // If position is available, focus immediately
         if let location = userLocation {
             cameraOptions = CameraOptions(center: location, zoom: 15)
         }
         
-        // Lấy danh sách bạn bè và bắt đầu lắng nghe vị trí của họ
+        // Get the friends list and start listening for their location
         loadFriends()
     }
     
@@ -113,33 +108,33 @@ public class LocationViewModel: ObservableObject {
         firebaseService.saveUserLocation(userId: currentUser.id, location: userLocation)
     }
     
-    // Bắt đầu timer để refresh vị trí của bạn bè
+    // Start timer to refresh friend's location
     private func startRefreshTimer() {
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             self?.loadFriends()
         }
     }
     
-    // Dừng timer
+    // Stop timer
     private func stopRefreshTimer() {
         refreshTimer?.invalidate()
         refreshTimer = nil
     }
     
-    // Lấy danh sách bạn bè từ Firebase
+    // Get friend list from Firebase
     private func loadFriends() {
         firebaseService.fetchFriends(forUserId: currentUser.id) { [weak self] friends in
             DispatchQueue.main.async {
                 self?.friends = friends
                 
-                // Bắt đầu lắng nghe vị trí của bạn bè
+                // Start listening for your friends location
                 let friendIds = friends.map { $0.id }
                 self?.startObservingFriendLocations(friendIds: friendIds)
             }
         }
     }
     
-    // Bắt đầu lắng nghe vị trí của bạn bè theo thời gian thực
+    // Start listening to your friends' locations in real time
     private func startObservingFriendLocations(friendIds: [String]) {
         firebaseService.observeFriendLocations(userIds: friendIds) { [weak self] locations in
             DispatchQueue.main.async {
@@ -148,7 +143,7 @@ public class LocationViewModel: ObservableObject {
         }
     }
     
-    // Lấy thông tin user từ ID
+    // Get user information from ID
     func getFriend(byId id: String) -> User? {
         return friends.first { $0.id == id }
     }
@@ -163,7 +158,7 @@ extension LocationViewModel: LocationServiceDelegate {
             // Save to Firebase
             self?.saveLocationToFirebase(coordinate: location.coordinate)
             
-            // Tự động update camera khi có location mới nếu đang tracking
+            // Automatically update camera when there is a new location if tracking
             if self?.isTrackingLocation == true {
                 self?.cameraOptions = CameraOptions(center: location.coordinate, zoom: 15)
             }

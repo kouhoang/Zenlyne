@@ -7,11 +7,11 @@
 
 import SwiftUI
 import FirebaseFirestore
+import FirebaseAuth
 
 struct AddFriendView: View {
     @StateObject private var viewModel = FriendRequestViewModel()
     @State private var email = ""
-    @State private var isLoading = false
     @State private var showAlert = false
     @State private var alertTitle = ""
     @State private var alertMessage = ""
@@ -21,20 +21,17 @@ struct AddFriendView: View {
     var body: some View {
         NavigationView {
             VStack(spacing: 20) {
-                // Tiêu đề
                 Text("Thêm bạn bè")
                     .font(.title)
                     .fontWeight(.bold)
                     .padding(.top)
                 
-                // Mô tả
                 Text("Nhập email của người bạn muốn kết bạn")
                     .font(.subheadline)
                     .foregroundColor(.gray)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal)
                 
-                // Trường nhập email
                 VStack(alignment: .leading) {
                     Text("Email").foregroundColor(Color(.darkGray)).fontWeight(.semibold).font(.footnote)
                     
@@ -60,9 +57,15 @@ struct AddFriendView: View {
                 .padding(.horizontal)
                 .padding(.top, 20)
                 
-                // Nút gửi lời mời kết bạn
+                if !viewModel.errorMessage.isEmpty {
+                    Text(viewModel.errorMessage)
+                        .font(.footnote)
+                        .foregroundColor(.red)
+                        .padding(.horizontal)
+                }
+                
                 Button(action: sendFriendRequest) {
-                    if isLoading {
+                    if viewModel.isLoading {
                         ProgressView()
                             .progressViewStyle(CircularProgressViewStyle(tint: .white))
                             .padding(.vertical, 13)
@@ -78,7 +81,7 @@ struct AddFriendView: View {
                 .cornerRadius(10)
                 .padding(.horizontal)
                 .padding(.top, 20)
-                .disabled(!isValidEmail || isLoading)
+                .disabled(!isValidEmail || viewModel.isLoading)
                 
                 Spacer()
             }
@@ -100,20 +103,17 @@ struct AddFriendView: View {
         }
     }
     
-    // Kiểm tra email hợp lệ
+    // Check valid email
     private var isValidEmail: Bool {
         let emailRegex = "[A-Z0-9a-z._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}"
         let emailPredicate = NSPredicate(format: "SELF MATCHES %@", emailRegex)
-        return emailPredicate.evaluate(with: email) && email != authViewModel.currentUser?.email
+        return emailPredicate.evaluate(with: email) && email != Auth.auth().currentUser?.email
     }
     
-    // Gửi lời mời kết bạn
+    // Send friend request
     private func sendFriendRequest() {
-        isLoading = true
-        
         viewModel.sendFriendRequest(toEmail: email) { success, message in
             DispatchQueue.main.async {
-                isLoading = false
                 alertTitle = success ? "Thành công" : "Lỗi"
                 alertMessage = message
                 showAlert = true
@@ -126,7 +126,7 @@ struct AddFriendView: View {
     }
 }
 
-// Extension để ẩn bàn phím
+// Extension to hide keyboard
 extension View {
     func hideKeyboard() {
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)

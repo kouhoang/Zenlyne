@@ -14,3 +14,4 @@ struct FriendRequest: Identifiable {
     let recipientId: String
     let status: String
 }
+	

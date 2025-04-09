@@ -21,7 +21,7 @@ struct ProfileViewController: View {
             List {
                 Section {
                     HStack {
-                        // Avatar với chức năng chọn ảnh
+                        // Avatar with choosing image feature
                         Button {
                             showingPhotoPicker = true
                         } label: {
@@ -127,17 +127,17 @@ struct ProfileViewController: View {
         
         let filename = "\(uid).jpg"
         
-        // Tạo tham chiếu đến root của Storage trước
+        // Create a reference to the root of Storage first
         let storageRef = Storage.storage().reference()
         
-        // Kiểm tra xem thư mục profile_images có tồn tại hay không
-        // Nếu không, tạo thư mục trước
+        // Check if profile_images folder exists
+        // If not, create the folder first
         let profileImagesRef = storageRef.child("profile_images")
         
-        // Tạo tham chiếu đến file cần tải lên
+        // Create a reference to the file to upload
         let imageRef = profileImagesRef.child(filename)
         
-        // Tải ảnh lên
+        // Upload image
         imageRef.putData(imageData, metadata: nil) { metadata, error in
             if let error = error {
                 print("DEBUG: Failed to upload image with error: \(error.localizedDescription)")
@@ -145,7 +145,7 @@ struct ProfileViewController: View {
                 return
             }
             
-            // Sau khi tải lên thành công, lấy URL
+            // After upload image successfully, get URL
             imageRef.downloadURL { url, error in
                 if let error = error {
                     print("DEBUG: Failed to get download URL: \(error.localizedDescription)")

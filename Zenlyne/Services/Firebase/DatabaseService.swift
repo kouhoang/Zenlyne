@@ -24,25 +24,25 @@ class FirebaseService: FirebaseServiceProtocol {
     private let firestore = Firestore.firestore()
     private var locationObservers = [DatabaseHandle]()
     
-    // Lưu vị trí hiện tại của người dùng vào Realtime Database
+    // Save the user's current location to the Realtime Database
     func saveUserLocation(userId: String, location: UserLocation) {
         let locationRef = database.child("locations").child(userId)
         locationRef.setValue(location.toDictionary())
         
-        // Cập nhật thời gian last seen
+        // Update last seen time
         let lastSeenRef = database.child("users").child(userId).child("lastSeen")
         lastSeenRef.setValue(ServerValue.timestamp())
         
-        // Cập nhật status online
+        // Update status online
         let onlineRef = database.child("users").child(userId).child("isOnline")
         onlineRef.setValue(true)
         
-        // Thiết lập trạng thái offline khi mất kết nối
+        // Set offline status when connection is lost
         let onDisconnectRef = database.child("users").child(userId)
         onDisconnectRef.onDisconnectUpdateChildValues(["isOnline": false])
     }
     
-    // Lấy vị trí cuối cùng của người dùng
+    // Get the user's last location
     func fetchUserLastLocation(userId: String, completion: @escaping (UserLocation?) -> Void) {
         let locationRef = database.child("locations").child(userId)
         
@@ -65,12 +65,12 @@ class FirebaseService: FirebaseServiceProtocol {
         }
     }
     
-    // Lắng nghe vị trí của bạn bè theo thời gian thực
+    // Listen to your friends' locations in real time
     func observeFriendLocations(userIds: [String], completion: @escaping ([String: UserLocation]) -> Void) {
-        // Dừng tất cả các observer đang chạy
+        // Stop all running observers
         stopObservingFriendLocations()
         
-        // Tạo observer mới cho mỗi người bạn
+        // Create new observer for each friend
         for userId in userIds {
             let locationRef = database.child("locations").child(userId)
             let handle = locationRef.observe(.value) { [weak self] snapshot in
@@ -88,18 +88,18 @@ class FirebaseService: FirebaseServiceProtocol {
                     timestamp: timestamp
                 )
                 
-                // Lấy tất cả vị trí của bạn bè để cập nhật UI
+                // Get all friends location to update UI
                 self?.fetchAllFriendLocations(userIds: userIds, completion: completion)
             }
             
             locationObservers.append(handle)
         }
         
-        // Lấy vị trí hiện tại của tất cả bạn bè
+        // Get current location of all friends
         fetchAllFriendLocations(userIds: userIds, completion: completion)
     }
     
-    // Dừng lắng nghe vị trí của bạn bè
+    // Stop listening to your friends location
     func stopObservingFriendLocations() {
         for handle in locationObservers {
             database.removeObserver(withHandle: handle)
@@ -107,7 +107,7 @@ class FirebaseService: FirebaseServiceProtocol {
         locationObservers.removeAll()
     }
     
-    // Lấy danh sách bạn bè của người dùng
+    // Get the user's friends list
     func fetchFriends(forUserId userId: String, completion: @escaping ([User]) -> Void) {
         let userRef = firestore.collection("users").document(userId)
         
@@ -145,7 +145,7 @@ class FirebaseService: FirebaseServiceProtocol {
                         return user
                     }
                     
-                    // Lấy trạng thái online và vị trí của từng người bạn
+                    // Get the online status and location of each friend
                     self.fetchOnlineStatus(forUsers: friends) { usersWithStatus in
                         completion(usersWithStatus)
                     }
@@ -153,7 +153,7 @@ class FirebaseService: FirebaseServiceProtocol {
         }
     }
     
-    // Cập nhật trạng thái online của bạn bè
+    // Update your friends online status
     private func fetchOnlineStatus(forUsers users: [User], completion: @escaping ([User]) -> Void) {
         let group = DispatchGroup()
         var updatedUsers = users
@@ -182,7 +182,7 @@ class FirebaseService: FirebaseServiceProtocol {
         }
     }
     
-    // Phương thức nội bộ để lấy vị trí của tất cả bạn bè
+    // Internal method to get location of all friends
     private func fetchAllFriendLocations(userIds: [String], completion: @escaping ([String: UserLocation]) -> Void) {
         var friendLocations = [String: UserLocation]()
         let group = DispatchGroup()

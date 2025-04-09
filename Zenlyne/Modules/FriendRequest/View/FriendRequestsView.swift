@@ -10,7 +10,6 @@ import FirebaseFirestore
 
 struct FriendRequestsView: View {
     @StateObject private var viewModel = FriendRequestViewModel()
-    @State private var isLoading = true
     @State private var showAlert = false
     @State private var alertTitle = ""
     @State private var alertMessage = ""
@@ -19,41 +18,53 @@ struct FriendRequestsView: View {
     
     var body: some View {
         NavigationView {
-            VStack {
-                if isLoading {
-                    ProgressView()
-                        .progressViewStyle(CircularProgressViewStyle())
-                        .scaleEffect(1.5)
-                        .padding()
-                } else if viewModel.friendRequests.isEmpty {
-                    VStack(spacing: 20) {
-                        Image(systemName: "person.crop.circle.badge.questionmark")
-                            .font(.system(size: 60))
-                            .foregroundColor(.gray)
-                        
-                        Text("Không có lời mời kết bạn")
-                            .font(.headline)
-                        
-                        Text("Khi có người gửi lời mời kết bạn, bạn sẽ thấy họ ở đây")
-                            .font(.subheadline)
-                            .foregroundColor(.gray)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal)
-                    }
-                    .padding()
-                } else {
-                    List {
-                        ForEach(viewModel.friendRequests) { request in
-                            FriendRequestRow(
-                                request: request,
-                                onAccept: {
-                                    acceptFriendRequest(request)
-                                },
-                                onDecline: {
-                                    declineFriendRequest(request)
-                                }
-                            )
+            ZStack {
+                VStack {
+                    if viewModel.isLoading {
+                        ProgressView("Đang tải...")
+                            .progressViewStyle(CircularProgressViewStyle())
+                            .scaleEffect(1.5)
+                            .padding()
+                    } else if viewModel.friendRequests.isEmpty {
+                        VStack(spacing: 20) {
+                            Image(systemName: "person.crop.circle.badge.questionmark")
+                                .font(.system(size: 60))
+                                .foregroundColor(.gray)
+                            
+                            Text("Không có lời mời kết bạn")
+                                .font(.headline)
+                            
+                            Text("Khi có người gửi lời mời kết bạn, bạn sẽ thấy họ ở đây")
+                                .font(.subheadline)
+                                .foregroundColor(.gray)
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal)
                         }
+                        .padding()
+                    } else {
+                        List {
+                            ForEach(viewModel.friendRequests) { request in
+                                FriendRequestRow(
+                                    request: request,
+                                    onAccept: {
+                                        acceptFriendRequest(request)
+                                    },
+                                    onDecline: {
+                                        declineFriendRequest(request)
+                                    }
+                                )
+                            }
+                        }
+                        .refreshable {
+                            loadFriendRequests()
+                        }
+                    }
+                    
+                    if !viewModel.errorMessage.isEmpty {
+                        Text(viewModel.errorMessage)
+                            .font(.footnote)
+                            .foregroundColor(.red)
+                            .padding()
                     }
                 }
             }
@@ -79,12 +90,7 @@ struct FriendRequestsView: View {
     }
     
     func loadFriendRequests() {
-        isLoading = true
-        viewModel.fetchFriendRequests {
-            DispatchQueue.main.async {
-                isLoading = false
-            }
-        }
+        viewModel.fetchFriendRequests()
     }
     
     func acceptFriendRequest(_ request: FriendRequest) {
