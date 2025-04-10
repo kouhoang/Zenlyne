@@ -108,48 +108,91 @@ class FirebaseService: FirebaseServiceProtocol {
     }
     
     // Get the user's friends list
+    // Add this to FirebaseService.swift
     func fetchFriends(forUserId userId: String, completion: @escaping ([User]) -> Void) {
-        let userRef = firestore.collection("users").document(userId)
+        print("DEBUG: Đang tải danh sách bạn bè cho userId: \(userId)")
         
-        userRef.getDocument { snapshot, error in
-            guard let document = snapshot, document.exists,
-                  let data = document.data(),
-                  let friendIds = data["friendIds"] as? [String] else {
+        let db = Firestore.firestore()
+        let userRef = db.collection("users").document(userId)
+        
+        userRef.getDocument { [weak self] snapshot, error in
+            guard let self = self else { return }
+            
+            if let error = error {
+                print("DEBUG: Lỗi khi tải tài liệu người dùng: \(error.localizedDescription)")
                 completion([])
                 return
             }
+            
+            guard let document = snapshot, document.exists else {
+                print("DEBUG: Tài liệu người dùng không tồn tại")
+                completion([])
+                return
+            }
+            
+            guard let data = document.data() else {
+                print("DEBUG: Tài liệu người dùng không có dữ liệu")
+                completion([])
+                return
+            }
+            
+            // Lấy danh sách ID bạn bè
+            let friendIds = data["friendIds"] as? [String] ?? []
+            print("DEBUG: Tìm thấy \(friendIds.count) friendIds: \(friendIds)")
             
             if friendIds.isEmpty {
+                print("DEBUG: Danh sách friendIds trống, trả về danh sách bạn bè trống")
                 completion([])
                 return
             }
             
-            self.firestore.collection("users")
-                .whereField("id", in: friendIds)
-                .getDocuments { snapshot, error in
-                    guard let documents = snapshot?.documents else {
-                        completion([])
+            // Lấy thông tin chi tiết của từng người bạn
+            var friends: [User] = []
+            let group = DispatchGroup()
+            
+            for friendId in friendIds {
+                group.enter()
+                
+                db.collection("users").document(friendId).getDocument { document, error in
+                    defer { group.leave() }
+                    
+                    if let error = error {
+                        print("DEBUG: Lỗi khi tải thông tin bạn bè \(friendId): \(error.localizedDescription)")
                         return
                     }
                     
-                    let friends = documents.compactMap { document -> User? in
-                        let data = document.data()
-                        guard let id = data["id"] as? String,
-                              let fullName = data["fullName"] as? String,
-                              let email = data["email"] as? String else {
-                            return nil
-                        }
-                        
-                        var user = User(id: id, fullName: fullName, email: email)
-                        user.profileImageUrl = data["profileImageUrl"] as? String
-                        return user
+                    guard let document = document, document.exists, let data = document.data() else {
+                        print("DEBUG: Không tìm thấy thông tin bạn bè \(friendId)")
+                        return
                     }
                     
-                    // Get the online status and location of each friend
-                    self.fetchOnlineStatus(forUsers: friends) { usersWithStatus in
-                        completion(usersWithStatus)
+                    // Tạo đối tượng User từ dữ liệu
+                    if let email = data["email"] as? String,
+                       let fullName = data["fullName"] as? String {
+                        var user = User(id: friendId, fullName: fullName, email: email)
+                        user.profileImageUrl = data["profileImageUrl"] as? String
+                        
+                        print("DEBUG: Đã tải thành công thông tin bạn bè: \(fullName)")
+                        friends.append(user)
+                    } else {
+                        print("DEBUG: Thiếu thông tin cần thiết cho bạn bè \(friendId)")
                     }
                 }
+            }
+            
+            group.notify(queue: .main) { [weak self] in
+                print("DEBUG: Đã tải xong danh sách \(friends.count) bạn bè")
+                
+                // Cập nhật trạng thái online (nếu cần)
+                if let self = self {
+                    self.fetchOnlineStatus(forUsers: friends) { updatedFriends in
+                        print("DEBUG: Đã cập nhật trạng thái online cho \(updatedFriends.count) bạn bè")
+                        completion(updatedFriends)
+                    }
+                } else {
+                    completion(friends)
+                }
+            }
         }
     }
     
@@ -213,6 +256,100 @@ class FirebaseService: FirebaseServiceProtocol {
         
         group.notify(queue: .main) {
             completion(friendLocations)
+        }
+    }
+    
+    func enhancedFetchFriends(forUserId userId: String, completion: @escaping ([User]) -> Void) {
+        print("DEBUG: Fetching friends for user ID: \(userId)")
+        
+        let usersRef = firestore.collection("users").document(userId)
+        
+        usersRef.getDocument { [weak self] snapshot, error in
+            guard let self = self else { return }
+            
+            if let error = error {
+                print("DEBUG: Error fetching user document: \(error.localizedDescription)")
+                completion([])
+                return
+            }
+            
+            guard let document = snapshot, document.exists else {
+                print("DEBUG: User document does not exist")
+                completion([])
+                return
+            }
+            
+            guard let data = document.data() else {
+                print("DEBUG: User document has no data")
+                completion([])
+                return
+            }
+            
+            let friendIds = data["friendIds"] as? [String] ?? []
+            print("DEBUG: Found \(friendIds.count) friendIds: \(friendIds)")
+            
+            if friendIds.isEmpty {
+                print("DEBUG: Friend IDs list is empty, returning empty friends list")
+                completion([])
+                return
+            }
+            
+            // If there are many friends, we might need to use multiple queries
+            // Firestore has a limitation where "in" query can only take up to 10 values
+            let chunks = stride(from: 0, to: friendIds.count, by: 10).map {
+                Array(friendIds[$0..<min($0 + 10, friendIds.count)])
+            }
+            
+            var allFriends: [User] = []
+            let group = DispatchGroup()
+            
+            for chunk in chunks {
+                group.enter()
+                
+                self.firestore.collection("users")
+                    .whereField("id", in: chunk)
+                    .getDocuments { snapshot, error in
+                        defer { group.leave() }
+                        
+                        if let error = error {
+                            print("DEBUG: Error fetching friends chunk: \(error.localizedDescription)")
+                            return
+                        }
+                        
+                        guard let documents = snapshot?.documents else {
+                            print("DEBUG: No friend documents found")
+                            return
+                        }
+                        
+                        print("DEBUG: Found \(documents.count) friend documents in chunk")
+                        
+                        let friends = documents.compactMap { document -> User? in
+                            let data = document.data()
+                            guard let id = data["id"] as? String,
+                                  let fullName = data["fullName"] as? String,
+                                  let email = data["email"] as? String else {
+                                print("DEBUG: Missing required fields for friend with data: \(data)")
+                                return nil
+                            }
+                            
+                            var user = User(id: id, fullName: fullName, email: email)
+                            user.profileImageUrl = data["profileImageUrl"] as? String
+                            return user
+                        }
+                        
+                        allFriends.append(contentsOf: friends)
+                    }
+            }
+            
+            group.notify(queue: .main) { [weak self] in
+                guard let self = self else { return }
+                print("DEBUG: Fetched a total of \(allFriends.count) friends")
+                
+                // Now fetch online status and lastSeen
+                self.fetchOnlineStatus(forUsers: allFriends) { usersWithStatus in
+                    completion(usersWithStatus)
+                }
+            }
         }
     }
 }

@@ -31,7 +31,7 @@ struct MapViewController: View {
                 HStack {
                     Spacer()
                     
-                    VStack(spacing: 10) { // Các nút xếp theo chiều dọc
+                    VStack(spacing: 10) {
                         // Profile Button
                         Button(action: {
                             showProfileView.toggle()
@@ -143,7 +143,7 @@ struct MapViewController: View {
             }
         }
         .onAppear {
-            // Cập nhật currentUser từ AuthViewModel
+            // Update currentUser from AuthViewModel
             if let user = authViewModel.currentUser {
                 viewModel.currentUser = user
             }
@@ -151,7 +151,7 @@ struct MapViewController: View {
             // Start tracking location when app appears
             viewModel.startTrackingLocation()
             
-            // Thiết lập listener cho việc chọn bạn bè trên bản đồ
+            // Set up a listener to select friends on the mapồ
             NotificationCenter.default.addObserver(
                 forName: NSNotification.Name("FriendSelected"),
                 object: nil,
@@ -162,7 +162,7 @@ struct MapViewController: View {
                 }
             }
             
-            // Listener cho việc đóng panel thông tin khi tap vào map
+            // Listener for closing the info panel when tapping on the map
             NotificationCenter.default.addObserver(
                 forName: NSNotification.Name("MapTapped"),
                 object: nil,
@@ -171,17 +171,17 @@ struct MapViewController: View {
                 self.selectedFriendId = nil
             }
             
-            // Kiểm tra số lượng lời mời kết bạn đang chờ
+            // Check the number of pending friend requests
             checkPendingFriendRequests()
         }
         .onDisappear {
-            // Dừng lắng nghe vị trí của bạn bè khi view biến mất
+            // Stop listening for friend's location when view disappears
             viewModel.stopTrackingLocation()
             NotificationCenter.default.removeObserver(self)
         }
     }
     
-    // Kiểm tra số lượng lời mời kết bạn đang chờ
+    // Check the number of pending friend requests
     private func checkPendingFriendRequests() {
         guard let userId = authViewModel.currentUser?.id else { return }
         
@@ -274,7 +274,6 @@ struct FriendInfoPanel: View {
             HStack(spacing: 20) {
                 // Message button
                 Button(action: {
-                    // Xử lý gửi tin nhắn
                 }) {
                     VStack(spacing: 4) {
                         Image(systemName: "message.fill")
@@ -287,7 +286,6 @@ struct FriendInfoPanel: View {
                 
                 // Call button
                 Button(action: {
-                    // Xử lý gọi điện
                 }) {
                     VStack(spacing: 4) {
                         Image(systemName: "phone.fill")
@@ -300,7 +298,6 @@ struct FriendInfoPanel: View {
                 
                 // Directions button
                 Button(action: {
-                    // Xử lý chỉ đường
                     if let location = location {
                         let url = URL(string: "maps://?daddr=\(location.latitude),\(location.longitude)")
                         if let url = url, UIApplication.shared.canOpenURL(url) {

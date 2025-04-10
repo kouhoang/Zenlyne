@@ -183,59 +183,99 @@ class FriendRequestViewModel: ObservableObject {
             return
         }
         
+        print("DEBUG: Bắt đầu chấp nhận lời mời kết bạn với ID: \(requestId)")
+        print("DEBUG: Người dùng hiện tại: \(currentUser.uid)")
+        
         isLoading = true
+        
+        let db = Firestore.firestore()
         let requestRef = db.collection("friend_requests").document(requestId)
         
-        db.runTransaction { [weak self] (transaction, errorPointer) -> Any? in
-            guard let self = self else { return nil }
-            
-            do {
-                let requestDocument = try transaction.getDocument(requestRef)
-                
-                guard let data = requestDocument.data(),
-                      let senderId = data["senderId"] as? String,
-                      let status = data["status"] as? String else {
-                    errorPointer?.pointee = NSError(
-                        domain: "FriendRequestError",
-                        code: -1,
-                        userInfo: [NSLocalizedDescriptionKey: "Không tìm thấy thông tin lời mời"]
-                    )
-                    return nil
-                }
-                
-                // Check request status
-                if status != "pending" {
-                    errorPointer?.pointee = NSError(
-                        domain: "FriendRequestError",
-                        code: -2,
-                        userInfo: [NSLocalizedDescriptionKey: "Lời mời này đã được xử lý"]
-                    )
-                    return nil
-                }
-                
-                // Update invitation status to "accepted"
-                transaction.updateData(["status": "accepted"], forDocument: requestRef)
-                
-                // Add sender to recipient's friends list
-                let currentUserRef = self.db.collection("users").document(currentUser.uid)
-                transaction.updateData(["friendIds": FieldValue.arrayUnion([senderId])], forDocument: currentUserRef)
-                
-                // Add recipient to sender's friends list
-                let senderRef = self.db.collection("users").document(senderId)
-                transaction.updateData(["friendIds": FieldValue.arrayUnion([currentUser.uid])], forDocument: senderRef)
-                
-                return nil
-            } catch {
-                errorPointer?.pointee = error as NSError
-                return nil
-            }
-        } completion: { [weak self] (result, error) in
-            self?.isLoading = false
+        // Đọc thông tin lời mời
+        requestRef.getDocument { [weak self] (document, error) in
+            guard let self = self else { return }
             
             if let error = error {
+                print("DEBUG: Lỗi khi đọc lời mời: \(error.localizedDescription)")
+                self.isLoading = false
                 completion(false, "Lỗi: \(error.localizedDescription)")
-            } else {
-                completion(true, "Đã chấp nhận lời mời kết bạn thành công")
+                return
+            }
+            
+            guard let document = document, document.exists,
+                  let data = document.data(),
+                  let senderId = data["senderId"] as? String,
+                  let recipientId = data["recipientId"] as? String else {
+                print("DEBUG: Không tìm thấy lời mời")
+                self.isLoading = false
+                completion(false, "Không tìm thấy lời mời kết bạn")
+                return
+            }
+            
+            // Kiểm tra xem người đang thực hiện thao tác có phải là người nhận lời mời không
+            if recipientId != currentUser.uid {
+                print("DEBUG: Người dùng không phải là người nhận lời mời")
+                self.isLoading = false
+                completion(false, "Bạn không có quyền chấp nhận lời mời này")
+                return
+            }
+            
+            print("DEBUG: Người gửi: \(senderId), Người nhận: \(recipientId)")
+            
+            // THAY ĐỔI QUAN TRỌNG: Thực hiện các thao tác riêng biệt thay vì transaction
+            // 1. Cập nhật trạng thái lời mời trước
+            requestRef.updateData(["status": "accepted"]) { error in
+                if let error = error {
+                    print("DEBUG: Lỗi khi cập nhật trạng thái lời mời: \(error.localizedDescription)")
+                    self.isLoading = false
+                    completion(false, "Lỗi khi cập nhật trạng thái lời mời")
+                    return
+                }
+                
+                print("DEBUG: Đã cập nhật trạng thái lời mời thành công")
+                
+                // 2. Cập nhật danh sách bạn bè của người nhận
+                let currentUserRef = db.collection("users").document(currentUser.uid)
+                currentUserRef.updateData([
+                    "friendIds": FieldValue.arrayUnion([senderId])
+                ]) { error in
+                    if let error = error {
+                        print("DEBUG: Lỗi khi cập nhật danh sách bạn bè người nhận: \(error.localizedDescription)")
+                        self.isLoading = false
+                        completion(false, "Lỗi khi cập nhật danh sách bạn bè")
+                        return
+                    }
+                    
+                    print("DEBUG: Đã cập nhật danh sách bạn bè người nhận thành công")
+                    
+                    // 3. Cập nhật danh sách bạn bè của người gửi
+                    let senderRef = db.collection("users").document(senderId)
+                    senderRef.updateData([
+                        "friendIds": FieldValue.arrayUnion([currentUser.uid])
+                    ]) { error in
+                        self.isLoading = false
+                        
+                        if let error = error {
+                            print("DEBUG: Lỗi khi cập nhật danh sách bạn bè người gửi: \(error.localizedDescription)")
+                            completion(false, "Lỗi khi cập nhật danh sách bạn bè")
+                            return
+                        }
+                        
+                        print("DEBUG: Đã cập nhật danh sách bạn bè người gửi thành công")
+                        
+                        // Kiểm tra kết quả
+                        requestRef.getDocument { (doc, _) in
+                            if let status = doc?.data()?["status"] as? String {
+                                print("DEBUG: Trạng thái lời mời sau khi xử lý: \(status)")
+                            }
+                            
+                            // Thông báo cập nhật giao diện
+                            NotificationCenter.default.post(name: NSNotification.Name("RefreshFriendsList"), object: nil)
+                            
+                            completion(true, "Đã chấp nhận lời mời kết bạn thành công")
+                        }
+                    }
+                }
             }
         }
     }
@@ -387,11 +427,20 @@ class FriendRequestViewModel: ObservableObject {
             return
         }
         
+        print("DEBUG: Checking pending friend request for user: \(currentUser.uid)")
+        
         db.collection("friend_requests")
             .whereField("recipientId", isEqualTo: currentUser.uid)
             .whereField("status", isEqualTo: "pending")
             .getDocuments { snapshot, error in
+                if let error = error {
+                    print("DEBUG: Error getting pending request: \(error.localizedDescription)")
+                    completion(0)
+                    return
+                }
+                
                 guard let documents = snapshot?.documents else {
+                    print("D")
                     completion(0)
                     return
                 }
@@ -431,6 +480,30 @@ class FriendRequestViewModel: ObservableObject {
                 print("DEBUG: Danh sách friendIds trống, trả về danh sách bạn bè trống")
                 completion([])
                 return
+            }
+        }
+    }
+    
+    func checkUserDocumentExists(userId: String, completion: @escaping (Bool, String?) -> Void) {
+        let db = Firestore.firestore()
+        
+        // Check in collection users
+        db.collection("users").document(userId).getDocument { snapshot, error in
+            if let error = error {
+                completion(false, "Lỗi khi kiểm tra tài liệu người dùng: \(error.localizedDescription)")
+                return
+            }
+            
+            if let snapshot = snapshot, snapshot.exists {
+                let data = snapshot.data()
+                completion(true, "Tài liệu người dùng tồn tại với dữ liệu: \(data ?? [:])")
+            } else {
+                // Check if user exists in Auth
+                if let currentUser = Auth.auth().currentUser, currentUser.uid == userId {
+                    completion(false, "Người dùng tồn tại trong Auth nhưng không có trong Firestore. Email Auth: \(currentUser.email ?? "không rõ")")
+                } else {
+                    completion(false, "Tài liệu người dùng không tồn tại và không đăng nhập với ID này")
+                }
             }
         }
     }

@@ -7,6 +7,7 @@
 
 import SwiftUI
 import FirebaseAuth
+import FirebaseFirestore
 
 struct FriendsListView: View {
     @ObservedObject var viewModel: LocationViewModel
@@ -14,6 +15,9 @@ struct FriendsListView: View {
     @State private var showAddFriendSheet = false
     @State private var showFriendRequestsSheet = false
     @State private var pendingRequestsCount = 0
+    @State private var isRefreshing = false
+    @State private var errorMessage: String? = nil
+    @EnvironmentObject var authViewModel: AuthViewModel
     
     var body: some View {
         VStack {
@@ -24,7 +28,7 @@ struct FriendsListView: View {
                 
                 Spacer()
                 
-                // Badge shows the friend requests
+                // Badge hiển thị số lời mời kết bạn
                 Button(action: {
                     showFriendRequestsSheet = true
                 }) {
@@ -46,7 +50,7 @@ struct FriendsListView: View {
                 }
                 .padding(.trailing, 10)
                 
-                // Add new friedn button
+                // Nút thêm bạn mới
                 Button(action: {
                     showAddFriendSheet = true
                 }) {
@@ -58,8 +62,22 @@ struct FriendsListView: View {
             .padding(.horizontal)
             .padding(.top)
             
-            // Friend List
-            if viewModel.friends.isEmpty {
+            // Hiển thị trạng thái đang tải
+            if isRefreshing {
+                ProgressView("Đang tải danh sách bạn bè...")
+                    .padding()
+            }
+            
+            // Hiển thị lỗi nếu có
+            if let error = errorMessage {
+                Text(error)
+                    .font(.footnote)
+                    .foregroundColor(.red)
+                    .padding()
+            }
+            
+            // Danh sách bạn bè
+            if viewModel.friends.isEmpty && !isRefreshing {
                 VStack(spacing: 20) {
                     Image(systemName: "person.2.slash")
                         .font(.system(size: 60))
@@ -96,7 +114,7 @@ struct FriendsListView: View {
                             friend: friend,
                             hasLocation: viewModel.friendLocations[friend.id] != nil,
                             onTap: {
-                                // Focus camera on friend when tapping on their row
+                                // Focus camera vào bạn bè khi tap vào hàng
                                 viewModel.focusOnFriendLocation(friendId: friend.id)
                             }
                         )
@@ -104,44 +122,187 @@ struct FriendsListView: View {
                     .onDelete(perform: removeFriend)
                 }
                 .refreshable {
-                    // Refresh friends list when pulled down
-                    viewModel.startTrackingLocation()
+                    // Làm mới danh sách khi kéo xuống
+                    await refreshFriendsListAsync()
                 }
             }
         }
-        .sheet(isPresented: $showAddFriendSheet) {
+        .sheet(isPresented: $showAddFriendSheet, onDismiss: {
+            print("DEBUG: Sheet thêm bạn bè đã đóng")
+            refreshFriendsList()
+        }) {
             AddFriendView()
+                .environmentObject(authViewModel)
         }
-        .sheet(isPresented: $showFriendRequestsSheet) {
+        .sheet(isPresented: $showFriendRequestsSheet, onDismiss: {
+            print("DEBUG: Sheet lời mời kết bạn đã đóng")
+            refreshFriendsList()
+            loadPendingRequestsCount()
+        }) {
             FriendRequestsView()
+                .environmentObject(authViewModel)
         }
         .onAppear {
-            viewModel.startTrackingLocation()
+            print("DEBUG: FriendsListView xuất hiện")
+            setupCurrentUser()
+            refreshFriendsList()
             loadPendingRequestsCount()
+            setupNotificationObserver()
+        }
+        .onDisappear {
+            print("DEBUG: FriendsListView biến mất")
+            removeNotificationObserver()
         }
     }
     
-    // Load unread friend request count
-    private func loadPendingRequestsCount() {
-        friendViewModel.getPendingFriendRequestsCount { count in
-            DispatchQueue.main.async {
-                pendingRequestsCount = count
+    // Cập nhật thông tin người dùng hiện tại
+    private func setupCurrentUser() {
+        if let currentUser = Auth.auth().currentUser {
+            print("DEBUG: Auth user ID: \(currentUser.uid)")
+            
+            // Kiểm tra và cập nhật currentUser trong LocationViewModel
+            if viewModel.currentUser.id != currentUser.uid {
+                print("DEBUG: ID không khớp. Cập nhật currentUser trong LocationViewModel")
+                
+                if let user = authViewModel.currentUser {
+                    print("DEBUG: Đặt currentUser từ AuthViewModel: \(user.id)")
+                    viewModel.currentUser = user
+                } else {
+                    print("DEBUG: Không có currentUser trong AuthViewModel, tải từ Firestore")
+                    let db = Firestore.firestore()
+                    db.collection("users").document(currentUser.uid).getDocument { snapshot, error in
+                        if let error = error {
+                            print("DEBUG: Lỗi khi tải user: \(error.localizedDescription)")
+                            return
+                        }
+                        
+                        if let data = snapshot?.data(),
+                           let email = data["email"] as? String,
+                           let fullName = data["fullName"] as? String {
+                            let user = User(id: currentUser.uid, fullName: fullName, email: email)
+                            viewModel.currentUser = user
+                            print("DEBUG: Đã tải và cập nhật user: \(user.id)")
+                        }
+                    }
+                }
+            } else {
+                print("DEBUG: ID đã khớp: \(viewModel.currentUser.id)")
+            }
+        } else {
+            print("DEBUG: Không có người dùng nào đăng nhập")
+        }
+    }
+    
+    // Thiết lập observer cho thông báo
+    private func setupNotificationObserver() {
+        NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("RefreshFriendsList"),
+            object: nil,
+            queue: .main) { _ in
+                print("DEBUG: Nhận thông báo làm mới danh sách bạn bè")
+                refreshFriendsList()
+            }
+    }
+    
+    // Hủy observer khi view biến mất
+    private func removeNotificationObserver() {
+        NotificationCenter.default.removeObserver(self, name: NSNotification.Name("RefreshFriendsList"), object: nil)
+    }
+    
+    // Tải danh sách bạn bè (phiên bản không đồng bộ cho refreshable)
+    private func refreshFriendsListAsync() async {
+        await withCheckedContinuation { continuation in
+            refreshFriendsList {
+                continuation.resume()
             }
         }
     }
     
-    // Delete friend
+    // Tải danh sách bạn bè
+    private func refreshFriendsList(completion: (() -> Void)? = nil) {
+        guard let currentUser = Auth.auth().currentUser else {
+            print("DEBUG: Không có người dùng nào đăng nhập")
+            errorMessage = "Bạn cần đăng nhập để xem danh sách bạn bè"
+            completion?()
+            return
+        }
+        
+        isRefreshing = true
+        errorMessage = nil
+        
+        print("DEBUG: Đang làm mới danh sách bạn bè cho user: \(currentUser.uid)")
+        
+        // Khi chạy trực tiếp trong FriendsListView, chúng ta sẽ lấy danh sách bạn bè từ Firebase
+        let firebaseService = FirebaseService()
+        firebaseService.fetchFriends(forUserId: currentUser.uid) { friends in
+            
+            DispatchQueue.main.async {
+                self.isRefreshing = false
+                
+                print("DEBUG: Đã tải \(friends.count) bạn bè")
+                
+                // In ra danh sách để debug
+                for friend in friends {
+                    print("DEBUG: Bạn bè - ID: \(friend.id), Tên: \(friend.fullName)")
+                }
+                
+                // Cập nhật LocationViewModel
+                if friends.isEmpty {
+                    print("DEBUG: Danh sách bạn bè trống")
+                    // Vẫn cập nhật danh sách trống để UI hiển thị đúng
+                    self.viewModel.friends = []
+                } else {
+                    print("DEBUG: Cập nhật \(friends.count) bạn bè vào LocationViewModel")
+                    self.viewModel.friends = friends
+                    
+                    // Cập nhật theo dõi vị trí bạn bè
+                    let friendIds = friends.map { $0.id }
+                    print("DEBUG: Bắt đầu theo dõi vị trí cho \(friendIds.count) bạn bè")
+                    self.viewModel.startObservingFriendLocations(friendIds: friendIds)
+                }
+                
+                completion?()
+            }
+        }
+    }
+    
+    // Tải số lượng lời mời kết bạn đang chờ
+    private func loadPendingRequestsCount() {
+        guard let currentUser = Auth.auth().currentUser else {
+            pendingRequestsCount = 0
+            return
+        }
+        
+        let firebaseService = FirebaseService()
+        firebaseService.getPendingFriendRequestsCount(for: currentUser.uid) { count in
+            DispatchQueue.main.async {
+                self.pendingRequestsCount = count
+                print("DEBUG: Có \(count) lời mời kết bạn đang chờ")
+            }
+        }
+    }
+    
+    // Xóa bạn bè
     private func removeFriend(at offsets: IndexSet) {
-        guard let user = Auth.auth().currentUser else { return }
+        guard let currentUser = Auth.auth().currentUser else { return }
         
         offsets.forEach { index in
             let friend = viewModel.friends[index]
-            let firebaseService = FirebaseService()
+            print("DEBUG: Đang xóa bạn: \(friend.fullName) (ID: \(friend.id))")
             
-            firebaseService.removeFriend(currentUserId: user.uid, friendId: friend.id) { success in
+            let firebaseService = FirebaseService()
+            firebaseService.removeFriend(currentUserId: currentUser.uid, friendId: friend.id) { success in
                 if success {
+                    print("DEBUG: Xóa bạn thành công, làm mới danh sách")
                     // Cập nhật danh sách bạn bè sau khi xóa
-                    viewModel.startTrackingLocation()
+                    DispatchQueue.main.async {
+                        refreshFriendsList()
+                    }
+                } else {
+                    print("DEBUG: Xóa bạn thất bại")
+                    DispatchQueue.main.async {
+                        self.errorMessage = "Không thể xóa bạn bè. Vui lòng thử lại sau."
+                    }
                 }
             }
         }
@@ -162,7 +323,6 @@ struct FriendRow: View {
                         .frame(width: 50, height: 50)
                     
                     if let profileImage = friend.profileImageUrl {
-                        // If have avater, will load from URL
                         AsyncImage(url: URL(string: profileImage)) { image in
                             image
                                 .resizable()
@@ -180,7 +340,7 @@ struct FriendRow: View {
                             .foregroundColor(.blue)
                     }
                     
-                    // Online indicator
+                    // Online status indicator
                     if friend.isOnline {
                         Circle()
                             .fill(Color.green)
@@ -226,7 +386,7 @@ struct FriendRow: View {
         .buttonStyle(PlainButtonStyle())
         .contextMenu {
             Button(role: .destructive, action: {
-                // Friend delete feature in context menu
+                // Delete friend feature in context menu
                 if let currentUser = Auth.auth().currentUser {
                     let firebaseService = FirebaseService()
                     firebaseService.removeFriend(currentUserId: currentUser.uid, friendId: friend.id) { _ in }
@@ -238,7 +398,7 @@ struct FriendRow: View {
     }
 }
 
-// Invite friend view by email (not Firebase)
+// View invites friends via email (not using Firebase)
 struct InviteFriendView: View {
     @State private var email = ""
     @State private var isLoading = false

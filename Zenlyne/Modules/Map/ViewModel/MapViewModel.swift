@@ -135,7 +135,7 @@ public class LocationViewModel: ObservableObject {
     }
     
     // Start listening to your friends' locations in real time
-    private func startObservingFriendLocations(friendIds: [String]) {
+    func startObservingFriendLocations(friendIds: [String]) {
         firebaseService.observeFriendLocations(userIds: friendIds) { [weak self] locations in
             DispatchQueue.main.async {
                 self?.friendLocations = locations

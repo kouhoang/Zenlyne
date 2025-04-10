@@ -54,7 +54,8 @@ class AuthViewModel: ObservableObject {
             let userData: [String: Any] = [
                 "id": user.id,
                 "fullName": user.fullName,
-                "email": user.email
+                "email": user.email,
+                "friendIds": []
             ]
             try await Firestore.firestore().collection("users").document(user.id).setData(userData)
             await fetchUser()
@@ -179,6 +180,42 @@ class AuthViewModel: ObservableObject {
             Task { @MainActor in
                 await self.fetchUser()
             }
+        }
+    }
+    
+    func ensureUserDocumentExists() async {
+        guard let currentUser = Auth.auth().currentUser else {
+            print("DEBUG: Không có người dùng nào đang đăng nhập")
+            return
+        }
+        
+        let db = Firestore.firestore()
+        let docRef = db.collection("users").document(currentUser.uid)
+        
+        do {
+            let docSnapshot = try await docRef.getDocument()
+            
+            if !docSnapshot.exists {
+                print("DEBUG: Đang tạo tài liệu người dùng thiếu cho \(currentUser.email ?? "email không rõ")")
+                
+                // Create basic user document
+                let userData: [String: Any] = [
+                    "id": currentUser.uid,
+                    "fullName": currentUser.displayName ?? "User",
+                    "email": currentUser.email ?? "",
+                    "friendIds": []
+                ]
+                
+                try await docRef.setData(userData)
+                print("DEBUG: Đã tạo thành công tài liệu người dùng")
+                
+                // Refresh recurrent user information
+                await fetchUser()
+            } else {
+                print("DEBUG: Tài liệu người dùng tồn tại")
+            }
+        } catch {
+            print("DEBUG: Lỗi khi kiểm tra/tạo tài liệu người dùng: \(error.localizedDescription)")
         }
     }
 }
