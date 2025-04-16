@@ -17,6 +17,7 @@ public class LocationViewModel: ObservableObject {
     @Published var authorizationStatus: CLAuthorizationStatus = .notDetermined
     @Published var friendLocations: [String: UserLocation] = [:]
     @Published var friends: [User] = []
+    @Published var onlineFriends: [String: Bool] = [:]
     
     private let locationService: LocationServiceProtocol
     private let firebaseService: FirebaseServiceProtocol
@@ -52,12 +53,18 @@ public class LocationViewModel: ObservableObject {
     deinit {
         stopRefreshTimer()
         firebaseService.stopObservingFriendLocations()
+        
+        // Đảm bảo đặt trong trạng thái offline khi view bị huỷ
+        firebaseService.setUserOnlineStatus(userId: currentUser.id, isOnline: false)
     }
     
     func startTrackingLocation() {
         locationService.requestLocationPermission()
         locationService.startUpdatingLocation()
         isTrackingLocation = true
+        
+        // Đặt trong trạng thái online khi bắt đầu theo dõi vị trí
+        firebaseService.setUserOnlineStatus(userId: currentUser.id, isOnline: true)
         
         // If position is available, focus immediately
         if let location = userLocation {
@@ -74,6 +81,9 @@ public class LocationViewModel: ObservableObject {
         isTrackingLocation = false
         firebaseService.stopObservingFriendLocations()
         stopRefreshTimer()
+        
+        // Đặt trạng thái offline khi dừng theo dõi vị trí
+        firebaseService.setUserOnlineStatus(userId: currentUser.id, isOnline: false)
     }
     
     // Focus camera on user's location
@@ -130,6 +140,7 @@ public class LocationViewModel: ObservableObject {
                 // Start listening for your friends location
                 let friendIds = friends.map { $0.id }
                 self?.startObservingFriendLocations(friendIds: friendIds)
+                self?.startObservingFriendOnlineStatus(friendIds: friendIds)
             }
         }
     }
@@ -143,9 +154,37 @@ public class LocationViewModel: ObservableObject {
         }
     }
     
+    func startObservingFriendOnlineStatus(friendIds: [String]) {
+        for friendId in friendIds {
+            firebaseService.observeUserOnlineStatus(userId: friendId) {
+                [weak self] isOnline in
+                DispatchQueue.main.sync {
+                    self?.onlineFriends[friendId] = isOnline
+                    
+                    if let index = self?.friends.firstIndex(where : { $0.id == friendId}) {
+                        self?.friends[index].isOnline = isOnline
+                    }
+                }
+            }
+        }
+    }
+    
     // Get user information from ID
     func getFriend(byId id: String) -> User? {
         return friends.first { $0.id == id }
+    }
+    
+    func isFriendOnline(friendId: String) -> Bool {
+        return onlineFriends[friendId] ?? false
+    }
+    
+    func timeSinceLastUpdate(friendId: String) -> String? {
+        guard let location = friendLocations[friendId] else { return nil }
+        
+        let lastUpdateDate = Date(timeIntervalSince1970: location.timestamp)
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter.localizedString(for: lastUpdateDate, relativeTo: Date())
     }
 }
 

@@ -342,6 +342,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Zenlyne/Info.plist;
 				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "Ứng dụng cần quyền truy cập vị trí của bạn để hiển thị vị trí hiện tại trên bản đồ";
+				INFOPLIST_KEY_NSLocationAlwaysUsageDescription = "Zenlyne cần truy cập vị trí của bạn để chia sẻ vị trí với bạn bè, kể cả khi ứng đụng đang chạy ở nền.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Ứng dụng cần quyền truy cập vị trí của bạn để hiển thị vị trí hiện tại trên bản đồ";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
@@ -375,6 +376,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Zenlyne/Info.plist;
 				INFOPLIST_KEY_NSLocationAlwaysAndWhenInUseUsageDescription = "Ứng dụng cần quyền truy cập vị trí của bạn để hiển thị vị trí hiện tại trên bản đồ";
+				INFOPLIST_KEY_NSLocationAlwaysUsageDescription = "Zenlyne cần truy cập vị trí của bạn để chia sẻ vị trí với bạn bè, kể cả khi ứng đụng đang chạy ở nền.";
 				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Ứng dụng cần quyền truy cập vị trí của bạn để hiển thị vị trí hiện tại trên bản đồ";
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;

@@ -64,7 +64,7 @@ struct FriendsListView: View {
             .padding(.top)
             .padding(.bottom, 10)
             
-            // Phần nội dung chính - đã sửa
+            // Phần nội dung chính
             ZStack(alignment: .top) {
                 if isRefreshing {
                     ProgressView("Đang tải danh sách bạn bè...")
@@ -109,18 +109,27 @@ struct FriendsListView: View {
                 } else {
                     List {
                         ForEach(viewModel.friends) { friend in
-                            FriendRow(
+                            EnhancedFriendRow(
                                 friend: friend,
                                 hasLocation: viewModel.friendLocations[friend.id] != nil,
+                                isOnline: friend.isOnline,
+                                lastSeen: friend.lastSeen,
+                                timeSinceLastUpdate: viewModel.timeSinceLastUpdate(friendId: friend.id),
                                 onTap: {
                                     // Focus camera vào bạn bè khi tap vào hàng
                                     viewModel.focusOnFriendLocation(friendId: friend.id)
+                                    // Đóng view FriendsList và quay lại màn hình Map
+                                    NotificationCenter.default.post(
+                                        name: NSNotification.Name("FriendSelected"),
+                                        object: nil,
+                                        userInfo: ["friendId": friend.id]
+                                    )
                                 }
                             )
                         }
                         .onDelete(perform: removeFriend)
                     }
-                    .listStyle(PlainListStyle()) // Sử dụng PlainListStyle
+                    .listStyle(PlainListStyle())
                     .refreshable {
                         // Làm mới danh sách khi kéo xuống
                         await refreshFriendsListAsync()
@@ -162,33 +171,26 @@ struct FriendsListView: View {
         if let currentUser = Auth.auth().currentUser {
             print("DEBUG: Auth user ID: \(currentUser.uid)")
             
-            // Kiểm tra và cập nhật currentUser trong LocationViewModel
-            if viewModel.currentUser.id != currentUser.uid {
-                print("DEBUG: ID không khớp. Cập nhật currentUser trong LocationViewModel")
-                
-                if let user = authViewModel.currentUser {
-                    print("DEBUG: Đặt currentUser từ AuthViewModel: \(user.id)")
-                    viewModel.currentUser = user
-                } else {
-                    print("DEBUG: Không có currentUser trong AuthViewModel, tải từ Firestore")
-                    let db = Firestore.firestore()
-                    db.collection("users").document(currentUser.uid).getDocument { snapshot, error in
-                        if let error = error {
-                            print("DEBUG: Lỗi khi tải user: \(error.localizedDescription)")
-                            return
-                        }
-                        
-                        if let data = snapshot?.data(),
-                           let email = data["email"] as? String,
-                           let fullName = data["fullName"] as? String {
-                            let user = User(id: currentUser.uid, fullName: fullName, email: email)
-                            viewModel.currentUser = user
-                            print("DEBUG: Đã tải và cập nhật user: \(user.id)")
-                        }
+            if let user = authViewModel.currentUser {
+                print("DEBUG: Đặt currentUser từ AuthViewModel: \(user.id)")
+                viewModel.currentUser = user
+            } else {
+                print("DEBUG: Không có currentUser trong AuthViewModel, tải từ Firestore")
+                let db = Firestore.firestore()
+                db.collection("users").document(currentUser.uid).getDocument { snapshot, error in
+                    if let error = error {
+                        print("DEBUG: Lỗi khi tải user: \(error.localizedDescription)")
+                        return
+                    }
+                    
+                    if let data = snapshot?.data(),
+                       let email = data["email"] as? String,
+                       let fullName = data["fullName"] as? String {
+                        let user = User(id: currentUser.uid, fullName: fullName, email: email)
+                        viewModel.currentUser = user
+                        print("DEBUG: Đã tải và cập nhật user: \(user.id)")
                     }
                 }
-            } else {
-                print("DEBUG: ID đã khớp: \(viewModel.currentUser.id)")
             }
         } else {
             print("DEBUG: Không có người dùng nào đăng nhập")
@@ -246,11 +248,12 @@ struct FriendsListView: View {
                 // Cập nhật danh sách bạn bè trong viewModel
                 self.viewModel.friends = friends
                 
-                // Theo dõi vị trí của bạn bè
+                // Theo dõi vị trí và trạng thái online của bạn bè
                 if !friends.isEmpty {
                     let friendIds = friends.map { $0.id }
-                    print("DEBUG: Bắt đầu theo dõi vị trí cho \(friendIds.count) bạn bè")
+                    print("DEBUG: Bắt đầu theo dõi vị trí và trạng thái cho \(friendIds.count) bạn bè")
                     self.viewModel.startObservingFriendLocations(friendIds: friendIds)
+                    self.viewModel.startObservingFriendOnlineStatus(friendIds: friendIds)
                 }
                 
                 completion?()
@@ -300,14 +303,23 @@ struct FriendsListView: View {
     }
 }
 
-struct FriendRow: View {
+struct EnhancedFriendRow: View {
     let friend: User
     let hasLocation: Bool
+    let isOnline: Bool
+    let lastSeen: Date?
+    let timeSinceLastUpdate: String?
     let onTap: () -> Void
+    private let formatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter
+    }()
     
     var body: some View {
         Button(action: onTap) {
             HStack {
+                // Avatar với trạng thái online/offline
                 ZStack {
                     Circle()
                         .fill(Color.blue.opacity(0.2))
@@ -331,37 +343,43 @@ struct FriendRow: View {
                             .foregroundColor(.blue)
                     }
                     
-                    // Online status indicator
-                    if friend.isOnline {
-                        Circle()
-                            .fill(Color.green)
-                            .frame(width: 14, height: 14)
-                            .overlay(
-                                Circle()
-                                    .stroke(Color.white, lineWidth: 2)
-                            )
-                            .position(x: 40, y: 40)
-                    }
+                    // Online status indicator - chấm màu xanh lá hoặc đỏ
+                    Circle()
+                        .fill(isOnline ? Color.green : Color.red)
+                        .frame(width: 14, height: 14)
+                        .overlay(
+                            Circle()
+                                .stroke(Color.white, lineWidth: 2)
+                        )
+                        .position(x: 40, y: 40)
                 }
                 
                 VStack(alignment: .leading, spacing: 4) {
                     Text(friend.fullName)
                         .font(.headline)
                     
-                    if friend.isOnline {
-                        Text("Online now")
+                    // Hiển thị thời gian online/offline
+                    if isOnline {
+                        Text("Đang hoạt động")
                             .font(.subheadline)
                             .foregroundColor(.green)
-                    } else if let lastSeen = friend.lastSeen {
-                        Text("Last seen \(lastSeen, formatter: RelativeDateTimeFormatter())")
+                    } else if let lastSeen = lastSeen {
+                        Text("Hoạt động \(formatter.localizedString(for: lastSeen, relativeTo: Date()))")
                             .font(.subheadline)
+                            .foregroundColor(.gray)
+                    }
+                    
+                    // Hiển thị thông tin cập nhật vị trí gần nhất
+                    if let timeSinceLastUpdate = timeSinceLastUpdate {
+                        Text("Vị trí cập nhật \(timeSinceLastUpdate)")
+                            .font(.caption)
                             .foregroundColor(.gray)
                     }
                 }
                 
                 Spacer()
                 
-                // Location icon
+                // Icon hiển thị trạng thái vị trí
                 if hasLocation {
                     Image(systemName: "location.fill")
                         .foregroundColor(.blue)
