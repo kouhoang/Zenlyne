@@ -20,7 +20,8 @@ struct FriendsListView: View {
     @EnvironmentObject var authViewModel: AuthViewModel
     
     var body: some View {
-        VStack {
+        VStack(spacing: 0) {
+            // Header với nút chức năng
             HStack {
                 Text("Bạn bè")
                     .font(.title)
@@ -61,71 +62,72 @@ struct FriendsListView: View {
             }
             .padding(.horizontal)
             .padding(.top)
+            .padding(.bottom, 10)
             
-            // Hiển thị trạng thái đang tải
-            if isRefreshing {
-                ProgressView("Đang tải danh sách bạn bè...")
-                    .padding()
-            }
-            
-            // Hiển thị lỗi nếu có
-            if let error = errorMessage {
-                Text(error)
-                    .font(.footnote)
-                    .foregroundColor(.red)
-                    .padding()
-            }
-            
-            // Danh sách bạn bè
-            if viewModel.friends.isEmpty && !isRefreshing {
-                VStack(spacing: 20) {
-                    Image(systemName: "person.2.slash")
-                        .font(.system(size: 60))
-                        .foregroundColor(.gray)
-                    
-                    Text("Bạn chưa có bạn bè nào")
-                        .font(.headline)
-                    
-                    Text("Mời bạn bè tham gia Zenlyne để xem vị trí của họ")
-                        .font(.subheadline)
-                        .foregroundColor(.gray)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal)
-                    
-                    Button(action: {
-                        showAddFriendSheet = true
-                    }) {
-                        Text("Thêm bạn bè")
-                            .fontWeight(.semibold)
-                            .foregroundColor(.white)
-                            .padding(.vertical, 12)
-                            .padding(.horizontal, 20)
-                            .background(Color.blue)
-                            .cornerRadius(10)
+            // Phần nội dung chính - đã sửa
+            ZStack(alignment: .top) {
+                if isRefreshing {
+                    ProgressView("Đang tải danh sách bạn bè...")
+                        .padding()
+                }
+                else if let error = errorMessage {
+                    Text(error)
+                        .font(.footnote)
+                        .foregroundColor(.red)
+                        .padding()
+                }
+                else if viewModel.friends.isEmpty {
+                    VStack(spacing: 20) {
+                        Image(systemName: "person.2.slash")
+                            .font(.system(size: 60))
+                            .foregroundColor(.gray)
+                        
+                        Text("Bạn chưa có bạn bè nào")
+                            .font(.headline)
+                        
+                        Text("Mời bạn bè tham gia Zenlyne để xem vị trí của họ")
+                            .font(.subheadline)
+                            .foregroundColor(.gray)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal)
+                        
+                        Button(action: {
+                            showAddFriendSheet = true
+                        }) {
+                            Text("Thêm bạn bè")
+                                .fontWeight(.semibold)
+                                .foregroundColor(.white)
+                                .padding(.vertical, 12)
+                                .padding(.horizontal, 20)
+                                .background(Color.blue)
+                                .cornerRadius(10)
+                        }
+                        .padding(.top, 10)
                     }
-                    .padding(.top, 10)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding()
-            } else {
-                List {
-                    ForEach(viewModel.friends) { friend in
-                        FriendRow(
-                            friend: friend,
-                            hasLocation: viewModel.friendLocations[friend.id] != nil,
-                            onTap: {
-                                // Focus camera vào bạn bè khi tap vào hàng
-                                viewModel.focusOnFriendLocation(friendId: friend.id)
-                            }
-                        )
+                    .padding()
+                    .frame(maxWidth: .infinity)
+                } else {
+                    List {
+                        ForEach(viewModel.friends) { friend in
+                            FriendRow(
+                                friend: friend,
+                                hasLocation: viewModel.friendLocations[friend.id] != nil,
+                                onTap: {
+                                    // Focus camera vào bạn bè khi tap vào hàng
+                                    viewModel.focusOnFriendLocation(friendId: friend.id)
+                                }
+                            )
+                        }
+                        .onDelete(perform: removeFriend)
                     }
-                    .onDelete(perform: removeFriend)
-                }
-                .refreshable {
-                    // Làm mới danh sách khi kéo xuống
-                    await refreshFriendsListAsync()
+                    .listStyle(PlainListStyle()) // Sử dụng PlainListStyle
+                    .refreshable {
+                        // Làm mới danh sách khi kéo xuống
+                        await refreshFriendsListAsync()
+                    }
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
         .sheet(isPresented: $showAddFriendSheet, onDismiss: {
             print("DEBUG: Sheet thêm bạn bè đã đóng")
@@ -393,98 +395,6 @@ struct FriendRow: View {
                 }
             }) {
                 Label("Xóa bạn bè", systemImage: "person.badge.minus")
-            }
-        }
-    }
-}
-
-// View invites friends via email (not using Firebase)
-struct InviteFriendView: View {
-    @State private var email = ""
-    @State private var isLoading = false
-    @State private var showAlert = false
-    @State private var alertMessage = ""
-    @Environment(\.dismiss) private var dismiss
-    @EnvironmentObject var authViewModel: AuthViewModel
-    
-    var body: some View {
-        NavigationView {
-            VStack(spacing: 20) {
-                Text("Mời bạn bè của bạn")
-                    .font(.title)
-                    .fontWeight(.bold)
-                    .padding(.top)
-                
-                Text("Nhập email của bạn bè để gửi lời mời")
-                    .font(.subheadline)
-                    .foregroundColor(.gray)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal)
-                
-                TextField("Email bạn bè", text: $email)
-                    .padding()
-                    .background(Color(.systemGray6))
-                    .cornerRadius(10)
-                    .padding(.horizontal)
-                    .autocapitalization(.none)
-                    .keyboardType(.emailAddress)
-                
-                Button(action: sendInvite) {
-                    if isLoading {
-                        ProgressView()
-                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                    } else {
-                        Text("Gửi lời mời")
-                    }
-                }
-                .frame(height: 50)
-                .frame(maxWidth: .infinity)
-                .background(Color.blue)
-                .foregroundColor(.white)
-                .cornerRadius(10)
-                .padding(.horizontal)
-                .disabled(email.isEmpty || isLoading)
-                .opacity(email.isEmpty ? 0.6 : 1.0)
-                
-                Spacer()
-            }
-            .padding()
-            .alert(isPresented: $showAlert) {
-                Alert(
-                    title: Text("Thông báo"),
-                    message: Text(alertMessage),
-                    dismissButton: .default(Text("OK"))
-                )
-            }
-            .navigationBarItems(trailing: Button("Đóng") {
-                dismiss()
-            })
-            .onTapGesture {
-                hideKeyboard()
-            }
-        }
-    }
-    
-    func sendInvite() {
-        isLoading = true
-        
-        guard let user = authViewModel.currentUser else {
-            isLoading = false
-            alertMessage = "Không thể xác định người dùng hiện tại"
-            showAlert = true
-            return
-        }
-        
-        let firebaseService = FirebaseService()
-        firebaseService.inviteFriendByEmail(email: email, from: user) { success, message in
-            DispatchQueue.main.async {
-                isLoading = false
-                alertMessage = message
-                showAlert = true
-                
-                if success {
-                    email = ""
-                }
             }
         }
     }

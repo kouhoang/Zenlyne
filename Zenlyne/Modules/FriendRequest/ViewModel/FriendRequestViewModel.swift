@@ -481,6 +481,54 @@ class FriendRequestViewModel: ObservableObject {
                 completion([])
                 return
             }
+            
+            // Tạo một DispatchGroup để đồng bộ việc tải dữ liệu bạn bè
+            let group = DispatchGroup()
+            var friends: [User] = []
+            
+            // Lấy thông tin chi tiết cho từng người bạn
+            for friendId in friendIds {
+                group.enter()
+                
+                self.db.collection("users").document(friendId).getDocument { friendSnapshot, friendError in
+                    defer {
+                        group.leave()
+                    }
+                    
+                    if let friendError = friendError {
+                        print("DEBUG: Lỗi khi tải thông tin bạn bè \(friendId): \(friendError)")
+                        return
+                    }
+                    
+                    guard let friendDoc = friendSnapshot, friendDoc.exists, let friendData = friendDoc.data() else {
+                        print("DEBUG: Không tìm thấy thông tin bạn bè \(friendId)")
+                        return
+                    }
+                    
+                    // Tạo đối tượng User từ dữ liệu
+                    if let fullName = friendData["fullName"] as? String,
+                       let email = friendData["email"] as? String {
+                        var friend = User(id: friendId, fullName: fullName, email: email)
+                        
+                        // Thêm các thông tin khác nếu có
+                        friend.profileImageUrl = friendData["profileImageUrl"] as? String
+                        friend.isOnline = friendData["isOnline"] as? Bool ?? false
+                        
+                        if let lastSeenTimestamp = friendData["lastSeen"] as? TimeInterval {
+                            friend.lastSeen = Date(timeIntervalSince1970: lastSeenTimestamp)
+                        }
+                        
+                        friends.append(friend)
+                        print("DEBUG: Đã thêm bạn bè: \(fullName) (ID: \(friendId))")
+                    }
+                }
+            }
+            
+            // Khi tất cả các thao tác tải dữ liệu bạn bè hoàn tất
+            group.notify(queue: .main) {
+                print("DEBUG: Hoàn tất tải \(friends.count) bạn bè")
+                completion(friends)
+            }
         }
     }
     
