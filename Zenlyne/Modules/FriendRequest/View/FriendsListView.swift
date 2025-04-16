@@ -229,35 +229,25 @@ struct FriendsListView: View {
             return
         }
         
+        // Đặt trạng thái đang tải
         isRefreshing = true
         errorMessage = nil
         
         print("DEBUG: Đang làm mới danh sách bạn bè cho user: \(currentUser.uid)")
         
         // Khi chạy trực tiếp trong FriendsListView, chúng ta sẽ lấy danh sách bạn bè từ Firebase
-        let firebaseService = FirebaseService()
-        firebaseService.fetchFriends(forUserId: currentUser.uid) { friends in
-            
+        friendViewModel.fetchFriends(forUserId: currentUser.uid) { friends in
             DispatchQueue.main.async {
+                // Đặt trạng thái đã tải xong
                 self.isRefreshing = false
                 
-                print("DEBUG: Đã tải \(friends.count) bạn bè")
+                print("DEBUG: Đã tải \(friends.count) bạn bè từ friendViewModel")
                 
-                // In ra danh sách để debug
-                for friend in friends {
-                    print("DEBUG: Bạn bè - ID: \(friend.id), Tên: \(friend.fullName)")
-                }
+                // Cập nhật danh sách bạn bè trong viewModel
+                self.viewModel.friends = friends
                 
-                // Cập nhật LocationViewModel
-                if friends.isEmpty {
-                    print("DEBUG: Danh sách bạn bè trống")
-                    // Vẫn cập nhật danh sách trống để UI hiển thị đúng
-                    self.viewModel.friends = []
-                } else {
-                    print("DEBUG: Cập nhật \(friends.count) bạn bè vào LocationViewModel")
-                    self.viewModel.friends = friends
-                    
-                    // Cập nhật theo dõi vị trí bạn bè
+                // Theo dõi vị trí của bạn bè
+                if !friends.isEmpty {
                     let friendIds = friends.map { $0.id }
                     print("DEBUG: Bắt đầu theo dõi vị trí cho \(friendIds.count) bạn bè")
                     self.viewModel.startObservingFriendLocations(friendIds: friendIds)
@@ -275,8 +265,7 @@ struct FriendsListView: View {
             return
         }
         
-        let firebaseService = FirebaseService()
-        firebaseService.getPendingFriendRequestsCount(for: currentUser.uid) { count in
+        friendViewModel.getPendingFriendRequestsCount { count in
             DispatchQueue.main.async {
                 self.pendingRequestsCount = count
                 print("DEBUG: Có \(count) lời mời kết bạn đang chờ")
