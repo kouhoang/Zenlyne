@@ -31,11 +31,11 @@ class FirebaseService: FirebaseServiceProtocol {
     
     // MARK: - User Location Management
     
-    // Lưu vị trí người dùng hiện tại vào Realtime Database
+    // Save current user location to Realtime Database
     func saveUserLocation(userId: String, location: UserLocation) {
         let locationRef = database.child("locations").child(userId)
         
-        // Thêm timestamp vào lưu thời gian gần nhất vị trí được cập nhật
+        // Add timestamp to save the last time the location was updated
         var locationData = location.toDictionary()
         locationData["updatedAt"] = ServerValue.timestamp()
         let expiresInSecond: TimeInterval = 72 * 60 * 60
@@ -43,12 +43,12 @@ class FirebaseService: FirebaseServiceProtocol {
         
         locationRef.setValue(locationData)
         
-        // Cập nhật thời gian xuất hiện cuối cùng
+        // Update last appearance time
         let lastSeenRef = database.child("users").child(userId).child("lastSeen")
         lastSeenRef.setValue(ServerValue.timestamp())
     }
     
-    // Lấy vị trí cuối cùng của người dùng
+    // Get the user's last location
     func fetchUserLastLocation(userId: String, completion: @escaping (UserLocation?) -> Void) {
         let locationRef = database.child("locations").child(userId)
         
@@ -61,10 +61,10 @@ class FirebaseService: FirebaseServiceProtocol {
                 return
             }
             
-            // Kiểm tra xem vị trí có hết hạn chưa
+            // Check if the position has expired
             if let expiresAt = value["expiresAt"] as? TimeInterval,
                Date(timeIntervalSince1970: expiresAt / 1000) < Date() {
-                // Vị trí đã hết hạn
+                // Position has expired
                 completion(nil)
                 return
             }
@@ -79,12 +79,12 @@ class FirebaseService: FirebaseServiceProtocol {
         }
     }
     
-    // Theo dõi vị trí của bạn bè theo thời gian thực
+    // Track your friends' locations in real time
     func observeFriendLocations(userIds: [String], completion: @escaping ([String: UserLocation]) -> Void) {
-        // Dừng tất cả các observer đang chạy
+        // Stop all running observers
         stopObservingFriendLocations()
         
-        // Tạo observer mới cho mỗi bạn bè
+        // Create new observer for each friend
         for userId in userIds {
             let locationRef = database.child("locations").child(userId)
             let handle = locationRef.observe(.value) { [weak self] snapshot in
@@ -96,10 +96,10 @@ class FirebaseService: FirebaseServiceProtocol {
                     return
                 }
                 
-                // Kiểm tra xem vị trí có hết hạn chưa
+                // Check if the position has expired
                 if let expiresAt = value["expiresAt"] as? TimeInterval,
                    Date(timeIntervalSince1970: expiresAt / 1000) < Date() {
-                    // Vị trí đã hết hạn, không cần cập nhật
+                    // Location is expired, no need to update
                     return
                 }
                 
@@ -109,9 +109,9 @@ class FirebaseService: FirebaseServiceProtocol {
                     timestamp: timestamp
                 )
                 
-                // Lấy vị trí của tất cả bạn bè để cập nhật UI
+                // Get location of all friends to update UI
                 self?.fetchAllFriendLocations(userIds: userIds) { locations in
-                    // Kiểm tra và lọc các vị trí hết hạn
+                    // Check and filter expired positions
                     var validLocations = [String: UserLocation]()
                     for (userId, location) in locations {
                         if location.timestamp + (72 * 60 * 60) > Date().timeIntervalSince1970 {
@@ -125,11 +125,11 @@ class FirebaseService: FirebaseServiceProtocol {
             locationObservers.append(handle)
         }
         
-        // Lấy vị trí hiện tại của tất cả bạn bè
+        // Get current location of all friends
         fetchAllFriendLocations(userIds: userIds, completion: completion)
     }
     
-    // Dừng theo dõi vị trí bạn bè
+    // Stop tracking your friends location
     func stopObservingFriendLocations() {
         for handle in locationObservers {
             database.removeObserver(withHandle: handle)
@@ -139,12 +139,12 @@ class FirebaseService: FirebaseServiceProtocol {
     
     // MARK: - Online Status Management
     
-    // Đặt trạng thái online/offline cho người dùng
+    // Set online/offline status for users
     func setUserOnlineStatus(userId: String, isOnline: Bool) {
         let onlineRef = database.child("users").child(userId).child("isOnline")
         onlineRef.setValue(isOnline)
         
-        // Cài đặt trạng thái offline khi mất kết nối
+        // Set offline status when connection is lost
         if isOnline {
             let onDisconnectRef = database.child("users").child(userId)
             onDisconnectRef.onDisconnectUpdateChildValues([
@@ -154,9 +154,9 @@ class FirebaseService: FirebaseServiceProtocol {
         }
     }
     
-    // Theo dõi trạng thái online của một người dùng
+    // Track a user's online status
     func observeUserOnlineStatus(userId: String, completion: @escaping (Bool) -> Void) {
-        // Hủy observer cũ nếu có
+        // Remove old observer if any
         stopObservingUserOnlineStatus(userId: userId)
         
         let onlineRef = database.child("users").child(userId).child("isOnline")
@@ -168,7 +168,7 @@ class FirebaseService: FirebaseServiceProtocol {
         onlineStatusObservers[userId] = handle
     }
     
-    // Dừng theo dõi trạng thái online của người dùng
+    // Stop tracking user online status
     func stopObservingUserOnlineStatus(userId: String) {
         if let handle = onlineStatusObservers[userId] {
             database.removeObserver(withHandle: handle)
@@ -178,7 +178,7 @@ class FirebaseService: FirebaseServiceProtocol {
     
     // MARK: - Friend Management
     
-    // Lấy danh sách bạn bè của người dùng
+    // Get user's friends list
     func fetchFriends(forUserId userId: String, completion: @escaping ([User]) -> Void) {
         print("DEBUG: Đang tải danh sách bạn bè cho userId: \(userId)")
         
@@ -206,7 +206,7 @@ class FirebaseService: FirebaseServiceProtocol {
                 return
             }
             
-            // Lấy danh sách ID bạn bè
+            // Get friend ID's list
             let friendIds = data["friendIds"] as? [String] ?? []
             print("DEBUG: Tìm thấy \(friendIds.count) friendIds: \(friendIds)")
             
@@ -216,7 +216,7 @@ class FirebaseService: FirebaseServiceProtocol {
                 return
             }
             
-            // Lấy thông tin chi tiết của từng người bạn
+            // Get detailed information of each friend
             var friends: [User] = []
             let group = DispatchGroup()
             
@@ -253,7 +253,7 @@ class FirebaseService: FirebaseServiceProtocol {
             group.notify(queue: .main) { [weak self] in
                 print("DEBUG: Đã tải xong danh sách \(friends.count) bạn bè")
                 
-                // Cập nhật trạng thái online
+                // Update online status
                 if let self = self {
                     self.fetchOnlineStatus(forUsers: friends) { updatedFriends in
                         print("DEBUG: Đã cập nhật trạng thái online cho \(updatedFriends.count) bạn bè")
@@ -266,7 +266,7 @@ class FirebaseService: FirebaseServiceProtocol {
         }
     }
     
-    // Cập nhật trạng thái online của bạn bè
+    // Update friends' online state
     private func fetchOnlineStatus(forUsers users: [User], completion: @escaping ([User]) -> Void) {
         let group = DispatchGroup()
         var updatedUsers = users
@@ -297,7 +297,7 @@ class FirebaseService: FirebaseServiceProtocol {
     
     // MARK: - Internal Helper Methods
     
-    // Phương thức nội bộ để lấy vị trí của tất cả bạn bè
+    // Internal method to get location of all friends
     private func fetchAllFriendLocations(userIds: [String], completion: @escaping ([String: UserLocation]) -> Void) {
         var friendLocations = [String: UserLocation]()
         let group = DispatchGroup()
@@ -316,10 +316,10 @@ class FirebaseService: FirebaseServiceProtocol {
                     return
                 }
                 
-                // Kiểm tra xem vị trí có hết hạn chưa
+                // Check if the position has expired
                 if let expiresAt = value["expiresAt"] as? TimeInterval,
                    Date(timeIntervalSince1970: expiresAt / 1000) < Date() {
-                    // Vị trí đã hết hạn
+                    //Check if the position has expired
                     return
                 }
                 

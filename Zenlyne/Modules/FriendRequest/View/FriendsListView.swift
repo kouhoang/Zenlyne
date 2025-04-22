@@ -21,7 +21,7 @@ struct FriendsListView: View {
     
     var body: some View {
         VStack(spacing: 0) {
-            // Header với nút chức năng
+            // Header with function button
             HStack {
                 Text("Bạn bè")
                     .font(.title)
@@ -29,7 +29,7 @@ struct FriendsListView: View {
                 
                 Spacer()
                 
-                // Badge hiển thị số lời mời kết bạn
+                // Badge shows number of friend requests
                 Button(action: {
                     showFriendRequestsSheet = true
                 }) {
@@ -51,7 +51,7 @@ struct FriendsListView: View {
                 }
                 .padding(.trailing, 10)
                 
-                // Nút thêm bạn mới
+                // Add friend button
                 Button(action: {
                     showAddFriendSheet = true
                 }) {
@@ -64,7 +64,7 @@ struct FriendsListView: View {
             .padding(.top)
             .padding(.bottom, 10)
             
-            // Phần nội dung chính
+            // Main content
             ZStack(alignment: .top) {
                 if isRefreshing {
                     ProgressView("Đang tải danh sách bạn bè...")
@@ -131,7 +131,7 @@ struct FriendsListView: View {
                     }
                     .listStyle(PlainListStyle())
                     .refreshable {
-                        // Làm mới danh sách khi kéo xuống
+                        // Refresh list on pull down
                         await refreshFriendsListAsync()
                     }
                 }
@@ -139,14 +139,12 @@ struct FriendsListView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
         .sheet(isPresented: $showAddFriendSheet, onDismiss: {
-            print("DEBUG: Sheet thêm bạn bè đã đóng")
             refreshFriendsList()
         }) {
             AddFriendView()
                 .environmentObject(authViewModel)
         }
         .sheet(isPresented: $showFriendRequestsSheet, onDismiss: {
-            print("DEBUG: Sheet lời mời kết bạn đã đóng")
             refreshFriendsList()
             loadPendingRequestsCount()
         }) {
@@ -154,19 +152,17 @@ struct FriendsListView: View {
                 .environmentObject(authViewModel)
         }
         .onAppear {
-            print("DEBUG: FriendsListView xuất hiện")
             setupCurrentUser()
             refreshFriendsList()
             loadPendingRequestsCount()
             setupNotificationObserver()
         }
         .onDisappear {
-            print("DEBUG: FriendsListView biến mất")
             removeNotificationObserver()
         }
     }
     
-    // Cập nhật thông tin người dùng hiện tại
+    // Set observer for notification
     private func setupCurrentUser() {
         if let currentUser = Auth.auth().currentUser {
             print("DEBUG: Auth user ID: \(currentUser.uid)")
@@ -197,7 +193,7 @@ struct FriendsListView: View {
         }
     }
     
-    // Thiết lập observer cho thông báo
+    // Set observer for notification
     private func setupNotificationObserver() {
         NotificationCenter.default.addObserver(
             forName: NSNotification.Name("RefreshFriendsList"),
@@ -208,12 +204,12 @@ struct FriendsListView: View {
             }
     }
     
-    // Hủy observer khi view biến mất
+    // Destroy observer when view disappears
     private func removeNotificationObserver() {
         NotificationCenter.default.removeObserver(self, name: NSNotification.Name("RefreshFriendsList"), object: nil)
     }
     
-    // Tải danh sách bạn bè (phiên bản không đồng bộ cho refreshable)
+    // Load friends list (async version for refreshable)
     private func refreshFriendsListAsync() async {
         await withCheckedContinuation { continuation in
             refreshFriendsList {
@@ -222,7 +218,7 @@ struct FriendsListView: View {
         }
     }
     
-    // Tải danh sách bạn bè
+    // Load friend list
     private func refreshFriendsList(completion: (() -> Void)? = nil) {
         guard let currentUser = Auth.auth().currentUser else {
             print("DEBUG: Không có người dùng nào đăng nhập")
@@ -237,18 +233,18 @@ struct FriendsListView: View {
         
         print("DEBUG: Đang làm mới danh sách bạn bè cho user: \(currentUser.uid)")
         
-        // Khi chạy trực tiếp trong FriendsListView, chúng ta sẽ lấy danh sách bạn bè từ Firebase
+        // When running directly in FriendsListView, we will get the friends list from Firebase
         friendViewModel.fetchFriends(forUserId: currentUser.uid) { friends in
             DispatchQueue.main.async {
-                // Đặt trạng thái đã tải xong
+                // Set loaded status
                 self.isRefreshing = false
                 
                 print("DEBUG: Đã tải \(friends.count) bạn bè từ friendViewModel")
                 
-                // Cập nhật danh sách bạn bè trong viewModel
+                // Update friends list in viewModel
                 self.viewModel.friends = friends
                 
-                // Theo dõi vị trí và trạng thái online của bạn bè
+                // Track your friends' location and online status
                 if !friends.isEmpty {
                     let friendIds = friends.map { $0.id }
                     print("DEBUG: Bắt đầu theo dõi vị trí và trạng thái cho \(friendIds.count) bạn bè")
@@ -261,7 +257,7 @@ struct FriendsListView: View {
         }
     }
     
-    // Tải số lượng lời mời kết bạn đang chờ
+    // Load the number of pending friend requests
     private func loadPendingRequestsCount() {
         guard let currentUser = Auth.auth().currentUser else {
             pendingRequestsCount = 0
@@ -276,7 +272,7 @@ struct FriendsListView: View {
         }
     }
     
-    // Xóa bạn bè
+    // Delete friend
     private func removeFriend(at offsets: IndexSet) {
         guard let currentUser = Auth.auth().currentUser else { return }
         
@@ -288,7 +284,7 @@ struct FriendsListView: View {
             firebaseService.removeFriend(currentUserId: currentUser.uid, friendId: friend.id) { success in
                 if success {
                     print("DEBUG: Xóa bạn thành công, làm mới danh sách")
-                    // Cập nhật danh sách bạn bè sau khi xóa
+                    // Update friend list after deleting
                     DispatchQueue.main.async {
                         refreshFriendsList()
                     }
@@ -319,7 +315,7 @@ struct EnhancedFriendRow: View {
     var body: some View {
         Button(action: onTap) {
             HStack {
-                // Avatar với trạng thái online/offline
+                // Avatar with online/offline status
                 ZStack {
                     Circle()
                         .fill(Color.blue.opacity(0.2))
@@ -343,7 +339,7 @@ struct EnhancedFriendRow: View {
                             .foregroundColor(.blue)
                     }
                     
-                    // Online status indicator - chấm màu xanh lá hoặc đỏ
+                    // Online status indicator - green or red dot
                     Circle()
                         .fill(isOnline ? Color.green : Color.red)
                         .frame(width: 14, height: 14)
@@ -354,11 +350,11 @@ struct EnhancedFriendRow: View {
                         .position(x: 40, y: 40)
                 }
                 
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 0) {
                     Text(friend.fullName)
                         .font(.headline)
                     
-                    // Hiển thị thời gian online/offline
+                    // Show online/offline time
                     if isOnline {
                         Text("Đang hoạt động")
                             .font(.subheadline)
@@ -369,7 +365,7 @@ struct EnhancedFriendRow: View {
                             .foregroundColor(.gray)
                     }
                     
-                    // Hiển thị thông tin cập nhật vị trí gần nhất
+                    // Show latest location updates
                     if let timeSinceLastUpdate = timeSinceLastUpdate {
                         Text("Vị trí cập nhật \(timeSinceLastUpdate)")
                             .font(.caption)
@@ -379,7 +375,7 @@ struct EnhancedFriendRow: View {
                 
                 Spacer()
                 
-                // Icon hiển thị trạng thái vị trí
+                // Icon shows position status
                 if hasLocation {
                     Image(systemName: "location.fill")
                         .foregroundColor(.blue)
