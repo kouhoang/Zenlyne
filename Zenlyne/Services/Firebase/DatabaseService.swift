@@ -24,13 +24,15 @@ protocol FirebaseServiceProtocol {
     func stopObservingUserOnlineStatus(userId: String)
     func getPendingFriendRequestsCount(for userId: String, completion: @escaping (Int) -> Void)
     func removeFriend(currentUserId: String, friendId: String, completion: @escaping (Bool) -> Void)
+    
 }
 
 class FirebaseService: FirebaseServiceProtocol {
     private let database = Database.database().reference()
     private let firestore = Firestore.firestore()
-    private var locationObservers = [DatabaseHandle]()
+    private var locationObservers: [Any] = []
     private var onlineStatusObservers: [String: DatabaseHandle] = [:]
+    private var locationListeners: [String: ListenerRegistration] = [:]
     
     // MARK: - User Location Management
     
@@ -114,77 +116,46 @@ class FirebaseService: FirebaseServiceProtocol {
         }
     }
     
-    // Track your friends' locations in real time
+    // Sửa phương thức observeFriendLocations
     func observeFriendLocations(userIds: [String], completion: @escaping ([String: UserLocation]) -> Void) {
-        // Stop all running observers
-        stopObservingFriendLocations()
-        
         print("DEBUG: Starting to observe locations for \(userIds.count) friends")
         
-        // Create new observer for each friend
+        // Dừng tất cả listener hiện tại
+        stopObservingFriendLocations()
+        
+        let db = Firestore.firestore()
+        
         for userId in userIds {
-            let locationRef = database.child("locations").child(userId)
-            let handle = locationRef.observe(.value) { [weak self] snapshot in
-                guard snapshot.exists(),
-                      let value = snapshot.value as? [String: Any],
-                      let latitude = value["latitude"] as? Double,
-                      let longitude = value["longitude"] as? Double,
-                      let timestamp = value["timestamp"] as? TimeInterval else {
+            let userDocRef = db.collection("users").document(userId)
+            let listener = userDocRef.addSnapshotListener { snapshot, error in
+                if let error = error {
+                    print("DEBUG: Error listening to user document: \(error.localizedDescription)")
                     return
                 }
                 
-                // Check if the position has expired
-                if let expiresAt = value["expiresAt"] as? TimeInterval {
-                    if Date().timeIntervalSince1970 > expiresAt {
-                        // Location is expired, no need to update
-                        print("DEBUG: Location for user \(userId) has expired")
-                        return
-                    }
-                }
+                print("DEBUG: Received update for user: \(userId)")
                 
-                print("DEBUG: Received location update for user: \(userId)")
-                
-                let location = UserLocation(
-                    latitude: latitude,
-                    longitude: longitude,
-                    timestamp: timestamp
-                )
-                
-                // Get location of all friends to update UI
-                self?.fetchAllFriendLocations(userIds: userIds) { locations in
-                    // Check and filter expired positions
-                    var validLocations = [String: UserLocation]()
-                    for (userId, location) in locations {
-                        // Check if location is not expired
-                        if let expiresAt = value["expiresAt"] as? TimeInterval {
-                            if Date().timeIntervalSince1970 <= expiresAt {
-                                validLocations[userId] = location
-                            }
-                        } else {
-                            // If no expiration, use default 72 hours
-                            if location.timestamp + (72 * 60 * 60) > Date().timeIntervalSince1970 {
-                                validLocations[userId] = location
-                            }
-                        }
-                    }
-                    completion(validLocations)
+                // Lấy tất cả vị trí của bạn bè
+                self.fetchAllFriendLocations(userIds: userIds) { locations in
+                    print("DEBUG: Updated friend locations: \(locations.count)")
+                    completion(locations)
                 }
             }
             
-            locationObservers.append(handle)
+            locationListeners[userId] = listener
         }
         
-        // Get current location of all friends
+        // Lấy vị trí ban đầu
         fetchAllFriendLocations(userIds: userIds, completion: completion)
     }
-    
-    // Stop tracking your friends location
+
+    // Cập nhật stopObservingFriendLocations
     func stopObservingFriendLocations() {
-        for handle in locationObservers {
-            database.removeObserver(withHandle: handle)
+        for (_, listener) in locationListeners {
+            listener.remove()
         }
-        locationObservers.removeAll()
-        print("DEBUG: Stopped observing friend locations")
+        locationListeners.removeAll()
+        print("DEBUG: Stopped all friend location listeners")
     }
     
     // MARK: - Online Status Management
@@ -243,7 +214,7 @@ class FirebaseService: FirebaseServiceProtocol {
     
     // Get user's friends list
     func fetchFriends(forUserId userId: String, completion: @escaping ([User]) -> Void) {
-        print("DEBUG: Đang tải danh sách bạn bè cho userId: \(userId)")
+        print("DEBUG: Fetching friends for user: \(userId)")
         
         let db = Firestore.firestore()
         let userRef = db.collection("users").document(userId)
@@ -252,34 +223,27 @@ class FirebaseService: FirebaseServiceProtocol {
             guard let self = self else { return }
             
             if let error = error {
-                print("DEBUG: Lỗi khi tải tài liệu người dùng: \(error.localizedDescription)")
+                print("DEBUG: Error fetching user document: \(error.localizedDescription)")
                 completion([])
                 return
             }
             
-            guard let document = snapshot, document.exists else {
-                print("DEBUG: Tài liệu người dùng không tồn tại")
+            guard let document = snapshot, document.exists,
+                  let data = document.data(),
+                  let friendIds = data["friendIds"] as? [String] else {
+                print("DEBUG: No friends found for user \(userId)")
                 completion([])
                 return
             }
             
-            guard let data = document.data() else {
-                print("DEBUG: Tài liệu người dùng không có dữ liệu")
-                completion([])
-                return
-            }
-            
-            // Get friend ID's list
-            let friendIds = data["friendIds"] as? [String] ?? []
-            print("DEBUG: Tìm thấy \(friendIds.count) friendIds: \(friendIds)")
+            print("DEBUG: Found \(friendIds.count) friends: \(friendIds)")
             
             if friendIds.isEmpty {
-                print("DEBUG: Danh sách friendIds trống, trả về danh sách bạn bè trống")
                 completion([])
                 return
             }
             
-            // Get detailed information of each friend
+            // Lấy thông tin chi tiết cho mỗi bạn bè
             var friends: [User] = []
             let group = DispatchGroup()
             
@@ -290,47 +254,66 @@ class FirebaseService: FirebaseServiceProtocol {
                     defer { group.leave() }
                     
                     if let error = error {
-                        print("DEBUG: Lỗi khi tải thông tin bạn bè \(friendId): \(error.localizedDescription)")
+                        print("DEBUG: Error fetching friend \(friendId): \(error.localizedDescription)")
                         return
                     }
                     
-                    guard let document = document, document.exists, let data = document.data() else {
-                        print("DEBUG: Không tìm thấy thông tin bạn bè \(friendId)")
+                    guard let document = document, document.exists,
+                          let data = document.data() else {
+                        print("DEBUG: Friend document not found: \(friendId)")
                         return
                     }
                     
-                    // Tạo đối tượng User từ dữ liệu
-                    if let email = data["email"] as? String,
-                       let fullName = data["fullName"] as? String {
-                        var user = User(id: friendId, fullName: fullName, email: email)
-                        user.profileImageUrl = data["profileImageUrl"] as? String
+                    if let fullName = data["fullName"] as? String,
+                       let email = data["email"] as? String {
+                        var friend = User(id: friendId, fullName: fullName, email: email)
                         
-                        print("DEBUG: Đã tải thành công thông tin bạn bè: \(fullName)")
-                        friends.append(user)
-                    } else {
-                        print("DEBUG: Thiếu thông tin cần thiết cho bạn bè \(friendId)")
+                        // Lấy các thông tin bổ sung
+                        friend.profileImageUrl = data["profileImageUrl"] as? String
+                        friend.isOnline = data["isOnline"] as? Bool ?? false
+                        
+                        // Lấy thông tin lastSeen
+                        if let lastSeenTimestamp = data["lastSeen"] as? Timestamp {
+                            friend.lastSeen = lastSeenTimestamp.dateValue()
+                        }
+                        
+                        // Lấy thông tin vị trí
+                        if let locationData = data["lastLocation"] as? [String: Any],
+                           let latitude = locationData["latitude"] as? Double,
+                           let longitude = locationData["longitude"] as? Double,
+                           let timestamp = locationData["timestamp"] as? TimeInterval {
+                            
+                            friend.lastLocation = UserLocation(
+                                latitude: latitude,
+                                longitude: longitude,
+                                timestamp: timestamp
+                            )
+                            
+                            print("DEBUG: Friend \(fullName) has location: \(latitude), \(longitude)")
+                        } else {
+                            print("DEBUG: Friend \(fullName) has no location data")
+                        }
+                        
+                        friends.append(friend)
+                        print("DEBUG: Added friend: \(fullName) (ID: \(friendId))")
                     }
                 }
             }
             
-            group.notify(queue: .main) { [weak self] in
-                print("DEBUG: Đã tải xong danh sách \(friends.count) bạn bè")
-                
-                // Update online status and location info
-                if let self = self {
-                    self.fetchOnlineStatus(forUsers: friends) { updatedFriends in
-                        print("DEBUG: Đã cập nhật trạng thái online cho \(updatedFriends.count) bạn bè")
-                        
-                        // Also fetch last locations for all friends
-                        self.fetchLastLocationsForFriends(updatedFriends) { friendsWithLocations in
-                            print("DEBUG: Đã cập nhật vị trí cho \(friendsWithLocations.count) bạn bè")
-                            completion(friendsWithLocations)
-                        }
-                    }
-                } else {
-                    completion(friends)
-                }
-            }
+//            group.notify(queue: .main) {
+//                print("DEBUG: Finished loading \(friends.count) friends")
+//                completion(friends)
+//                
+//                // Bắt đầu quan sát vị trí và trạng thái online
+//                if !friends.isEmpty {
+//                    let friendIds = friends.map { $0.id }
+//                    self.startObservingFriendLocations(userIds: friendIds) { locations in
+//                        for (friendId, location) in locations {
+//                            print("DEBUG: Friend \(friendId) location updated: \(location.latitude), \(location.longitude)")
+//                        }
+//                    }
+//                }
+//            }
         }
     }
     
@@ -389,42 +372,51 @@ class FirebaseService: FirebaseServiceProtocol {
     
     // Internal method to get location of all friends
     private func fetchAllFriendLocations(userIds: [String], completion: @escaping ([String: UserLocation]) -> Void) {
+        let db = Firestore.firestore()
         var friendLocations = [String: UserLocation]()
         let group = DispatchGroup()
         let currentTime = Date().timeIntervalSince1970
         
+        print("DEBUG: Fetching locations for \(userIds.count) friends")
+        
         for userId in userIds {
             group.enter()
-            let locationRef = database.child("locations").child(userId)
             
-            locationRef.observeSingleEvent(of: .value) { snapshot in
+            db.collection("users").document(userId).getDocument { snapshot, error in
                 defer { group.leave() }
                 
-                guard snapshot.exists(), let value = snapshot.value as? [String: Any] else {
+                if let error = error {
+                    print("DEBUG: Error fetching user \(userId): \(error.localizedDescription)")
+                    return
+                }
+                
+                guard let document = snapshot, document.exists else {
+                    print("DEBUG: Document for user \(userId) doesn't exist")
+                    return
+                }
+                
+                let data = document.data() ?? [:]
+                guard let locationData = data["lastLocation"] as? [String: Any] else {
                     print("DEBUG: No location data for user \(userId)")
                     return
                 }
                 
-                guard let latitude = value["latitude"] as? Double,
-                      let longitude = value["longitude"] as? Double,
-                      let timestamp = value["timestamp"] as? TimeInterval else {
-                    print("DEBUG: Invalid location data for user \(userId)")
+                // Kiểm tra thời gian hết hạn
+                if let expiresAt = locationData["expiresAt"] as? TimeInterval {
+                    if currentTime > expiresAt {
+                        print("DEBUG: Location for user \(userId) has expired")
+                        return
+                    }
+                }
+                
+                // Kiểm tra dữ liệu vị trí
+                guard let latitude = locationData["latitude"] as? Double,
+                      let longitude = locationData["longitude"] as? Double,
+                      let timestamp = locationData["timestamp"] as? TimeInterval else {
+                    print("DEBUG: Invalid location format for user \(userId)")
                     return
                 }
                 
-                if let expiresAt = value["expiresAt"] as? TimeInterval {
-                    if currentTime > expiresAt {
-                        print("DEBUG: Location for user \(userId) has expired. Expiry: \(expiresAt), Current: \(currentTime)")
-                        return
-                    }
-                } else {
-                    if timestamp + (72 * 60 * 60) < currentTime {
-                        print("DEBUG: Location for user \(userId) has expired (default 72h)")
-                        return
-                    }
-                }
-                
-                print("DEBUG: Valid location found for user \(userId)")
                 let location = UserLocation(
                     latitude: latitude,
                     longitude: longitude,
@@ -432,11 +424,12 @@ class FirebaseService: FirebaseServiceProtocol {
                 )
                 
                 friendLocations[userId] = location
+                print("DEBUG: Found valid location for user \(userId): \(latitude), \(longitude)")
             }
         }
         
         group.notify(queue: .main) {
-            print("DEBUG: Found valid locations for \(friendLocations.count) friends")
+            print("DEBUG: Completed fetching locations, found \(friendLocations.count) valid locations")
             completion(friendLocations)
         }
     }
@@ -530,6 +523,66 @@ class FirebaseService: FirebaseServiceProtocol {
                 }
             } else {
                 print("DEBUG: Test location save SUCCESSFUL")
+            }
+        }
+    }
+    
+    func createMockLocationsForTesting(currentUserId: String) {
+        let db = Firestore.firestore()
+        
+        // Lấy danh sách bạn bè
+        db.collection("users").document(currentUserId).getDocument { snapshot, error in
+            guard let document = snapshot, document.exists,
+                  let data = document.data(),
+                  let friendIds = data["friendIds"] as? [String] else {
+                print("DEBUG TEST: No friends found for mock data")
+                return
+            }
+            
+            print("DEBUG TEST: Creating mock locations for \(friendIds.count) friends")
+            
+            // Vị trí hiện tại của người dùng
+            var userLocation: CLLocationCoordinate2D? = nil
+            if let locationData = data["lastLocation"] as? [String: Any],
+               let latitude = locationData["latitude"] as? Double,
+               let longitude = locationData["longitude"] as? Double {
+                userLocation = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+                print("DEBUG TEST: User location: \(latitude), \(longitude)")
+            } else {
+                // Vị trí mặc định (Hồ Chí Minh)
+                userLocation = CLLocationCoordinate2D(latitude: 10.762622, longitude: 106.660172)
+                print("DEBUG TEST: Using default user location")
+            }
+            
+            // Tạo vị trí giả cho bạn bè xung quanh vị trí người dùng
+            for (index, friendId) in friendIds.enumerated() {
+                guard let userLoc = userLocation else { continue }
+                
+                // Tạo vị trí ngẫu nhiên quanh người dùng
+                let offsetLat = Double(index + 1) * 0.001 * (index % 2 == 0 ? 1 : -1)
+                let offsetLon = Double(index + 1) * 0.001 * (index % 3 == 0 ? 1 : -1)
+                
+                let friendLat = userLoc.latitude + offsetLat
+                let friendLon = userLoc.longitude + offsetLon
+                
+                let mockLocationData: [String: Any] = [
+                    "latitude": friendLat,
+                    "longitude": friendLon,
+                    "timestamp": Date().timeIntervalSince1970,
+                    "expiresAt": Date().timeIntervalSince1970 + (72 * 60 * 60)
+                ]
+                
+                // Cập nhật vị trí giả cho bạn bè
+                db.collection("users").document(friendId).updateData([
+                    "lastLocation": mockLocationData,
+                    "isOnline": index % 2 == 0  // Một nửa online, một nửa offline
+                ]) { error in
+                    if let error = error {
+                        print("DEBUG TEST: Error creating mock location for friend \(friendId): \(error.localizedDescription)")
+                    } else {
+                        print("DEBUG TEST: Created mock location for friend \(friendId): \(friendLat), \(friendLon)")
+                    }
+                }
             }
         }
     }

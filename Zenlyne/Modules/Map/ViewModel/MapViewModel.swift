@@ -108,37 +108,33 @@ class LocationViewModel: NSObject, ObservableObject {
         isTrackingLocation = true
     }
     
-    func focusOnFriendLocation(friendId: String) {
-        guard let friendLocation = friendLocations[friendId] else { return }
-        
-        // Animate camera to friend location
-        cameraOptions = CameraOptions(
-            center: friendLocation.toCoordinate(),
-            zoom: 15.0,
-            bearing: 0,
-            pitch: 0
-        )
-        
-        isTrackingLocation = false
-    }
-    
     // MARK: - Friend Location Observers
     
     func startObservingFriendLocations(friendIds: [String]) {
-        guard !friendIds.isEmpty else { return }
+        guard !friendIds.isEmpty else {
+            print("DEBUG: No friends to observe locations for")
+            return
+        }
         
-        print("DEBUG: Starting to observe locations for \(friendIds.count) friends")
+        print("DEBUG: Starting to observe locations for \(friendIds.count) friends: \(friendIds)")
         
+        // Dừng các observer hiện tại nếu có
         if locationObserversActive {
             firebaseService.stopObservingFriendLocations()
         }
         
+        // Bắt đầu quan sát vị trí bạn bè
         firebaseService.observeFriendLocations(userIds: friendIds) { [weak self] locations in
             guard let self = self else { return }
             
             print("DEBUG: Received \(locations.count) friend locations")
             
-            // Update friend location in main thread
+            for (friendId, location) in locations {
+                let friend = self.friends.first(where: { $0.id == friendId })?.fullName ?? "Unknown"
+                print("DEBUG: Friend \(friend) (\(friendId)) location: \(location.latitude), \(location.longitude)")
+            }
+            
+            // Cập nhật vị trí bạn bè trong main thread
             DispatchQueue.main.async {
                 self.friendLocations = locations
             }
@@ -205,6 +201,137 @@ class LocationViewModel: NSObject, ObservableObject {
         formatter.unitsStyle = .abbreviated
         
         return formatter.localizedString(for: locationDate, relativeTo: Date())
+    }
+    
+    func monitorFriendsAndLocations() {
+        guard let currentUserId = Auth.auth().currentUser?.uid else {
+            print("DEBUG: No current user ID available")
+            return
+        }
+        
+        print("DEBUG: Monitoring friends and locations for user: \(currentUserId)")
+        
+        // Tải danh sách bạn bè
+        firebaseService.fetchFriends(forUserId: currentUserId) { [weak self] friends in
+            guard let self = self else { return }
+            
+            print("DEBUG: Loaded \(friends.count) friends")
+            
+            DispatchQueue.main.async {
+                self.friends = friends
+                
+                // Bắt đầu quan sát vị trí và trạng thái của bạn bè
+                if !friends.isEmpty {
+                    let friendIds = friends.map { $0.id }
+                    self.startObservingFriendLocations(friendIds: friendIds)
+                    self.startObservingFriendOnlineStatus(friendIds: friendIds)
+                } else {
+                    print("DEBUG: No friends to monitor")
+                }
+            }
+        }
+    }
+    
+//    func getFriend(byId id: String) -> User? {
+//        let friend = friends.first { $0.id == id }
+//        if friend != nil {
+//            print("DEBUG: Found friend: \(friend!.fullName)")
+//        } else {
+//            print("DEBUG: Friend not found for ID: \(id)")
+//            print("DEBUG: Available friends: \(friends.map { "\($0.fullName) (\($0.id))" }.joined(separator: ", "))")
+//        }
+//        return friend
+//    }
+    
+    func focusOnFriendLocation(friendId: String) {
+        print("DEBUG: Focusing on friend location for friend ID: \(friendId)")
+        
+        guard let friendLocation = friendLocations[friendId] else {
+            print("DEBUG: No location found for friend with ID: \(friendId)")
+            
+            // Hiển thị thông tin debug về các vị trí hiện có
+            print("DEBUG: Available friend locations: \(friendLocations.keys.joined(separator: ", "))")
+            
+            // Trực tiếp kiểm tra database
+            debugFriendLocationsInDatabase()
+            return
+        }
+        
+        let coordinate = friendLocation.toCoordinate()
+        print("DEBUG: Friend location found: \(coordinate.latitude), \(coordinate.longitude)")
+        
+        // Animate camera to friend location
+        cameraOptions = CameraOptions(
+            center: coordinate,
+            zoom: 15.0,
+            bearing: 0,
+            pitch: 0
+        )
+        
+        isTrackingLocation = false
+    }
+    
+    func debugFriendLocationsInDatabase() {
+        guard let currentUserId = Auth.auth().currentUser?.uid else {
+            print("DEBUG: No current user ID available")
+            return
+        }
+        
+        let db = Firestore.firestore()
+        
+        // Lấy danh sách bạn bè
+        db.collection("users").document(currentUserId).getDocument { snapshot, error in
+            guard let document = snapshot, document.exists,
+                  let data = document.data(),
+                  let friendIds = data["friendIds"] as? [String] else {
+                print("DEBUG: No friends found")
+                return
+            }
+            
+            // Kiểm tra vị trí của từng bạn bè
+            for friendId in friendIds {
+                db.collection("users").document(friendId).getDocument { snapshot, error in
+                    if let error = error {
+                        print("DEBUG: Error fetching friend \(friendId): \(error.localizedDescription)")
+                        return
+                    }
+                    
+                    guard let document = snapshot, document.exists,
+                          let data = document.data() else {
+                        print("DEBUG: Friend document not found: \(friendId)")
+                        return
+                    }
+                    
+                    let name = data["fullName"] as? String ?? "Unknown"
+                    
+                    if let locationData = data["lastLocation"] as? [String: Any] {
+                        if let lat = locationData["latitude"] as? Double,
+                           let lon = locationData["longitude"] as? Double,
+                           let timestamp = locationData["timestamp"] as? TimeInterval {
+                            
+                            let dateFormatter = DateFormatter()
+                            dateFormatter.dateStyle = .medium
+                            dateFormatter.timeStyle = .medium
+                            let date = Date(timeIntervalSince1970: timestamp)
+                            
+                            print("DEBUG: Friend \(name) (\(friendId)) location: \(lat), \(lon), Updated: \(dateFormatter.string(from: date))")
+                            
+                            if let expiresAt = locationData["expiresAt"] as? TimeInterval {
+                                let expiryDate = Date(timeIntervalSince1970: expiresAt)
+                                print("DEBUG:   Expires: \(dateFormatter.string(from: expiryDate))")
+                            }
+                        } else {
+                            print("DEBUG: Friend \(name) (\(friendId)) has invalid location data format")
+                        }
+                    } else {
+                        print("DEBUG: Friend \(name) (\(friendId)) has no location data")
+                    }
+                    
+                    let isOnline = data["isOnline"] as? Bool ?? false
+                    print("DEBUG: Friend \(name) (\(friendId)) is \(isOnline ? "online" : "offline")")
+                }
+            }
+        }
     }
 }
 

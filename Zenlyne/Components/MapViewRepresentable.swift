@@ -8,9 +8,11 @@
 import SwiftUI
 import MapboxMaps
 import CoreLocation
+import FirebaseAuth
+import FirebaseFirestoreInternal
 
 struct MapViewRepresentable: UIViewRepresentable {
-    @	vedObject var viewModel: LocationViewModel
+    @ObservedObject var viewModel: LocationViewModel
         
     init(viewModel: LocationViewModel) {
         self.viewModel = viewModel
@@ -42,6 +44,8 @@ struct MapViewRepresentable: UIViewRepresentable {
     }
         
     func updateUIView(_ mapView: MapView, context: Context) {
+        print("DEBUG: Updating MapView with \(viewModel.friendLocations.count) friend locations")
+        
         // Update camera position when viewModel changes
         mapView.camera.fly(to: viewModel.cameraOptions, duration: 0.25)
         
@@ -79,32 +83,6 @@ struct MapViewRepresentable: UIViewRepresentable {
             super.init()
         }
         
-        func setupAnnotations(for mapView: MapView) {
-            // Create the annotation managers
-            userAnnotationManager = mapView.annotations.makePointAnnotationManager()
-            friendAnnotationManager = mapView.annotations.makePointAnnotationManager()
-            pulseAnnotationManager = mapView.annotations.makeCircleAnnotationManager()
-            
-            // Create the custom image for user location
-            createUserMarkerImage(for: mapView)
-            
-            // Create the custom image for friend locations
-            createFriendMarkerImage(for: mapView)
-            
-            // Add pulsing effect to user location using circle layers
-            if let userLocation = viewModel.userLocation {
-                addPulseEffectLayer(for: mapView, at: userLocation, color: UIColor.blue, isUser: true)
-            }
-            
-            // Set up annotation tap handling through annotationInteractionDelegate
-            if let friendManager = friendAnnotationManager {
-                friendManager.delegate = self
-            }
-            
-            // Add tap gesture recognizer to handle map taps
-            let tapGesture = UITapGestureRecognizer(target: self, action: #selector(handleMapTap(_:)))
-            mapView.addGestureRecognizer(tapGesture)
-        }
         
         @objc func handleMapTap(_ gesture: UITapGestureRecognizer) {
             // When the user taps on the map (not on a marker),
@@ -209,38 +187,57 @@ struct MapViewRepresentable: UIViewRepresentable {
                 ctx.cgContext.addPath(borderPath.cgPath)
                 ctx.cgContext.strokePath()
                 
-                // Add subtle inner shadow
-                ctx.cgContext.setShadow(
-                    offset: CGSize(width: 0, height: 1),
-                    blur: 3,
-                    color: UIColor.black.withAlphaComponent(0.2).cgColor
-                )
+                // Create circle within marker for avatar/initials
+                let avatarRect = CGRect(x: 8, y: 8, width: size - 16, height: size - 16)
+                let avatarPath = UIBezierPath(ovalIn: avatarRect)
                 
-                // Draw text with improved styling
+                // Draw blue background for avatar
+                ctx.cgContext.setFillColor(UIColor(red: 0.0, green: 0.3, blue: 0.8, alpha: 0.5).cgColor)
+                ctx.cgContext.addPath(avatarPath.cgPath)
+                ctx.cgContext.fillPath()
+                
+                // Get initials for avatar fallback
+                let fullName = viewModel.currentUser.fullName
+                let formatter = PersonNameComponentsFormatter()
+                var initials = ""
+                if let components = formatter.personNameComponents(from: fullName) {
+                    formatter.style = .abbreviated
+                    initials = formatter.string(from: components)
+                } else {
+                    // Fallback if formatter fails
+                    let words = fullName.split(separator: " ")
+                    if words.count > 1 {
+                        initials = String(words[0].prefix(1)) + String(words.last!.prefix(1))
+                    } else if !words.isEmpty {
+                        initials = String(words[0].prefix(1))
+                    } else {
+                        initials = "?"
+                    }
+                }
+                
+                // Draw initials in center of avatar circle
                 let paragraphStyle = NSMutableParagraphStyle()
                 paragraphStyle.alignment = .center
                 
-                let fullName = viewModel.currentUser.fullName
                 let attributes: [NSAttributedString.Key: Any] = [
-                    .font: UIFont(name: "Avenir-Medium", size: 14) ?? UIFont.systemFont(ofSize: 14, weight: .medium),
+                    .font: UIFont.systemFont(ofSize: 18, weight: .bold),
                     .foregroundColor: UIColor.white,
-                    .paragraphStyle: paragraphStyle,
-                    .shadow: NSShadow() // Add text shadow
+                    .paragraphStyle: paragraphStyle
                 ]
                 
-                let attributedString = NSAttributedString(string: fullName, attributes: attributes)
-                let textRect = CGRect(x: 5, y: (size - 20) / 2, width: size - 10, height: 20)
+                let attributedString = NSAttributedString(string: initials, attributes: attributes)
                 
-                // Clear shadow for text drawing
-                ctx.cgContext.setShadow(offset: .zero, blur: 0, color: nil)
+                // Calculate position to place text in center of avatar
+                let textRect = CGRect(x: 8, y: (size - 20) / 2, width: size - 16, height: 20)
                 attributedString.draw(in: textRect)
             }
             
             // Add the image to the style
             do {
                 try mapView.mapboxMap.style.addImage(annotationImage, id: "user-marker-id")
+                print("DEBUG: Created user marker image")
             } catch {
-                print("Error adding user marker image: \(error.localizedDescription)")
+                print("DEBUG: Error adding user marker image: \(error.localizedDescription)")
             }
         }
         
@@ -298,37 +295,72 @@ struct MapViewRepresentable: UIViewRepresentable {
             }
         }
         
+        func setupAnnotations(for mapView: MapView) {
+            print("DEBUG: Setting up annotations")
+            
+            // Create the annotation managers
+            userAnnotationManager = mapView.annotations.makePointAnnotationManager()
+            friendAnnotationManager = mapView.annotations.makePointAnnotationManager()
+            pulseAnnotationManager = mapView.annotations.makeCircleAnnotationManager()
+            
+            // Create the custom image for user location
+            createUserMarkerImage(for: mapView)
+            
+            // Create the custom image for friend locations
+            createFriendMarkerImage(for: mapView)
+            
+            // Add pulsing effect to user location using circle layers
+            if let userLocation = viewModel.userLocation {
+                addPulseEffectLayer(for: mapView, at: userLocation, color: UIColor.blue, isUser: true)
+            }
+            
+            // Update friend markers
+            updateFriendAnnotations(
+                for: mapView,
+                friendLocations: viewModel.friendLocations,
+                friends: viewModel.friends
+            )
+            
+            // Set up annotation tap handling through annotationInteractionDelegate
+            if let friendManager = friendAnnotationManager {
+                friendManager.delegate = self
+            }
+            
+            // Add tap gesture recognizer to handle map taps
+            let tapGesture = UITapGestureRecognizer(target: self, action: #selector(handleMapTap(_:)))
+            mapView.addGestureRecognizer(tapGesture)
+            
+            print("DEBUG: Annotations setup complete")
+        }
+        
         func updateFriendAnnotations(for mapView: MapView, friendLocations: [String: UserLocation], friends: [User]) {
             guard let annotationManager = friendAnnotationManager else { return }
             
-            // Delete all current annotation
+            print("DEBUG: Updating friend annotations with \(friendLocations.count) locations and \(friends.count) friends")
+            
+            // Xóa tất cả annotation hiện tại
             annotationManager.annotations = []
             friendIdByAnnotationId.removeAll()
             
-            // Create new annotation for each friend
+            // Tạo annotation mới cho mỗi bạn bè
             var annotations: [PointAnnotation] = []
             
             for (friendId, location) in friendLocations {
-                // Check if location has expired (72 hours)
-                let isLocationExpired = location.timestamp + (72 * 60 * 60) < Date().timeIntervalSince1970
-                if isLocationExpired {
-                    print("DEBUG: Skipping expired location for friend \(friendId)")
-                    continue
-                }
-                
-                // Get friens' information
+                // Lấy thông tin bạn bè
                 guard let friend = friends.first(where: { $0.id == friendId }) else {
                     print("DEBUG: Friend not found for ID \(friendId)")
                     continue
                 }
                 
-                // Tracking online status
+                print("DEBUG: Creating annotation for friend: \(friend.fullName) at \(location.latitude), \(location.longitude)")
+                
+                // Kiểm tra trạng thái online
                 let isOnline = friend.isOnline
                 
-                // Create marker image if not present
-                createFriendMarkerImage(for: mapView, friendId: friendId, name: friend.fullName, isOnline: isOnline)
+                // Tạo marker image cho bạn bè này
+                createFriendMarkerImage(for: mapView, friendId: friendId, name: friend.fullName, isOnline: isOnline, profileImageUrl: friend.profileImageUrl)
                 
-                // Create annotation
+                // Tạo annotation
                 var annotation = PointAnnotation(coordinate: location.toCoordinate())
                 annotation.iconAnchor = .bottom
                 
@@ -337,24 +369,24 @@ struct MapViewRepresentable: UIViewRepresentable {
                 annotation.iconImage = markerIconId
                 annotation.iconSize = 1.0
                 
-                // Save mapping between annotation ID and friend ID for tap processing
+                // Lưu mapping giữa annotation ID và friend ID
                 friendIdByAnnotationId[annotation.id] = friendId
                 
                 annotations.append(annotation)
                 
-                // Add pulse effect for online friends
+                // Thêm hiệu ứng pulse cho bạn bè online
                 if isOnline {
                     updatePulseEffect(for: mapView, at: location.toCoordinate(), isUser: false)
                 }
             }
             
-            // Add all annotations to manager
+            // Thêm tất cả annotation vào manager
             annotationManager.annotations = annotations
             print("DEBUG: Added \(annotations.count) friend annotations to map")
         }
 
         // Update method to create friend marker image with online/offline status
-        func createFriendMarkerImage(for mapView: MapView, friendId: String? = nil, name: String? = nil, isOnline: Bool = false) {
+        func createFriendMarkerImage(for mapView: MapView, friendId: String? = nil, name: String? = nil, isOnline: Bool = false, profileImageUrl: String? = nil) {
             let size: CGFloat = 50 // Square dimensions
             let renderer = UIGraphicsImageRenderer(size: CGSize(width: size, height: size))
             
@@ -419,7 +451,7 @@ struct MapViewRepresentable: UIViewRepresentable {
                     color: UIColor.black.withAlphaComponent(0.2).cgColor
                 )
                 
-                // Get initials from name
+                // Get initials from name for avatar fallback
                 let fullName = name ?? "Friend"
                 let formatter = PersonNameComponentsFormatter()
                 var initials = ""
@@ -438,7 +470,19 @@ struct MapViewRepresentable: UIViewRepresentable {
                     }
                 }
                 
-                // Draw text with improved styling
+                // Create circle within marker for avatar/initials
+                let avatarRect = CGRect(x: 8, y: 8, width: size - 16, height: size - 16)
+                let avatarPath = UIBezierPath(ovalIn: avatarRect)
+                
+                // Clear shadow for avatar
+                ctx.cgContext.setShadow(offset: .zero, blur: 0, color: nil)
+                
+                // Draw blue background for avatar
+                ctx.cgContext.setFillColor(UIColor(red: 0.0, green: 0.5, blue: 1.0, alpha: 0.5).cgColor)
+                ctx.cgContext.addPath(avatarPath.cgPath)
+                ctx.cgContext.fillPath()
+                
+                // Draw initials in center of avatar circle
                 let paragraphStyle = NSMutableParagraphStyle()
                 paragraphStyle.alignment = .center
                 
@@ -450,11 +494,8 @@ struct MapViewRepresentable: UIViewRepresentable {
                 
                 let attributedString = NSAttributedString(string: initials, attributes: attributes)
                 
-                // Calculate position to place text in center
-                let textRect = CGRect(x: 5, y: (size - 20) / 2, width: size - 10, height: 20)
-                
-                // Clear shadow for text drawing
-                ctx.cgContext.setShadow(offset: .zero, blur: 0, color: nil)
+                // Calculate position to place text in center of avatar
+                let textRect = CGRect(x: 8, y: (size - 20) / 2, width: size - 16, height: 20)
                 attributedString.draw(in: textRect)
                 
                 // Draw online/offline status dot
@@ -489,8 +530,9 @@ struct MapViewRepresentable: UIViewRepresentable {
             // Add the image to the style
             do {
                 try mapView.mapboxMap.style.addImage(annotationImage, id: markerId)
+                print("DEBUG: Created marker image for friend \(friendId ?? "unknown") - \(statusText)")
             } catch {
-                print("Error adding friend marker image: \(error.localizedDescription)")
+                print("DEBUG: Error adding friend marker image: \(error.localizedDescription)")
             }
         }
     }

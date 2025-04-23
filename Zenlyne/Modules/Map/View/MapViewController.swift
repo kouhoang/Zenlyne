@@ -8,6 +8,7 @@
 import SwiftUI
 import MapboxMaps
 import CoreLocation
+import FirebaseAuth
 
 struct MapViewController: View {
     @StateObject private var viewModel = LocationViewModel()
@@ -87,6 +88,29 @@ struct MapViewController: View {
                                 .background(Color.white.clipShape(Circle()))
                                 .shadow(radius: 4)
                         }
+                        
+                        Button(action: {
+                            if let userId = Auth.auth().currentUser?.uid {
+                                let firebaseService = FirebaseService()
+                                firebaseService.createMockLocationsForTesting(currentUserId: userId)
+                                
+                                // Reload sau 2 giây
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                                    if !self.viewModel.friends.isEmpty {
+                                        let friendIds = self.viewModel.friends.map { $0.id }
+                                        self.viewModel.startObservingFriendLocations(friendIds: friendIds)
+                                    }
+                                }
+                            }
+                        }) {
+                            Text("Test Locations")
+                                .padding(10)
+                                .background(Color.green)
+                                .foregroundColor(.white)
+                                .cornerRadius(10)
+                        }
+                        .padding()
+                        .opacity(0.7) // Hơi trong suốt để không quá nổi bật
                     }
                     .padding(.top, 10)
                     .padding(.trailing, 10)
@@ -142,22 +166,52 @@ struct MapViewController: View {
             }
         }
         .onAppear {
+            print("DEBUG: MapViewController appeared")
+            
             // Update currentUser from AuthViewModel
             if let user = authViewModel.currentUser {
+                print("DEBUG: Current user set: \(user.fullName)")
                 viewModel.currentUser = user
+            } else {
+                print("DEBUG: No current user from AuthViewModel")
             }
             
             // Start tracking location when app appears
             viewModel.startTrackingLocation()
             
-            // Set up a listener to select friends on the mapồ
+            // Đảm bảo chúng ta load bạn bè và vị trí của họ
+            if let currentUserId = Auth.auth().currentUser?.uid {
+                print("DEBUG: Loading friends for current user: \(currentUserId)")
+                let friendViewModel = FriendRequestViewModel()
+                friendViewModel.fetchFriends(forUserId: currentUserId) { friends in
+                    print("DEBUG: Loaded \(friends.count) friends from Firebase")
+                    DispatchQueue.main.async {
+                        self.viewModel.friends = friends
+                        
+                        if !friends.isEmpty {
+                            let friendIds = friends.map { $0.id }
+                            print("DEBUG: Starting to observe \(friendIds.count) friends")
+                            self.viewModel.startObservingFriendLocations(friendIds: friendIds)
+                            self.viewModel.startObservingFriendOnlineStatus(friendIds: friendIds)
+                        }
+                    }
+                }
+            } else {
+                print("DEBUG: No current user ID available")
+            }
+            
+            // Set up a listener to select friends on the map
             NotificationCenter.default.addObserver(
                 forName: NSNotification.Name("FriendSelected"),
                 object: nil,
                 queue: .main
             ) { notification in
                 if let friendId = notification.userInfo?["friendId"] as? String {
+                    print("DEBUG: Friend selected: \(friendId)")
                     self.selectedFriendId = friendId
+                    
+                    // Đảm bảo tập trung vị trí vào bạn bè được chọn
+                    self.viewModel.focusOnFriendLocation(friendId: friendId)
                 }
             }
             
@@ -172,11 +226,6 @@ struct MapViewController: View {
             
             // Check the number of pending friend requests
             checkPendingFriendRequests()
-        }
-        .onDisappear {
-            // Stop listening for friend's location when view disappears
-            viewModel.stopTrackingLocation()
-            NotificationCenter.default.removeObserver(self)
         }
     }
     
