@@ -65,7 +65,6 @@ struct MapViewController: View {
                                     .background(Color.white.clipShape(Circle()))
                                     .shadow(radius: 4)
                                 
-                                // Hiển thị badge số lượng lời mời kết bạn
                                 if pendingRequestsCount > 0 {
                                     Text("\(pendingRequestsCount)")
                                         .font(.caption)
