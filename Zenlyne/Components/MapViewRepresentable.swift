@@ -39,7 +39,7 @@ struct MapViewRepresentable: UIViewRepresentable {
             // Setup point annotation manager for markers
             context.coordinator.setupAnnotations(for: mapView)
         }
-        
+                
         return mapView
     }
         

@@ -30,28 +30,24 @@ struct EnhancedFriendRow: View {
             return .gray
         }
         
-        // Get the timestamp from friend's location if available
         if let location = friend.lastLocation {
-            // Fresh: less than 1 hour
             let oneHourAgo = Date().timeIntervalSince1970 - (60 * 60)
             if location.timestamp > oneHourAgo {
                 return .green
             }
             
-            // Medium: between 1 and 24 hours
             let twentyFourHoursAgo = Date().timeIntervalSince1970 - (24 * 60 * 60)
             if location.timestamp > twentyFourHoursAgo {
                 return .orange
             }
         }
         
-        // Old: more than 24 hours
         return .red
     }
     
     var body: some View {
         Button(action: onTap) {
-            HStack {
+            HStack(spacing: 12) {
                 // Avatar with online/offline status
                 ZStack {
                     Circle()
@@ -76,7 +72,7 @@ struct EnhancedFriendRow: View {
                             .foregroundColor(.blue)
                     }
                     
-                    // Online status indicator - green or red dot
+                    // Online status indicator
                     Circle()
                         .fill(isOnline ? Color.green : Color.red)
                         .frame(width: 14, height: 14)
@@ -86,55 +82,75 @@ struct EnhancedFriendRow: View {
                         )
                         .position(x: 40, y: 40)
                 }
+                .frame(width: 50)
+                
                 
                 VStack(alignment: .leading, spacing: 0) {
+                    // Use lineLimit to limit the length of the username
                     Text(friend.fullName)
                         .font(.headline)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
                     
-                    // Show online/offline time
-                    if isOnline {
-                        Text("Đang hoạt động")
-                            .font(.subheadline)
-                            .foregroundColor(.green)
-                    } else if let lastSeen = lastSeen {
-                        Text("Hoạt động \(formatter.localizedString(for: lastSeen, relativeTo: Date()))")
-                            .font(.subheadline)
-                            .foregroundColor(.gray)
-                    }
-                    
-                    // Show latest location updates with freshness indicator
-                    if let timeSinceLastUpdate = timeSinceLastUpdate {
-                        HStack(spacing: 4) {
-                            Circle()
-                                .fill(locationFreshnessColor)
-                                .frame(width: 6, height: 6)
-                            
-                            Text("Vị trí cập nhật \(timeSinceLastUpdate)")
-                                .font(.caption)
-                                .foregroundColor(locationFreshnessColor)
+                    // Online status
+                    Group {
+                        if isOnline {
+                            Text("Đang hoạt động")
+                                .font(.subheadline)
+                                .foregroundColor(.green)
+                        } else if let lastSeen = lastSeen {
+                            Text("Hoạt động \(formatter.localizedString(for: lastSeen, relativeTo: Date()))")
+                                .font(.subheadline)
+                                .foregroundColor(.gray)
+                                .lineLimit(1)
                         }
                     }
+                    .frame(height: 18)
+                    
+                    Group {
+                        if let timeSinceLastUpdate = timeSinceLastUpdate {
+                            HStack(spacing: 4) {
+                                Circle()
+                                    .fill(locationFreshnessColor)
+                                    .frame(width: 6, height: 6)
+                                
+                                Text("Vị trí cập nhật \(timeSinceLastUpdate)")
+                                    .font(.caption)
+                                    .foregroundColor(locationFreshnessColor)
+                                    .lineLimit(1)
+                            }
+                        } else {
+                            Text("")
+                                .font(.caption)
+                        }
+                    }
+                    .frame(height: 16)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
                 
                 Spacer()
                 
-                // Location status icon with color indication
-                if hasLocation {
-                    Image(systemName: "location.fill")
-                        .foregroundColor(locationFreshnessColor)
-                        .font(.system(size: 18))
-                } else {
-                    Image(systemName: "location.slash")
+                HStack(spacing: 8) {
+                    // Location status icon with color indication
+                    if hasLocation {
+                        Image(systemName: "location.fill")
+                            .foregroundColor(locationFreshnessColor)
+                            .font(.system(size: 18))
+                    } else {
+                        Image(systemName: "location.slash")
+                            .foregroundColor(.gray)
+                            .font(.system(size: 18))
+                    }
+                    
+                    // Right chevron
+                    Image(systemName: "chevron.right")
                         .foregroundColor(.gray)
-                        .font(.system(size: 18))
+                        .font(.system(size: 14))
                 }
-                
-                // Right chevron to indicate tappable
-                Image(systemName: "chevron.right")
-                    .foregroundColor(.gray)
-                    .font(.system(size: 14))
+                .frame(width: 40)
             }
             .padding(.vertical, 8)
+            .frame(height: 70)
         }
         .buttonStyle(PlainButtonStyle())
         .contextMenu {

@@ -112,8 +112,8 @@ struct MapViewController: View {
                         //                        .padding()
                         //                        .opacity(0.7)
                     }
-                    .padding(.top, 10)
-                    .padding(.trailing, 10)
+                    .padding(.top, 70)
+                    .padding(.trailing, 0)
                 }
                 
                 Spacer()
@@ -265,36 +265,40 @@ struct FriendInfoPanel: View {
         return formatter.localizedString(for: locationDate, relativeTo: Date())
     }
     
-    // Determine if location is fresh or stale
-    private var isLocationFresh: Bool {
+    // Determine location freshness color
+    private var locationFreshnessColor: Color {
         guard let location = location else {
-            return false
+            return .gray
         }
         
-        // Consider location "fresh" if less than 1 hour old
         let oneHourAgo = Date().timeIntervalSince1970 - (60 * 60)
-        return location.timestamp > oneHourAgo
-    }
-    
-    // Get appropriate color for location freshness
-    private var locationFreshnessColor: Color {
-        if isLocationFresh {
+        if location.timestamp > oneHourAgo {
             return .green
-        } else {
-            // Location older than 1 hour but less than 24 hours
-            let twentyFourHoursAgo = Date().timeIntervalSince1970 - (24 * 60 * 60)
-            if let location = location, location.timestamp > twentyFourHoursAgo {
-                return .orange
-            }
-            // Location older than 24 hours
-            return .red
         }
+        
+        let twentyFourHoursAgo = Date().timeIntervalSince1970 - (24 * 60 * 60)
+        if location.timestamp > twentyFourHoursAgo {
+            return .orange
+        }
+        
+        return .red
     }
     
     var body: some View {
         VStack(spacing: 12) {
-            HStack {
-                // Avatar
+            // Top section styled like the contact card in the image
+            VStack(spacing: 8) {
+                HStack {
+                    Spacer()
+                    // Close button (X) positioned at top-right
+                    Button(action: onClose) {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 20))
+                            .foregroundColor(.gray)
+                    }
+                }
+                
+                // Avatar/initials with exact styling from the image
                 ZStack {
                     Circle()
                         .fill(Color.blue.opacity(0.2))
@@ -317,58 +321,34 @@ struct FriendInfoPanel: View {
                             .font(.title2)
                             .foregroundColor(.blue)
                     }
-                    
-                    // Online indicator
-                    if friend.isOnline {
-                        Circle()
-                            .fill(Color.green)
-                            .frame(width: 16, height: 16)
-                            .overlay(
-                                Circle()
-                                    .stroke(Color.white, lineWidth: 2)
-                            )
-                            .position(x: 48, y: 48)
-                    }
                 }
                 
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(friend.fullName)
-                        .font(.title3)
-                        .fontWeight(.semibold)
+                // Name styled like in the image
+                Text(friend.fullName)
+                    .font(.headline)
+                    .fontWeight(.semibold)
+                
+                // Online status with green dot like in the image
+                HStack(spacing: 4) {
+                    Circle()
+                        .fill(Color.green)
+                        .frame(width: 6, height: 6)
                     
-                    if friend.isOnline {
-                        Text("Đang trực tuyến")
-                            .font(.subheadline)
-                            .foregroundColor(.green)
-                    } else if let lastSeen = friend.lastSeen {
-                        Text("Hoạt động \(lastSeen, formatter: RelativeDateTimeFormatter())")
-                            .font(.subheadline)
-                            .foregroundColor(.gray)
-                    }
-                    
-                    if let location = location {
-                        HStack {
-                            Circle()
-                                .fill(locationFreshnessColor)
-                                .frame(width: 8, height: 8)
-                            
-                            Text("Vị trí cập nhật \(locationAge())")
-                                .font(.caption)
-                                .foregroundColor(locationFreshnessColor)
-                        }
-                    }
+                    Text("Đang hoạt động")
+                        .font(.subheadline)
+                        .foregroundColor(.green)
                 }
                 
-                Spacer()
-                
-                Button(action: onClose) {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.title3)
+                // Last active timestamp
+                if let lastSeen = friend.lastSeen {
+                    Text("Hoạt động \(lastSeen, formatter: RelativeDateTimeFormatter())")
+                        .font(.caption)
                         .foregroundColor(.gray)
                 }
             }
+            .padding(.bottom, 8)
             
-            // Location details
+            // Location details (unchanged)
             if let location = location {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 4) {
@@ -400,6 +380,7 @@ struct FriendInfoPanel: View {
                 .cornerRadius(8)
             }
             
+            // Action buttons (unchanged)
             HStack(spacing: 20) {
                 // Message button
                 Button(action: {
