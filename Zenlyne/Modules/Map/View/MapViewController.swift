@@ -89,28 +89,28 @@ struct MapViewController: View {
                                 .shadow(radius: 4)
                         }
                         
-                        Button(action: {
-                            if let userId = Auth.auth().currentUser?.uid {
-                                let firebaseService = FirebaseService()
-                                firebaseService.createMockLocationsForTesting(currentUserId: userId)
-                                
-                                // Reload sau 2 giây
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                                    if !self.viewModel.friends.isEmpty {
-                                        let friendIds = self.viewModel.friends.map { $0.id }
-                                        self.viewModel.startObservingFriendLocations(friendIds: friendIds)
-                                    }
-                                }
-                            }
-                        }) {
-                            Text("Test Locations")
-                                .padding(10)
-                                .background(Color.green)
-                                .foregroundColor(.white)
-                                .cornerRadius(10)
-                        }
-                        .padding()
-                        .opacity(0.7) // Hơi trong suốt để không quá nổi bật
+                        //                        Button(action: {
+                        //                            if let userId = Auth.auth().currentUser?.uid {
+                        //                                let firebaseService = FirebaseService()
+                        //                                firebaseService.createMockLocationsForTesting(currentUserId: userId)
+                        //
+                        //                                // Reload sau 2 giây
+                        //                                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+                        //                                    if !self.viewModel.friends.isEmpty {
+                        //                                        let friendIds = self.viewModel.friends.map { $0.id }
+                        //                                        self.viewModel.startObservingFriendLocations(friendIds: friendIds)
+                        //                                    }
+                        //                                }
+                        //                            }
+                        //                        }) {
+                        //                            Text("Test Locations")
+                        //                                .padding(10)
+                        //                                .background(Color.green)
+                        //                                .foregroundColor(.white)
+                        //                                .cornerRadius(10)
+                        //                        }
+                        //                        .padding()
+                        //                        .opacity(0.7)
                     }
                     .padding(.top, 10)
                     .padding(.trailing, 10)

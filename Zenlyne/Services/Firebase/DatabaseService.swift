@@ -524,65 +524,65 @@ class FirebaseService: FirebaseServiceProtocol {
         }
     }
     
-    func createMockLocationsForTesting(currentUserId: String) {
-        let db = Firestore.firestore()
-        
-        // Get friends list
-        db.collection("users").document(currentUserId).getDocument { snapshot, error in
-            guard let document = snapshot, document.exists,
-                  let data = document.data(),
-                  let friendIds = data["friendIds"] as? [String] else {
-                print("DEBUG TEST: No friends found for mock data")
-                return
-            }
-            
-            print("DEBUG TEST: Creating mock locations for \(friendIds.count) friends")
-            
-            // User's current location
-            var userLocation: CLLocationCoordinate2D? = nil
-            if let locationData = data["lastLocation"] as? [String: Any],
-               let latitude = locationData["latitude"] as? Double,
-               let longitude = locationData["longitude"] as? Double {
-                userLocation = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
-                print("DEBUG TEST: User location: \(latitude), \(longitude)")
-            } else {
-                // Default position (NWS)
-                userLocation = CLLocationCoordinate2D(latitude: 21.019919, longitude: 105.783856)
-                print("DEBUG TEST: Using default user location")
-            }
-            
-            // Create fake location for friends around user location
-            for (index, friendId) in friendIds.enumerated() {
-                guard let userLoc = userLocation else { continue }
-                
-                // Generate random positions around the user
-                let offsetLat = Double(index + 1) * 0.001 * (index % 2 == 0 ? 1 : -1)
-                let offsetLon = Double(index + 1) * 0.001 * (index % 3 == 0 ? 1 : -1)
-                
-                let friendLat = userLoc.latitude + offsetLat
-                let friendLon = userLoc.longitude + offsetLon
-                
-                let mockLocationData: [String: Any] = [
-                    "latitude": friendLat,
-                    "longitude": friendLon,
-                    "timestamp": Date().timeIntervalSince1970,
-                    "expiresAt": Date().timeIntervalSince1970 + (72 * 60 * 60)
-                ]
-                
-                // Update fake location to friends
-                db.collection("users").document(friendId).updateData([
-                    "lastLocation": mockLocationData,
-                    "isOnline": index % 2 == 0  // Half online, half offline
-                ]) { error in
-                    if let error = error {
-                        print("DEBUG TEST: Error creating mock location for friend \(friendId): \(error.localizedDescription)")
-                    } else {
-                        print("DEBUG TEST: Created mock location for friend \(friendId): \(friendLat), \(friendLon)")
-                    }
-                }
-            }
-        }
-    }
+//    func createMockLocationsForTesting(currentUserId: String) {
+//        let db = Firestore.firestore()
+//        
+//        // Get friends list
+//        db.collection("users").document(currentUserId).getDocument { snapshot, error in
+//            guard let document = snapshot, document.exists,
+//                  let data = document.data(),
+//                  let friendIds = data["friendIds"] as? [String] else {
+//                print("DEBUG TEST: No friends found for mock data")
+//                return
+//            }
+//            
+//            print("DEBUG TEST: Creating mock locations for \(friendIds.count) friends")
+//            
+//            // User's current location
+//            var userLocation: CLLocationCoordinate2D? = nil
+//            if let locationData = data["lastLocation"] as? [String: Any],
+//               let latitude = locationData["latitude"] as? Double,
+//               let longitude = locationData["longitude"] as? Double {
+//                userLocation = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+//                print("DEBUG TEST: User location: \(latitude), \(longitude)")
+//            } else {
+//                // Default position (NWS)
+//                userLocation = CLLocationCoordinate2D(latitude: 21.019919, longitude: 105.783856)
+//                print("DEBUG TEST: Using default user location")
+//            }
+//            
+//            // Create fake location for friends around user location
+//            for (index, friendId) in friendIds.enumerated() {
+//                guard let userLoc = userLocation else { continue }
+//                
+//                // Generate random positions around the user
+//                let offsetLat = Double(index + 1) * 0.001 * (index % 2 == 0 ? 1 : -1)
+//                let offsetLon = Double(index + 1) * 0.001 * (index % 3 == 0 ? 1 : -1)
+//                
+//                let friendLat = userLoc.latitude + offsetLat
+//                let friendLon = userLoc.longitude + offsetLon
+//                
+//                let mockLocationData: [String: Any] = [
+//                    "latitude": friendLat,
+//                    "longitude": friendLon,
+//                    "timestamp": Date().timeIntervalSince1970,
+//                    "expiresAt": Date().timeIntervalSince1970 + (72 * 60 * 60)
+//                ]
+//                
+//                // Update fake location to friends
+//                db.collection("users").document(friendId).updateData([
+//                    "lastLocation": mockLocationData,
+//                    "isOnline": index % 2 == 0  // Half online, half offline
+//                ]) { error in
+//                    if let error = error {
+//                        print("DEBUG TEST: Error creating mock location for friend \(friendId): \(error.localizedDescription)")
+//                    } else {
+//                        print("DEBUG TEST: Created mock location for friend \(friendId): \(friendLat), \(friendLon)")
+//                    }
+//                }
+//            }
+//        }
+//    }
 }
 
 // Helper extension
