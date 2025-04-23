@@ -191,7 +191,7 @@ class FriendRequestViewModel: ObservableObject {
         let db = Firestore.firestore()
         let requestRef = db.collection("friend_requests").document(requestId)
         
-        // Đọc thông tin lời mời
+        // Read invitation information
         requestRef.getDocument { [weak self] (document, error) in
             guard let self = self else { return }
             
@@ -212,7 +212,7 @@ class FriendRequestViewModel: ObservableObject {
                 return
             }
             
-            // Kiểm tra xem người đang thực hiện thao tác có phải là người nhận lời mời không
+            // Check if the person performing the action is the recipient of the invitation
             if recipientId != currentUser.uid {
                 print("DEBUG: Người dùng không phải là người nhận lời mời")
                 self.isLoading = false
@@ -222,8 +222,7 @@ class FriendRequestViewModel: ObservableObject {
             
             print("DEBUG: Người gửi: \(senderId), Người nhận: \(recipientId)")
             
-            // THAY ĐỔI QUAN TRỌNG: Thực hiện các thao tác riêng biệt thay vì transaction
-            // 1. Cập nhật trạng thái lời mời trước
+            // 1. Update invitation status first
             requestRef.updateData(["status": "accepted"]) { error in
                 if let error = error {
                     print("DEBUG: Lỗi khi cập nhật trạng thái lời mời: \(error.localizedDescription)")
@@ -234,7 +233,7 @@ class FriendRequestViewModel: ObservableObject {
                 
                 print("DEBUG: Đã cập nhật trạng thái lời mời thành công")
                 
-                // 2. Cập nhật danh sách bạn bè của người nhận
+                // 2. Update the recipient's friend list
                 let currentUserRef = db.collection("users").document(currentUser.uid)
                 currentUserRef.updateData([
                     "friendIds": FieldValue.arrayUnion([senderId])
@@ -248,7 +247,7 @@ class FriendRequestViewModel: ObservableObject {
                     
                     print("DEBUG: Đã cập nhật danh sách bạn bè người nhận thành công")
                     
-                    // 3. Cập nhật danh sách bạn bè của người gửi
+                    // 3. Update sender's friend list
                     let senderRef = db.collection("users").document(senderId)
                     senderRef.updateData([
                         "friendIds": FieldValue.arrayUnion([currentUser.uid])
@@ -263,13 +262,13 @@ class FriendRequestViewModel: ObservableObject {
                         
                         print("DEBUG: Đã cập nhật danh sách bạn bè người gửi thành công")
                         
-                        // Kiểm tra kết quả
+                        // Checking result
                         requestRef.getDocument { (doc, _) in
                             if let status = doc?.data()?["status"] as? String {
                                 print("DEBUG: Trạng thái lời mời sau khi xử lý: \(status)")
                             }
                             
-                            // Thông báo cập nhật giao diện
+                            // Interface update notification
                             NotificationCenter.default.post(name: NSNotification.Name("RefreshFriendsList"), object: nil)
                             
                             completion(true, "Đã chấp nhận lời mời kết bạn thành công")
@@ -482,11 +481,11 @@ class FriendRequestViewModel: ObservableObject {
                 return
             }
             
-            // Tạo một DispatchGroup để đồng bộ việc tải dữ liệu bạn bè
+            // Create a DispatchGroup to synchronize friend data downloads
             let group = DispatchGroup()
             var friends: [User] = []
             
-            // Lấy thông tin chi tiết cho từng người bạn
+            // Get detailed information for each friend
             for friendId in friendIds {
                 group.enter()
                 
@@ -505,12 +504,12 @@ class FriendRequestViewModel: ObservableObject {
                         return
                     }
                     
-                    // Tạo đối tượng User từ dữ liệu
+                    // Create User object from data
                     if let fullName = friendData["fullName"] as? String,
                        let email = friendData["email"] as? String {
                         var friend = User(id: friendId, fullName: fullName, email: email)
                         
-                        // Thêm các thông tin khác nếu có
+                        // Add other information if any
                         friend.profileImageUrl = friendData["profileImageUrl"] as? String
                         friend.isOnline = friendData["isOnline"] as? Bool ?? false
                         
@@ -524,7 +523,7 @@ class FriendRequestViewModel: ObservableObject {
                 }
             }
             
-            // Khi tất cả các thao tác tải dữ liệu bạn bè hoàn tất
+            // When all friend data loading operations are complete
             group.notify(queue: .main) {
                 print("DEBUG: Hoàn tất tải \(friends.count) bạn bè")
                 completion(friends)

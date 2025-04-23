@@ -55,6 +55,8 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         // Configure background tasks
         registerBackgroundTasks()
         
+        scheduleLocationCleanUp()
+        
         return true
     }
     
@@ -177,6 +179,13 @@ class AppDelegate: NSObject, UIApplicationDelegate {
             timer.invalidate()
             completion()
         }
+    }
+    
+    func scheduleLocationCleanUp() {
+        let timer = Timer.scheduledTimer(withTimeInterval: 6 * 60 * 60, repeats: true) { [weak self] _ in
+            self?.firebaseService.cleanupExpiredLocations()
+        }
+        timer.tolerance = 5 * 60
     }
 }
 

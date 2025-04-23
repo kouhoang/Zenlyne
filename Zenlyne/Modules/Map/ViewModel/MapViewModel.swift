@@ -129,13 +129,16 @@ class LocationViewModel: NSObject, ObservableObject {
         
         print("DEBUG: Starting to observe locations for \(friendIds.count) friends")
         
-        // Start observing friend locations
+        if locationObserversActive {
+            firebaseService.stopObservingFriendLocations()
+        }
+        
         firebaseService.observeFriendLocations(userIds: friendIds) { [weak self] locations in
             guard let self = self else { return }
             
             print("DEBUG: Received \(locations.count) friend locations")
             
-            // Update friend locations in main thread
+            // Update friend location in main thread
             DispatchQueue.main.async {
                 self.friendLocations = locations
             }
@@ -177,6 +180,15 @@ class LocationViewModel: NSObject, ObservableObject {
         }
         
         onlineStatusObserversActive = true
+    }
+    
+    func debugFriendLocations() {
+        print("DEBUG: Current friend locations:")
+        for (friendId, location) in friendLocations {
+            let ageInHours = (Date().timeIntervalSince1970 - location.timestamp) / 3600
+            let friend = friends.first(where: { $0.id == friendId})?.fullName ?? "Unknown"
+            print("DEBUG: Friend: \(friend) (\(friendId)) - Location: \(location.latitude), \(location.longitude) - Age: \(String(format: "%.1f", ageInHours)) hours")
+        }
     }
     
     // MARK: - Helper Methods

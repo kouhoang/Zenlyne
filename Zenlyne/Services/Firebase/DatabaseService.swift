@@ -36,37 +36,26 @@ class FirebaseService: FirebaseServiceProtocol {
     
     // Save current user location to Realtime Database
     func saveUserLocation(userId: String, location: UserLocation) {
-        let locationRef = database.child("locations").child(userId)
+        print("DEBUG: Attempting to save location for user \(userId): \(location.latitude), \(location.longitude)")
         
-        // First check if we need to update by getting the last location
-        fetchUserLastLocation(userId: userId) { [weak self] lastLocation in
-            guard let self = self else { return }
-            
-            // If no previous location or location has changed more than 10 meters, update
-            if lastLocation == nil || self.calculateDistance(from: lastLocation!, to: location) > 10 {
-                // Add timestamp to save the last time the location was updated
-                var locationData = location.toDictionary()
-                locationData["updatedAt"] = ServerValue.timestamp()
-                
-                // Set expiration time to 72 hours
-                let expiresInSeconds: TimeInterval = 72 * 60 * 60
-                locationData["expiresAt"] = Date().timeIntervalSince1970 + expiresInSeconds
-                
-                locationRef.setValue(locationData) { error, _ in
-                    if let error = error {
-                        print("DEBUG: Error saving location: \(error.localizedDescription)")
-                    } else {
-                        print("DEBUG: Location updated for user: \(userId)")
-                    }
-                }
-                
-                // Update last appearance time
-                let lastSeenRef = database.child("users").child(userId).child("lastSeen")
-                lastSeenRef.setValue(ServerValue.timestamp())
+        let db = Firestore.firestore()
+        let locationData: [String: Any] = [
+            "latitude": location.latitude,
+            "longitude": location.longitude,
+            "timestamp": location.timestamp,
+            "updatedAt": FieldValue.serverTimestamp(),
+            "expiresAt": Date().timeIntervalSince1970 + (72 * 60 * 60) // 72 hours
+        ]
+        
+        db.collection("users").document(userId).updateData([
+            "lastLocation": locationData,
+            "isOnline": true,
+            "lastSeen": FieldValue.serverTimestamp()
+        ]) { error in
+            if let error = error {
+                print("DEBUG: Error saving location to Firestore: \(error.localizedDescription)")
             } else {
-                print("DEBUG: Location hasn't changed enough to update (< 10m)")
-                // Just update the expiration time
-                locationRef.child("expiresAt").setValue(Date().timeIntervalSince1970 + (72 * 60 * 60))
+                print("DEBUG: Successfully saved location for user \(userId)")
             }
         }
     }
@@ -80,25 +69,39 @@ class FirebaseService: FirebaseServiceProtocol {
     
     // Get the user's last location
     func fetchUserLastLocation(userId: String, completion: @escaping (UserLocation?) -> Void) {
-        let locationRef = database.child("locations").child(userId)
+        let db = Firestore.firestore()
         
-        locationRef.observeSingleEvent(of: .value) { snapshot in
-            guard let value = snapshot.value as? [String: Any],
-                  let latitude = value["latitude"] as? Double,
-                  let longitude = value["longitude"] as? Double,
-                  let timestamp = value["timestamp"] as? TimeInterval else {
+        db.collection("users").document(userId).getDocument { snapshot, error in
+            if let error = error {
+                print("DEBUG: Error fetching user document: \(error.localizedDescription)")
                 completion(nil)
                 return
             }
             
-            // Check if the position has expired
-            if let expiresAt = value["expiresAt"] as? TimeInterval {
+            guard let document = snapshot, document.exists,
+                  let data = document.data(),
+                  let locationData = data["lastLocation"] as? [String: Any] else {
+                print("DEBUG: No location data found for user \(userId)")
+                completion(nil)
+                return
+            }
+            
+            // Check expiration time
+            if let expiresAt = locationData["expiresAt"] as? TimeInterval {
                 if Date().timeIntervalSince1970 > expiresAt {
-                    // Position has expired
                     print("DEBUG: Location for user \(userId) has expired")
                     completion(nil)
                     return
                 }
+            }
+            
+            // Get location information
+            guard let latitude = locationData["latitude"] as? Double,
+                  let longitude = locationData["longitude"] as? Double,
+                  let timestamp = locationData["timestamp"] as? TimeInterval else {
+                print("DEBUG: Invalid location data format")
+                completion(nil)
+                return
             }
             
             let userLocation = UserLocation(
@@ -188,42 +191,43 @@ class FirebaseService: FirebaseServiceProtocol {
     
     // Set online/offline status for users
     func setUserOnlineStatus(userId: String, isOnline: Bool) {
-        let onlineRef = database.child("users").child(userId).child("isOnline")
-        onlineRef.setValue(isOnline)
+        let db = Firestore.firestore()
         
-        // Update last seen timestamp when going offline
+        var updateData: [String: Any] = ["isOnline": isOnline]
+        
+        // Update lastSeen when user is offline
         if !isOnline {
-            let lastSeenRef = database.child("users").child(userId).child("lastSeen")
-            lastSeenRef.setValue(ServerValue.timestamp())
+            updateData["lastSeen"] = FieldValue.serverTimestamp()
         }
         
-        // Set offline status when connection is lost
-        if isOnline {
-            let onDisconnectRef = database.child("users").child(userId)
-            onDisconnectRef.onDisconnectUpdateChildValues([
-                "isOnline": false,
-                "lastSeen": ServerValue.timestamp()
-            ])
-            
-            print("DEBUG: Set user \(userId) online status to \(isOnline) with onDisconnect")
-        } else {
-            print("DEBUG: Set user \(userId) online status to \(isOnline)")
+        db.collection("users").document(userId).updateData(updateData) { error in
+            if let error = error {
+                print("DEBUG: Error updating online status: \(error.localizedDescription)")
+            } else {
+                print("DEBUG: Successfully updated online status for user \(userId) to \(isOnline)")
+            }
         }
     }
     
     // Track a user's online status
     func observeUserOnlineStatus(userId: String, completion: @escaping (Bool) -> Void) {
-        // Remove old observer if any
-        stopObservingUserOnlineStatus(userId: userId)
+        let db = Firestore.firestore()
         
-        let onlineRef = database.child("users").child(userId).child("isOnline")
-        let handle = onlineRef.observe(.value) { snapshot in
-            let isOnline = snapshot.value as? Bool ?? false
-            completion(isOnline)
-        }
-        
-        onlineStatusObservers[userId] = handle
-        print("DEBUG: Started observing online status for user \(userId)")
+        db.collection("users").document(userId)
+            .addSnapshotListener { snapshot, error in
+                if let error = error {
+                    print("DEBUG: Error listening to user document: \(error.localizedDescription)")
+                    return
+                }
+                
+                guard let document = snapshot, document.exists,
+                      let data = document.data() else {
+                    return
+                }
+                
+                let isOnline = data["isOnline"] as? Bool ?? false
+                completion(isOnline)
+            }
     }
     
     // Stop tracking user online status
@@ -387,6 +391,7 @@ class FirebaseService: FirebaseServiceProtocol {
     private func fetchAllFriendLocations(userIds: [String], completion: @escaping ([String: UserLocation]) -> Void) {
         var friendLocations = [String: UserLocation]()
         let group = DispatchGroup()
+        let currentTime = Date().timeIntervalSince1970
         
         for userId in userIds {
             group.enter()
@@ -395,27 +400,31 @@ class FirebaseService: FirebaseServiceProtocol {
             locationRef.observeSingleEvent(of: .value) { snapshot in
                 defer { group.leave() }
                 
-                guard let value = snapshot.value as? [String: Any],
-                      let latitude = value["latitude"] as? Double,
-                      let longitude = value["longitude"] as? Double,
-                      let timestamp = value["timestamp"] as? TimeInterval else {
+                guard snapshot.exists(), let value = snapshot.value as? [String: Any] else {
+                    print("DEBUG: No location data for user \(userId)")
                     return
                 }
                 
-                // Check if the position has expired
+                guard let latitude = value["latitude"] as? Double,
+                      let longitude = value["longitude"] as? Double,
+                      let timestamp = value["timestamp"] as? TimeInterval else {
+                    print("DEBUG: Invalid location data for user \(userId)")
+                    return
+                }
+                
                 if let expiresAt = value["expiresAt"] as? TimeInterval {
-                    if Date().timeIntervalSince1970 > expiresAt {
-                        // Position has expired
+                    if currentTime > expiresAt {
+                        print("DEBUG: Location for user \(userId) has expired. Expiry: \(expiresAt), Current: \(currentTime)")
                         return
                     }
                 } else {
-                    // No explicit expiration time, use default 72 hours
-                    if timestamp + (72 * 60 * 60) < Date().timeIntervalSince1970 {
-                        // Position has expired
+                    if timestamp + (72 * 60 * 60) < currentTime {
+                        print("DEBUG: Location for user \(userId) has expired (default 72h)")
                         return
                     }
                 }
                 
+                print("DEBUG: Valid location found for user \(userId)")
                 let location = UserLocation(
                     latitude: latitude,
                     longitude: longitude,
@@ -427,7 +436,101 @@ class FirebaseService: FirebaseServiceProtocol {
         }
         
         group.notify(queue: .main) {
+            print("DEBUG: Found valid locations for \(friendLocations.count) friends")
             completion(friendLocations)
+        }
+    }
+    
+    func debugDatabaseLocations(forUsers userIds: [String]) {
+        for userId in userIds {
+            let locationRef = database.child("locations").child(userId)
+            locationRef.observeSingleEvent(of: .value) { snapshot in
+                print("DEBUG: Database location for \(userId):")
+                if snapshot.exists() {
+                    if let value = snapshot.value as? [String: Any] {
+                        print("DEBUG:   Data: \(value)")
+                        if let expiresAt = value["expiresAt"] as? TimeInterval {
+                            let expiryDate = Date(timeIntervalSince1970: expiresAt)
+                            let formatter = DateFormatter()
+                            formatter.dateStyle = .medium
+                            formatter.timeStyle = .medium
+                            print("DEBUG:   Expires: \(formatter.string(from: expiryDate))")
+                        }
+                    } else {
+                        print("DEBUG:   Invalid data format")
+                    }
+                } else {
+                    print("DEBUG:   No location data found")
+                }
+            }
+        }
+    }
+    
+    func cleanupExpiredLocations() {
+        let db = Firestore.firestore()
+        let currentTime = Date().timeIntervalSince1970
+        
+        // Get all suer
+        db.collection("users").getDocuments { snapshot, error in
+            if let error = error {
+                print("DEBUG: Error fetching users: \(error.localizedDescription)")
+                return
+            }
+            
+            for document in snapshot?.documents ?? [] {
+                let data = document.data()
+                if let locationData = data["lastLocation"] as? [String: Any] {
+                    if let expiresAt = locationData["expiresAt"] as? TimeInterval {
+                        if currentTime > expiresAt {
+                            let userId = document.documentID
+                            print("DEBUG: Removing expired location for user \(userId)")
+                            
+                            db.collection("users").document(userId).updateData([
+                                "lastLocation": FieldValue.delete()
+                            ]) { error in
+                                if let error = error {
+                                    print("DEBUG: Error removing expired location: \(error.localizedDescription)")
+                                } else {
+                                    print("DEBUG: Successfully removed expired location for user \(userId)")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    func testSaveLocationToFirestore(userId: String) {
+        let db = Firestore.firestore()
+        let testLocation: [String: Any] = [
+            "latitude": 10.762622,
+            "longitude": 105.660172,
+            "timestamp": Date().timeIntervalSince1970,
+            "updatedAt": FieldValue.serverTimestamp(),
+            "expiresAt": Date().timeIntervalSince1970 + (72 * 60 * 60)
+        ]
+        
+        db.collection("users").document(userId).updateData([
+            "lastLocation": testLocation
+        ]) { error in
+            if let error = error {
+                print("DEBUG: Test location save FAILED: \(error.localizedDescription)")
+                
+                db.collection("users").document(userId).setData([
+                    "lastLocation": testLocation,
+                    "isOnline": true,
+                    "lastSeen": FieldValue.serverTimestamp()
+                ]) { error in
+                    if let error = error {
+                        print("DEBUG: Test location set FAILED: \(error.localizedDescription)")
+                    } else {
+                        print("DEBUG: Test location set SUCCESSFUL")
+                    }
+                }
+            } else {
+                print("DEBUG: Test location save SUCCESSFUL")
+            }
         }
     }
 }

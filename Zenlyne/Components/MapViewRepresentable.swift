@@ -10,7 +10,7 @@ import MapboxMaps
 import CoreLocation
 
 struct MapViewRepresentable: UIViewRepresentable {
-    @ObservedObject var viewModel: LocationViewModel
+    @	vedObject var viewModel: LocationViewModel
         
     init(viewModel: LocationViewModel) {
         self.viewModel = viewModel
@@ -301,21 +301,31 @@ struct MapViewRepresentable: UIViewRepresentable {
         func updateFriendAnnotations(for mapView: MapView, friendLocations: [String: UserLocation], friends: [User]) {
             guard let annotationManager = friendAnnotationManager else { return }
             
-            // Remove existing annotations
+            // Delete all current annotation
             annotationManager.annotations = []
             friendIdByAnnotationId.removeAll()
             
-            // Create a new annotation for each friend
+            // Create new annotation for each friend
             var annotations: [PointAnnotation] = []
             
             for (friendId, location) in friendLocations {
-                // Get friend info
-                guard let friend = friends.first(where: { $0.id == friendId }) else { continue }
+                // Check if location has expired (72 hours)
+                let isLocationExpired = location.timestamp + (72 * 60 * 60) < Date().timeIntervalSince1970
+                if isLocationExpired {
+                    print("DEBUG: Skipping expired location for friend \(friendId)")
+                    continue
+                }
                 
-                // Check if friend is online - create different marker based on status
+                // Get friens' information
+                guard let friend = friends.first(where: { $0.id == friendId }) else {
+                    print("DEBUG: Friend not found for ID \(friendId)")
+                    continue
+                }
+                
+                // Tracking online status
                 let isOnline = friend.isOnline
                 
-                // Create unique marker image for this friend if it doesn't exist
+                // Create marker image if not present
                 createFriendMarkerImage(for: mapView, friendId: friendId, name: friend.fullName, isOnline: isOnline)
                 
                 // Create annotation
@@ -327,19 +337,20 @@ struct MapViewRepresentable: UIViewRepresentable {
                 annotation.iconImage = markerIconId
                 annotation.iconSize = 1.0
                 
-                // Save mapping between annotation ID and friend ID for tap handling
+                // Save mapping between annotation ID and friend ID for tap processing
                 friendIdByAnnotationId[annotation.id] = friendId
                 
                 annotations.append(annotation)
                 
-                // Add pulsing effect for online friends
+                // Add pulse effect for online friends
                 if isOnline {
                     updatePulseEffect(for: mapView, at: location.toCoordinate(), isUser: false)
                 }
             }
             
-            // Add all annotations to the manager
+            // Add all annotations to manager
             annotationManager.annotations = annotations
+            print("DEBUG: Added \(annotations.count) friend annotations to map")
         }
 
         // Update method to create friend marker image with online/offline status
