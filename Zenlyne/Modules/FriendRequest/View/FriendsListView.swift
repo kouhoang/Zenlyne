@@ -116,9 +116,9 @@ struct FriendsListView: View {
                                 lastSeen: friend.lastSeen,
                                 timeSinceLastUpdate: viewModel.timeSinceLastUpdate(friendId: friend.id),
                                 onTap: {
-                                    // Focus camera vào bạn bè khi tap vào hàng
+                                    // Focus camera on friend when tapping on row
                                     viewModel.focusOnFriendLocation(friendId: friend.id)
-                                    // Đóng view FriendsList và quay lại màn hình Map
+                                    // Close FriendsList view and return to Map screen
                                     NotificationCenter.default.post(
                                         name: NSNotification.Name("FriendSelected"),
                                         object: nil,
@@ -227,7 +227,7 @@ struct FriendsListView: View {
             return
         }
         
-        // Đặt trạng thái đang tải
+        // Set loading status
         isRefreshing = true
         errorMessage = nil
         
@@ -259,7 +259,7 @@ struct FriendsListView: View {
     
     // Load the number of pending friend requests
     private func loadPendingRequestsCount() {
-        guard let currentUser = Auth.auth().currentUser else {
+        guard Auth.auth().currentUser != nil else {
             pendingRequestsCount = 0
             return
         }
@@ -294,110 +294,6 @@ struct FriendsListView: View {
                         self.errorMessage = "Không thể xóa bạn bè. Vui lòng thử lại sau."
                     }
                 }
-            }
-        }
-    }
-}
-
-struct EnhancedFriendRow: View {
-    let friend: User
-    let hasLocation: Bool
-    let isOnline: Bool
-    let lastSeen: Date?
-    let timeSinceLastUpdate: String?
-    let onTap: () -> Void
-    private let formatter: RelativeDateTimeFormatter = {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .abbreviated
-        return formatter
-    }()
-    
-    var body: some View {
-        Button(action: onTap) {
-            HStack {
-                // Avatar with online/offline status
-                ZStack {
-                    Circle()
-                        .fill(Color.blue.opacity(0.2))
-                        .frame(width: 50, height: 50)
-                    
-                    if let profileImage = friend.profileImageUrl {
-                        AsyncImage(url: URL(string: profileImage)) { image in
-                            image
-                                .resizable()
-                                .scaledToFill()
-                        } placeholder: {
-                            Text(friend.initials)
-                                .font(.title3)
-                                .foregroundColor(.blue)
-                        }
-                        .frame(width: 46, height: 46)
-                        .clipShape(Circle())
-                    } else {
-                        Text(friend.initials)
-                            .font(.title3)
-                            .foregroundColor(.blue)
-                    }
-                    
-                    // Online status indicator - green or red dot
-                    Circle()
-                        .fill(isOnline ? Color.green : Color.red)
-                        .frame(width: 14, height: 14)
-                        .overlay(
-                            Circle()
-                                .stroke(Color.white, lineWidth: 2)
-                        )
-                        .position(x: 40, y: 40)
-                }
-                
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(friend.fullName)
-                        .font(.headline)
-                    
-                    // Show online/offline time
-                    if isOnline {
-                        Text("Đang hoạt động")
-                            .font(.subheadline)
-                            .foregroundColor(.green)
-                    } else if let lastSeen = lastSeen {
-                        Text("Hoạt động \(formatter.localizedString(for: lastSeen, relativeTo: Date()))")
-                            .font(.subheadline)
-                            .foregroundColor(.gray)
-                    }
-                    
-                    // Show latest location updates
-                    if let timeSinceLastUpdate = timeSinceLastUpdate {
-                        Text("Vị trí cập nhật \(timeSinceLastUpdate)")
-                            .font(.caption)
-                            .foregroundColor(.gray)
-                    }
-                }
-                
-                Spacer()
-                
-                // Icon shows position status
-                if hasLocation {
-                    Image(systemName: "location.fill")
-                        .foregroundColor(.blue)
-                        .font(.system(size: 18))
-                } else {
-                    Image(systemName: "location.slash")
-                        .foregroundColor(.gray)
-                        .font(.system(size: 18))
-                }
-            }
-            .padding(.vertical, 8)
-        }
-        .buttonStyle(PlainButtonStyle())
-        .contextMenu {
-            Button(role: .destructive, action: {
-                // Delete friend feature in context menu
-                if let currentUser = Auth.auth().currentUser {
-                    let firebaseService = FirebaseService()
-                    firebaseService.removeFriend(currentUserId: currentUser.uid, friendId: friend.id) { _ in }
-                }
-            }) {
-                Label("Xóa bạn bè", systemImage: "person.badge.minus")
             }
         }
     }

@@ -11,6 +11,7 @@ import Foundation
 import FirebaseDatabase
 import FirebaseFirestore
 import Combine
+import CoreLocation
 
 protocol FirebaseServiceProtocol {
     func saveUserLocation(userId: String, location: UserLocation)
@@ -21,6 +22,8 @@ protocol FirebaseServiceProtocol {
     func setUserOnlineStatus(userId: String, isOnline: Bool)
     func observeUserOnlineStatus(userId: String, completion: @escaping (Bool) -> Void)
     func stopObservingUserOnlineStatus(userId: String)
+    func getPendingFriendRequestsCount(for userId: String, completion: @escaping (Int) -> Void)
+    func removeFriend(currentUserId: String, friendId: String, completion: @escaping (Bool) -> Void)
 }
 
 class FirebaseService: FirebaseServiceProtocol {
@@ -35,17 +38,44 @@ class FirebaseService: FirebaseServiceProtocol {
     func saveUserLocation(userId: String, location: UserLocation) {
         let locationRef = database.child("locations").child(userId)
         
-        // Add timestamp to save the last time the location was updated
-        var locationData = location.toDictionary()
-        locationData["updatedAt"] = ServerValue.timestamp()
-        let expiresInSecond: TimeInterval = 72 * 60 * 60
-        locationData["expiresAt"] = Date().timeIntervalSince1970 + expiresInSecond
-        
-        locationRef.setValue(locationData)
-        
-        // Update last appearance time
-        let lastSeenRef = database.child("users").child(userId).child("lastSeen")
-        lastSeenRef.setValue(ServerValue.timestamp())
+        // First check if we need to update by getting the last location
+        fetchUserLastLocation(userId: userId) { [weak self] lastLocation in
+            guard let self = self else { return }
+            
+            // If no previous location or location has changed more than 10 meters, update
+            if lastLocation == nil || self.calculateDistance(from: lastLocation!, to: location) > 10 {
+                // Add timestamp to save the last time the location was updated
+                var locationData = location.toDictionary()
+                locationData["updatedAt"] = ServerValue.timestamp()
+                
+                // Set expiration time to 72 hours
+                let expiresInSeconds: TimeInterval = 72 * 60 * 60
+                locationData["expiresAt"] = Date().timeIntervalSince1970 + expiresInSeconds
+                
+                locationRef.setValue(locationData) { error, _ in
+                    if let error = error {
+                        print("DEBUG: Error saving location: \(error.localizedDescription)")
+                    } else {
+                        print("DEBUG: Location updated for user: \(userId)")
+                    }
+                }
+                
+                // Update last appearance time
+                let lastSeenRef = database.child("users").child(userId).child("lastSeen")
+                lastSeenRef.setValue(ServerValue.timestamp())
+            } else {
+                print("DEBUG: Location hasn't changed enough to update (< 10m)")
+                // Just update the expiration time
+                locationRef.child("expiresAt").setValue(Date().timeIntervalSince1970 + (72 * 60 * 60))
+            }
+        }
+    }
+    
+    // Helper method to calculate distance between two locations
+    private func calculateDistance(from location1: UserLocation, to location2: UserLocation) -> Double {
+        let loc1 = CLLocation(latitude: location1.latitude, longitude: location1.longitude)
+        let loc2 = CLLocation(latitude: location2.latitude, longitude: location2.longitude)
+        return loc1.distance(from: loc2) // Distance in meters
     }
     
     // Get the user's last location
@@ -62,11 +92,13 @@ class FirebaseService: FirebaseServiceProtocol {
             }
             
             // Check if the position has expired
-            if let expiresAt = value["expiresAt"] as? TimeInterval,
-               Date(timeIntervalSince1970: expiresAt / 1000) < Date() {
-                // Position has expired
-                completion(nil)
-                return
+            if let expiresAt = value["expiresAt"] as? TimeInterval {
+                if Date().timeIntervalSince1970 > expiresAt {
+                    // Position has expired
+                    print("DEBUG: Location for user \(userId) has expired")
+                    completion(nil)
+                    return
+                }
             }
             
             let userLocation = UserLocation(
@@ -84,6 +116,8 @@ class FirebaseService: FirebaseServiceProtocol {
         // Stop all running observers
         stopObservingFriendLocations()
         
+        print("DEBUG: Starting to observe locations for \(userIds.count) friends")
+        
         // Create new observer for each friend
         for userId in userIds {
             let locationRef = database.child("locations").child(userId)
@@ -97,11 +131,15 @@ class FirebaseService: FirebaseServiceProtocol {
                 }
                 
                 // Check if the position has expired
-                if let expiresAt = value["expiresAt"] as? TimeInterval,
-                   Date(timeIntervalSince1970: expiresAt / 1000) < Date() {
-                    // Location is expired, no need to update
-                    return
+                if let expiresAt = value["expiresAt"] as? TimeInterval {
+                    if Date().timeIntervalSince1970 > expiresAt {
+                        // Location is expired, no need to update
+                        print("DEBUG: Location for user \(userId) has expired")
+                        return
+                    }
                 }
+                
+                print("DEBUG: Received location update for user: \(userId)")
                 
                 let location = UserLocation(
                     latitude: latitude,
@@ -114,8 +152,16 @@ class FirebaseService: FirebaseServiceProtocol {
                     // Check and filter expired positions
                     var validLocations = [String: UserLocation]()
                     for (userId, location) in locations {
-                        if location.timestamp + (72 * 60 * 60) > Date().timeIntervalSince1970 {
-                            validLocations[userId] = location
+                        // Check if location is not expired
+                        if let expiresAt = value["expiresAt"] as? TimeInterval {
+                            if Date().timeIntervalSince1970 <= expiresAt {
+                                validLocations[userId] = location
+                            }
+                        } else {
+                            // If no expiration, use default 72 hours
+                            if location.timestamp + (72 * 60 * 60) > Date().timeIntervalSince1970 {
+                                validLocations[userId] = location
+                            }
                         }
                     }
                     completion(validLocations)
@@ -135,6 +181,7 @@ class FirebaseService: FirebaseServiceProtocol {
             database.removeObserver(withHandle: handle)
         }
         locationObservers.removeAll()
+        print("DEBUG: Stopped observing friend locations")
     }
     
     // MARK: - Online Status Management
@@ -144,6 +191,12 @@ class FirebaseService: FirebaseServiceProtocol {
         let onlineRef = database.child("users").child(userId).child("isOnline")
         onlineRef.setValue(isOnline)
         
+        // Update last seen timestamp when going offline
+        if !isOnline {
+            let lastSeenRef = database.child("users").child(userId).child("lastSeen")
+            lastSeenRef.setValue(ServerValue.timestamp())
+        }
+        
         // Set offline status when connection is lost
         if isOnline {
             let onDisconnectRef = database.child("users").child(userId)
@@ -151,6 +204,10 @@ class FirebaseService: FirebaseServiceProtocol {
                 "isOnline": false,
                 "lastSeen": ServerValue.timestamp()
             ])
+            
+            print("DEBUG: Set user \(userId) online status to \(isOnline) with onDisconnect")
+        } else {
+            print("DEBUG: Set user \(userId) online status to \(isOnline)")
         }
     }
     
@@ -166,6 +223,7 @@ class FirebaseService: FirebaseServiceProtocol {
         }
         
         onlineStatusObservers[userId] = handle
+        print("DEBUG: Started observing online status for user \(userId)")
     }
     
     // Stop tracking user online status
@@ -173,6 +231,7 @@ class FirebaseService: FirebaseServiceProtocol {
         if let handle = onlineStatusObservers[userId] {
             database.removeObserver(withHandle: handle)
             onlineStatusObservers.removeValue(forKey: userId)
+            print("DEBUG: Stopped observing online status for user \(userId)")
         }
     }
     
@@ -253,16 +312,43 @@ class FirebaseService: FirebaseServiceProtocol {
             group.notify(queue: .main) { [weak self] in
                 print("DEBUG: Đã tải xong danh sách \(friends.count) bạn bè")
                 
-                // Update online status
+                // Update online status and location info
                 if let self = self {
                     self.fetchOnlineStatus(forUsers: friends) { updatedFriends in
                         print("DEBUG: Đã cập nhật trạng thái online cho \(updatedFriends.count) bạn bè")
-                        completion(updatedFriends)
+                        
+                        // Also fetch last locations for all friends
+                        self.fetchLastLocationsForFriends(updatedFriends) { friendsWithLocations in
+                            print("DEBUG: Đã cập nhật vị trí cho \(friendsWithLocations.count) bạn bè")
+                            completion(friendsWithLocations)
+                        }
                     }
                 } else {
                     completion(friends)
                 }
             }
+        }
+    }
+    
+    
+    // Fetch last known locations for a list of friends
+    private func fetchLastLocationsForFriends(_ friends: [User], completion: @escaping ([User]) -> Void) {
+        let group = DispatchGroup()
+        var updatedFriends = friends
+        
+        for (index, friend) in friends.enumerated() {
+            group.enter()
+            
+            fetchUserLastLocation(userId: friend.id) { location in
+                if let location = location {
+                    updatedFriends[index].lastLocation = location
+                }
+                group.leave()
+            }
+        }
+        
+        group.notify(queue: .main) {
+            completion(updatedFriends)
         }
     }
     
@@ -317,10 +403,17 @@ class FirebaseService: FirebaseServiceProtocol {
                 }
                 
                 // Check if the position has expired
-                if let expiresAt = value["expiresAt"] as? TimeInterval,
-                   Date(timeIntervalSince1970: expiresAt / 1000) < Date() {
-                    //Check if the position has expired
-                    return
+                if let expiresAt = value["expiresAt"] as? TimeInterval {
+                    if Date().timeIntervalSince1970 > expiresAt {
+                        // Position has expired
+                        return
+                    }
+                } else {
+                    // No explicit expiration time, use default 72 hours
+                    if timestamp + (72 * 60 * 60) < Date().timeIntervalSince1970 {
+                        // Position has expired
+                        return
+                    }
                 }
                 
                 let location = UserLocation(
@@ -347,4 +440,3 @@ extension UserLocation {
         self.timestamp = timestamp
     }
 }
-

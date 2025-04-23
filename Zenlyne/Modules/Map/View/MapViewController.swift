@@ -95,7 +95,7 @@ struct MapViewController: View {
                 
                 Spacer()
                 
-                // Friend info panel (hiển thị khi chọn một người bạn)
+                // Friend info panel
                 if let friendId = selectedFriendId, let friend = viewModel.getFriend(byId: friendId) {
                     FriendInfoPanel(
                         friend: friend,
@@ -199,6 +199,50 @@ struct FriendInfoPanel: View {
     let location: UserLocation?
     let onClose: () -> Void
     
+    // Format coordinates nicely
+    private func formatCoordinate(_ coordinate: CLLocationCoordinate2D) -> String {
+        return String(format: "%.5f, %.5f", coordinate.latitude, coordinate.longitude)
+    }
+    
+    // Calculate how old the location data is
+    private func locationAge() -> String {
+        guard let location = location else {
+            return "Không xác định"
+        }
+        
+        let locationDate = Date(timeIntervalSince1970: location.timestamp)
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .short
+        
+        return formatter.localizedString(for: locationDate, relativeTo: Date())
+    }
+    
+    // Determine if location is fresh or stale
+    private var isLocationFresh: Bool {
+        guard let location = location else {
+            return false
+        }
+        
+        // Consider location "fresh" if less than 1 hour old
+        let oneHourAgo = Date().timeIntervalSince1970 - (60 * 60)
+        return location.timestamp > oneHourAgo
+    }
+    
+    // Get appropriate color for location freshness
+    private var locationFreshnessColor: Color {
+        if isLocationFresh {
+            return .green
+        } else {
+            // Location older than 1 hour but less than 24 hours
+            let twentyFourHoursAgo = Date().timeIntervalSince1970 - (24 * 60 * 60)
+            if let location = location, location.timestamp > twentyFourHoursAgo {
+                return .orange
+            }
+            // Location older than 24 hours
+            return .red
+        }
+    }
+    
     var body: some View {
         VStack(spacing: 12) {
             HStack {
@@ -245,20 +289,25 @@ struct FriendInfoPanel: View {
                         .fontWeight(.semibold)
                     
                     if friend.isOnline {
-                        Text("Online now")
+                        Text("Đang trực tuyến")
                             .font(.subheadline)
                             .foregroundColor(.green)
                     } else if let lastSeen = friend.lastSeen {
-                        Text("Last seen \(lastSeen, formatter: RelativeDateTimeFormatter())")
+                        Text("Hoạt động \(lastSeen, formatter: RelativeDateTimeFormatter())")
                             .font(.subheadline)
                             .foregroundColor(.gray)
                     }
                     
                     if let location = location {
-                        let timeAgo = Date(timeIntervalSince1970: location.timestamp)
-                        Text("Location updated \(timeAgo, formatter: RelativeDateTimeFormatter())")
-                            .font(.caption)
-                            .foregroundColor(.gray)
+                        HStack {
+                            Circle()
+                                .fill(locationFreshnessColor)
+                                .frame(width: 8, height: 8)
+                            
+                            Text("Vị trí cập nhật \(locationAge())")
+                                .font(.caption)
+                                .foregroundColor(locationFreshnessColor)
+                        }
                     }
                 }
                 
@@ -271,14 +320,47 @@ struct FriendInfoPanel: View {
                 }
             }
             
+            // Location details
+            if let location = location {
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Vị trí")
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                        
+                        Text(formatCoordinate(location.toCoordinate()))
+                            .font(.caption)
+                            .fontWeight(.medium)
+                    }
+                    
+                    Spacer()
+                    
+                    VStack(alignment: .trailing, spacing: 4) {
+                        Text("Thời gian")
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                        
+                        Text(locationAge())
+                            .font(.caption)
+                            .fontWeight(.medium)
+                            .foregroundColor(locationFreshnessColor)
+                    }
+                }
+                .padding(.horizontal, 4)
+                .padding(.vertical, 8)
+                .background(Color.gray.opacity(0.1))
+                .cornerRadius(8)
+            }
+            
             HStack(spacing: 20) {
                 // Message button
                 Button(action: {
+                    // Action for messaging
                 }) {
                     VStack(spacing: 4) {
                         Image(systemName: "message.fill")
                             .font(.system(size: 20))
-                        Text("Message")
+                        Text("Nhắn tin")
                             .font(.caption)
                     }
                     .frame(maxWidth: .infinity)
@@ -286,11 +368,12 @@ struct FriendInfoPanel: View {
                 
                 // Call button
                 Button(action: {
+                    // Action for calling
                 }) {
                     VStack(spacing: 4) {
                         Image(systemName: "phone.fill")
                             .font(.system(size: 20))
-                        Text("Call")
+                        Text("Gọi điện")
                             .font(.caption)
                     }
                     .frame(maxWidth: .infinity)
@@ -308,11 +391,13 @@ struct FriendInfoPanel: View {
                     VStack(spacing: 4) {
                         Image(systemName: "arrow.triangle.turn.up.right.diamond.fill")
                             .font(.system(size: 20))
-                        Text("Directions")
+                        Text("Chỉ đường")
                             .font(.caption)
                     }
                     .frame(maxWidth: .infinity)
                 }
+                .disabled(location == nil)
+                .opacity(location == nil ? 0.5 : 1.0)
             }
             .foregroundColor(.blue)
         }
@@ -325,7 +410,6 @@ struct FriendInfoPanel: View {
         .padding(.horizontal)
     }
 }
-
 
 #Preview {
     MapViewController()

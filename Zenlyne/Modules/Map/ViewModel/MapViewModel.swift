@@ -1,220 +1,237 @@
-//  MapViewModel.swift
+//
+//  LocationViewModel.swift
 //  Zenlyne
 //
 //  Created by admin on 14/3/25.
 //
 
 import Foundation
-import MapboxMaps
-import CoreLocation
 import SwiftUI
-import Combine
+import CoreLocation
+import MapboxMaps
+import FirebaseAuth
+import FirebaseFirestore
+import FirebaseDatabase
 
-public class LocationViewModel: ObservableObject {
-    @Published var userLocation: CLLocationCoordinate2D?
-    @Published var cameraOptions: CameraOptions
-    @Published var isTrackingLocation: Bool = false
-    @Published var authorizationStatus: CLAuthorizationStatus = .notDetermined
-    @Published var friendLocations: [String: UserLocation] = [:]
+class LocationViewModel: NSObject, ObservableObject {
+    // User & Friends
+    @Published var currentUser: User = User.MOCK_USER
     @Published var friends: [User] = []
-    @Published var onlineFriends: [String: Bool] = [:]
+    @Published var friendLocations: [String: UserLocation] = [:]
     
+    // Location tracking
+    @Published var userLocation: CLLocationCoordinate2D?
+    @Published var isTrackingLocation: Bool = false
+    
+    // Camera settings for MapView
+    @Published var cameraOptions: CameraOptions
+    
+    // Services
     private let locationService: LocationServiceProtocol
     private let firebaseService: FirebaseServiceProtocol
-    var currentUser: User
     
-    // Timer to automatically refresh your friends' locations
-    private var refreshTimer: Timer?
+    // Tracks active observers
+    private var locationObserversActive = false
+    private var onlineStatusObserversActive = false
     
-    // Default initialization
-    init(
-        locationService: LocationServiceProtocol = LocationService(),
-        firebaseService: FirebaseServiceProtocol = FirebaseService(),
-        user: User = User.MOCK_USER
-    ) {
+    // Initialize with default camera position at Ho Chi Minh City
+    init(locationService: LocationServiceProtocol = LocationService(),
+         firebaseService: FirebaseServiceProtocol = FirebaseService()) {
+        // Default camera position (Ho Chi Minh City)
+        self.cameraOptions = CameraOptions(
+            center: CLLocationCoordinate2D(latitude: 10.762622, longitude: 106.660172),
+            zoom: 14.0,
+            bearing: 0,
+            pitch: 0
+        )
+        
         self.locationService = locationService
         self.firebaseService = firebaseService
-        self.currentUser = user
         
-        let defaultLocation = CLLocationCoordinate2D(latitude: 21.019900, longitude: -100.000000)
-        self.cameraOptions = CameraOptions(center: defaultLocation, zoom: 15)
+        super.init()
         
+        // Set delegate for location updates
         if let locationService = locationService as? LocationService {
             locationService.delegate = self
         }
-        
-        // Load the last known location from Firebase
-        loadLastKnownLocation()
-        
-        // Start timer to refresh friend's location every 30 seconds
-        startRefreshTimer()
     }
     
-    deinit {
-        stopRefreshTimer()
-        firebaseService.stopObservingFriendLocations()
-        
-        // Đảm bảo đặt trong trạng thái offline khi view bị huỷ
-        firebaseService.setUserOnlineStatus(userId: currentUser.id, isOnline: false)
-    }
+    // MARK: - Location Tracking
     
     func startTrackingLocation() {
-        locationService.requestLocationPermission()
+        print("DEBUG: Starting location tracking")
+        locationService.requestAlwaysAuthorization()
         locationService.startUpdatingLocation()
-        isTrackingLocation = true
         
-        // Đặt trong trạng thái online khi bắt đầu theo dõi vị trí
-        firebaseService.setUserOnlineStatus(userId: currentUser.id, isOnline: true)
-        
-        // If position is available, focus immediately
-        if let location = userLocation {
-            cameraOptions = CameraOptions(center: location, zoom: 15)
+        // Set user as online
+        if let userId = Auth.auth().currentUser?.uid {
+            firebaseService.setUserOnlineStatus(userId: userId, isOnline: true)
         }
-        
-        // Get the friends list and start listening for their location
-        loadFriends()
     }
     
-    // Stop tracking location
     func stopTrackingLocation() {
+        print("DEBUG: Stopping location tracking")
         locationService.stopUpdatingLocation()
-        isTrackingLocation = false
-        firebaseService.stopObservingFriendLocations()
-        stopRefreshTimer()
         
-        // Đặt trạng thái offline khi dừng theo dõi vị trí
-        firebaseService.setUserOnlineStatus(userId: currentUser.id, isOnline: false)
+        // Set user as offline
+        if let userId = Auth.auth().currentUser?.uid {
+            firebaseService.setUserOnlineStatus(userId: userId, isOnline: false)
+        }
+        
+        // Stop all observers
+        if locationObserversActive {
+            firebaseService.stopObservingFriendLocations()
+            locationObserversActive = false
+        }
+        
+        if onlineStatusObserversActive {
+            for friend in friends {
+                firebaseService.stopObservingUserOnlineStatus(userId: friend.id)
+            }
+            onlineStatusObserversActive = false
+        }
     }
     
-    // Focus camera on user's location
+    // MARK: - Map Camera Control
+    
     func focusOnUserLocation() {
-        if let location = userLocation {
-            cameraOptions = CameraOptions(center: location, zoom: 15)
-        }
+        guard let userLocation = userLocation else { return }
+        
+        // Animate camera to user location
+        cameraOptions = CameraOptions(
+            center: userLocation,
+            zoom: 15.0,
+            bearing: 0,
+            pitch: 0
+        )
+        
+        isTrackingLocation = true
     }
     
-    // Focus camera on friend's location
     func focusOnFriendLocation(friendId: String) {
-        if let location = friendLocations[friendId] {
-            cameraOptions = CameraOptions(center: location.toCoordinate(), zoom: 15)
-        }
+        guard let friendLocation = friendLocations[friendId] else { return }
+        
+        // Animate camera to friend location
+        cameraOptions = CameraOptions(
+            center: friendLocation.toCoordinate(),
+            zoom: 15.0,
+            bearing: 0,
+            pitch: 0
+        )
+        
+        isTrackingLocation = false
     }
     
-    // Load last known location from Firebase
-    private func loadLastKnownLocation() {
-        firebaseService.fetchUserLastLocation(userId: currentUser.id) { [weak self] location in
-            DispatchQueue.main.async {
-                if let location = location {
-                    self?.userLocation = location.toCoordinate()
-                    self?.cameraOptions = CameraOptions(center: location.toCoordinate(), zoom: 15)
-                }
-            }
-        }
-    }
+    // MARK: - Friend Location Observers
     
-    // Save current location to Firebase
-    private func saveLocationToFirebase(coordinate: CLLocationCoordinate2D) {
-        let userLocation = UserLocation(coordinate: coordinate)
-        firebaseService.saveUserLocation(userId: currentUser.id, location: userLocation)
-    }
-    
-    // Start timer to refresh friend's location
-    private func startRefreshTimer() {
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
-            self?.loadFriends()
-        }
-    }
-    
-    // Stop timer
-    private func stopRefreshTimer() {
-        refreshTimer?.invalidate()
-        refreshTimer = nil
-    }
-    
-    // Get friend list from Firebase
-    private func loadFriends() {
-        firebaseService.fetchFriends(forUserId: currentUser.id) { [weak self] friends in
-            DispatchQueue.main.async {
-                self?.friends = friends
-                
-                // Start listening for your friends location
-                let friendIds = friends.map { $0.id }
-                self?.startObservingFriendLocations(friendIds: friendIds)
-                self?.startObservingFriendOnlineStatus(friendIds: friendIds)
-            }
-        }
-    }
-    
-    // Start listening to your friends' locations in real time
     func startObservingFriendLocations(friendIds: [String]) {
+        guard !friendIds.isEmpty else { return }
+        
+        print("DEBUG: Starting to observe locations for \(friendIds.count) friends")
+        
+        // Start observing friend locations
         firebaseService.observeFriendLocations(userIds: friendIds) { [weak self] locations in
+            guard let self = self else { return }
+            
+            print("DEBUG: Received \(locations.count) friend locations")
+            
+            // Update friend locations in main thread
             DispatchQueue.main.async {
-                self?.friendLocations = locations
+                self.friendLocations = locations
             }
         }
+        
+        locationObserversActive = true
     }
     
     func startObservingFriendOnlineStatus(friendIds: [String]) {
+        guard !friendIds.isEmpty else { return }
+        
+        print("DEBUG: Starting to observe online status for \(friendIds.count) friends")
+        
+        // Observe online status for each friend
         for friendId in friendIds {
-            firebaseService.observeUserOnlineStatus(userId: friendId) {
-                [weak self] isOnline in
-                DispatchQueue.main.sync {
-                    self?.onlineFriends[friendId] = isOnline
-                    
-                    if let index = self?.friends.firstIndex(where : { $0.id == friendId}) {
-                        self?.friends[index].isOnline = isOnline
+            firebaseService.observeUserOnlineStatus(userId: friendId) { [weak self] isOnline in
+                guard let self = self else { return }
+                
+                // Update friend's online status
+                DispatchQueue.main.async {
+                    if let index = self.friends.firstIndex(where: { $0.id == friendId }) {
+                        self.friends[index].isOnline = isOnline
+                        
+                        if !isOnline {
+                            // Update last seen time
+                            let database = Database.database().reference()
+                            database.child("users").child(friendId).child("lastSeen").observeSingleEvent(of: .value) { snapshot in
+                                if let timestamp = snapshot.value as? Double {
+                                    let date = Date(timeIntervalSince1970: timestamp / 1000)
+                                    DispatchQueue.main.async {
+                                        self.friends[index].lastSeen = date
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
+        
+        onlineStatusObserversActive = true
     }
     
-    // Get user information from ID
+    // MARK: - Helper Methods
+    
     func getFriend(byId id: String) -> User? {
         return friends.first { $0.id == id }
-    }
-    
-    func isFriendOnline(friendId: String) -> Bool {
-        return onlineFriends[friendId] ?? false
     }
     
     func timeSinceLastUpdate(friendId: String) -> String? {
         guard let location = friendLocations[friendId] else { return nil }
         
-        let lastUpdateDate = Date(timeIntervalSince1970: location.timestamp)
+        let locationDate = Date(timeIntervalSince1970: location.timestamp)
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .abbreviated
-        return formatter.localizedString(for: lastUpdateDate, relativeTo: Date())
+        
+        return formatter.localizedString(for: locationDate, relativeTo: Date())
     }
 }
 
 // MARK: - LocationServiceDelegate
+
 extension LocationViewModel: LocationServiceDelegate {
     func locationService(_ service: LocationServiceProtocol, didUpdateLocation location: CLLocation) {
-        DispatchQueue.main.async { [weak self] in
-            self?.userLocation = location.coordinate
+        // Update UI with new location
+        DispatchQueue.main.async {
+            self.userLocation = location.coordinate
             
-            // Save to Firebase
-            self?.saveLocationToFirebase(coordinate: location.coordinate)
-            
-            // Automatically update camera when there is a new location if tracking
-            if self?.isTrackingLocation == true {
-                self?.cameraOptions = CameraOptions(center: location.coordinate, zoom: 15)
+            // If tracking is enabled, update camera to follow user
+            if self.isTrackingLocation {
+                self.cameraOptions = CameraOptions(
+                    center: location.coordinate,
+                    zoom: self.cameraOptions.zoom,
+                    bearing: self.cameraOptions.bearing,
+                    pitch: self.cameraOptions.pitch
+                )
             }
+        }
+        
+        // Save location to Firebase
+        if let userId = Auth.auth().currentUser?.uid {
+            let userLocation = UserLocation(coordinate: location.coordinate)
+            firebaseService.saveUserLocation(userId: userId, location: userLocation)
         }
     }
     
     func locationService(_ service: LocationServiceProtocol, didFailWithError error: Error) {
-        print("Location update failed: \(error.localizedDescription)")
+        print("DEBUG: Location error: \(error.localizedDescription)")
     }
     
     func locationService(_ service: LocationServiceProtocol, didChangeAuthorization status: CLAuthorizationStatus) {
-        DispatchQueue.main.async { [weak self] in
-            self?.authorizationStatus = status
-            
-            if status == .authorizedWhenInUse || status == .authorizedAlways {
-                self?.startTrackingLocation()
-            }
+        print("DEBUG: Location authorization status changed: \(status.rawValue)")
+        
+        // Start tracking when authorized
+        if status == .authorizedWhenInUse || status == .authorizedAlways {
+            locationService.startUpdatingLocation()
         }
     }
 }
