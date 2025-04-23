@@ -118,12 +118,12 @@ class LocationViewModel: NSObject, ObservableObject {
         
         print("DEBUG: Starting to observe locations for \(friendIds.count) friends: \(friendIds)")
         
-        // Dừng các observer hiện tại nếu có
+        // Stop current observers if any
         if locationObserversActive {
             firebaseService.stopObservingFriendLocations()
         }
         
-        // Bắt đầu quan sát vị trí bạn bè
+        // Start observing friends location
         firebaseService.observeFriendLocations(userIds: friendIds) { [weak self] locations in
             guard let self = self else { return }
             
@@ -134,7 +134,7 @@ class LocationViewModel: NSObject, ObservableObject {
                 print("DEBUG: Friend \(friend) (\(friendId)) location: \(location.latitude), \(location.longitude)")
             }
             
-            // Cập nhật vị trí bạn bè trong main thread
+            // Update friend location in main thread
             DispatchQueue.main.async {
                 self.friendLocations = locations
             }
@@ -211,7 +211,7 @@ class LocationViewModel: NSObject, ObservableObject {
         
         print("DEBUG: Monitoring friends and locations for user: \(currentUserId)")
         
-        // Tải danh sách bạn bè
+        // Load friends list
         firebaseService.fetchFriends(forUserId: currentUserId) { [weak self] friends in
             guard let self = self else { return }
             
@@ -220,7 +220,7 @@ class LocationViewModel: NSObject, ObservableObject {
             DispatchQueue.main.async {
                 self.friends = friends
                 
-                // Bắt đầu quan sát vị trí và trạng thái của bạn bè
+                // Start observing your friends' location and status
                 if !friends.isEmpty {
                     let friendIds = friends.map { $0.id }
                     self.startObservingFriendLocations(friendIds: friendIds)
@@ -232,27 +232,16 @@ class LocationViewModel: NSObject, ObservableObject {
         }
     }
     
-//    func getFriend(byId id: String) -> User? {
-//        let friend = friends.first { $0.id == id }
-//        if friend != nil {
-//            print("DEBUG: Found friend: \(friend!.fullName)")
-//        } else {
-//            print("DEBUG: Friend not found for ID: \(id)")
-//            print("DEBUG: Available friends: \(friends.map { "\($0.fullName) (\($0.id))" }.joined(separator: ", "))")
-//        }
-//        return friend
-//    }
-    
     func focusOnFriendLocation(friendId: String) {
         print("DEBUG: Focusing on friend location for friend ID: \(friendId)")
         
         guard let friendLocation = friendLocations[friendId] else {
             print("DEBUG: No location found for friend with ID: \(friendId)")
             
-            // Hiển thị thông tin debug về các vị trí hiện có
+            // Display debug information about existing locations
             print("DEBUG: Available friend locations: \(friendLocations.keys.joined(separator: ", "))")
             
-            // Trực tiếp kiểm tra database
+            // Check database directly
             debugFriendLocationsInDatabase()
             return
         }
@@ -279,7 +268,7 @@ class LocationViewModel: NSObject, ObservableObject {
         
         let db = Firestore.firestore()
         
-        // Lấy danh sách bạn bè
+        // Get friends list
         db.collection("users").document(currentUserId).getDocument { snapshot, error in
             guard let document = snapshot, document.exists,
                   let data = document.data(),
@@ -288,7 +277,7 @@ class LocationViewModel: NSObject, ObservableObject {
                 return
             }
             
-            // Kiểm tra vị trí của từng bạn bè
+            // Check the location of each friend
             for friendId in friendIds {
                 db.collection("users").document(friendId).getDocument { snapshot, error in
                     if let error = error {

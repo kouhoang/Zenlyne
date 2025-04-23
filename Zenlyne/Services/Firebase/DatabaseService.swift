@@ -116,11 +116,10 @@ class FirebaseService: FirebaseServiceProtocol {
         }
     }
     
-    // Sửa phương thức observeFriendLocations
     func observeFriendLocations(userIds: [String], completion: @escaping ([String: UserLocation]) -> Void) {
         print("DEBUG: Starting to observe locations for \(userIds.count) friends")
         
-        // Dừng tất cả listener hiện tại
+        // Stop all current listener
         stopObservingFriendLocations()
         
         let db = Firestore.firestore()
@@ -135,7 +134,7 @@ class FirebaseService: FirebaseServiceProtocol {
                 
                 print("DEBUG: Received update for user: \(userId)")
                 
-                // Lấy tất cả vị trí của bạn bè
+                // Get all friend' location
                 self.fetchAllFriendLocations(userIds: userIds) { locations in
                     print("DEBUG: Updated friend locations: \(locations.count)")
                     completion(locations)
@@ -145,11 +144,10 @@ class FirebaseService: FirebaseServiceProtocol {
             locationListeners[userId] = listener
         }
         
-        // Lấy vị trí ban đầu
+        // Get initial position
         fetchAllFriendLocations(userIds: userIds, completion: completion)
     }
 
-    // Cập nhật stopObservingFriendLocations
     func stopObservingFriendLocations() {
         for (_, listener) in locationListeners {
             listener.remove()
@@ -243,7 +241,7 @@ class FirebaseService: FirebaseServiceProtocol {
                 return
             }
             
-            // Lấy thông tin chi tiết cho mỗi bạn bè
+            // Get detailed information for each friend
             var friends: [User] = []
             let group = DispatchGroup()
             
@@ -268,16 +266,16 @@ class FirebaseService: FirebaseServiceProtocol {
                        let email = data["email"] as? String {
                         var friend = User(id: friendId, fullName: fullName, email: email)
                         
-                        // Lấy các thông tin bổ sung
+                        // Get additional information
                         friend.profileImageUrl = data["profileImageUrl"] as? String
                         friend.isOnline = data["isOnline"] as? Bool ?? false
                         
-                        // Lấy thông tin lastSeen
+                        // Get lastSeen information
                         if let lastSeenTimestamp = data["lastSeen"] as? Timestamp {
                             friend.lastSeen = lastSeenTimestamp.dateValue()
                         }
                         
-                        // Lấy thông tin vị trí
+                        // Get location information
                         if let locationData = data["lastLocation"] as? [String: Any],
                            let latitude = locationData["latitude"] as? Double,
                            let longitude = locationData["longitude"] as? Double,
@@ -304,7 +302,6 @@ class FirebaseService: FirebaseServiceProtocol {
 //                print("DEBUG: Finished loading \(friends.count) friends")
 //                completion(friends)
 //                
-//                // Bắt đầu quan sát vị trí và trạng thái online
 //                if !friends.isEmpty {
 //                    let friendIds = friends.map { $0.id }
 //                    self.startObservingFriendLocations(userIds: friendIds) { locations in
@@ -401,7 +398,7 @@ class FirebaseService: FirebaseServiceProtocol {
                     return
                 }
                 
-                // Kiểm tra thời gian hết hạn
+                // Check expiration time
                 if let expiresAt = locationData["expiresAt"] as? TimeInterval {
                     if currentTime > expiresAt {
                         print("DEBUG: Location for user \(userId) has expired")
@@ -409,7 +406,7 @@ class FirebaseService: FirebaseServiceProtocol {
                     }
                 }
                 
-                // Kiểm tra dữ liệu vị trí
+                // Check location data
                 guard let latitude = locationData["latitude"] as? Double,
                       let longitude = locationData["longitude"] as? Double,
                       let timestamp = locationData["timestamp"] as? TimeInterval else {
@@ -530,7 +527,7 @@ class FirebaseService: FirebaseServiceProtocol {
     func createMockLocationsForTesting(currentUserId: String) {
         let db = Firestore.firestore()
         
-        // Lấy danh sách bạn bè
+        // Get friends list
         db.collection("users").document(currentUserId).getDocument { snapshot, error in
             guard let document = snapshot, document.exists,
                   let data = document.data(),
@@ -541,7 +538,7 @@ class FirebaseService: FirebaseServiceProtocol {
             
             print("DEBUG TEST: Creating mock locations for \(friendIds.count) friends")
             
-            // Vị trí hiện tại của người dùng
+            // User's current location
             var userLocation: CLLocationCoordinate2D? = nil
             if let locationData = data["lastLocation"] as? [String: Any],
                let latitude = locationData["latitude"] as? Double,
@@ -549,16 +546,16 @@ class FirebaseService: FirebaseServiceProtocol {
                 userLocation = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
                 print("DEBUG TEST: User location: \(latitude), \(longitude)")
             } else {
-                // Vị trí mặc định (Hồ Chí Minh)
-                userLocation = CLLocationCoordinate2D(latitude: 10.762622, longitude: 106.660172)
+                // Default position (NWS)
+                userLocation = CLLocationCoordinate2D(latitude: 21.019919, longitude: 105.783856)
                 print("DEBUG TEST: Using default user location")
             }
             
-            // Tạo vị trí giả cho bạn bè xung quanh vị trí người dùng
+            // Create fake location for friends around user location
             for (index, friendId) in friendIds.enumerated() {
                 guard let userLoc = userLocation else { continue }
                 
-                // Tạo vị trí ngẫu nhiên quanh người dùng
+                // Generate random positions around the user
                 let offsetLat = Double(index + 1) * 0.001 * (index % 2 == 0 ? 1 : -1)
                 let offsetLon = Double(index + 1) * 0.001 * (index % 3 == 0 ? 1 : -1)
                 
@@ -572,10 +569,10 @@ class FirebaseService: FirebaseServiceProtocol {
                     "expiresAt": Date().timeIntervalSince1970 + (72 * 60 * 60)
                 ]
                 
-                // Cập nhật vị trí giả cho bạn bè
+                // Update fake location to friends
                 db.collection("users").document(friendId).updateData([
                     "lastLocation": mockLocationData,
-                    "isOnline": index % 2 == 0  // Một nửa online, một nửa offline
+                    "isOnline": index % 2 == 0  // Half online, half offline
                 ]) { error in
                     if let error = error {
                         print("DEBUG TEST: Error creating mock location for friend \(friendId): \(error.localizedDescription)")

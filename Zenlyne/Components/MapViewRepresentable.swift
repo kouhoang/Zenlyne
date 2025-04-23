@@ -338,15 +338,15 @@ struct MapViewRepresentable: UIViewRepresentable {
             
             print("DEBUG: Updating friend annotations with \(friendLocations.count) locations and \(friends.count) friends")
             
-            // Xóa tất cả annotation hiện tại
+            // Delete all current annotations
             annotationManager.annotations = []
             friendIdByAnnotationId.removeAll()
             
-            // Tạo annotation mới cho mỗi bạn bè
+            // Create new annotation for each friend
             var annotations: [PointAnnotation] = []
             
             for (friendId, location) in friendLocations {
-                // Lấy thông tin bạn bè
+                // Get friend information
                 guard let friend = friends.first(where: { $0.id == friendId }) else {
                     print("DEBUG: Friend not found for ID \(friendId)")
                     continue
@@ -354,13 +354,13 @@ struct MapViewRepresentable: UIViewRepresentable {
                 
                 print("DEBUG: Creating annotation for friend: \(friend.fullName) at \(location.latitude), \(location.longitude)")
                 
-                // Kiểm tra trạng thái online
+                // Check online status
                 let isOnline = friend.isOnline
                 
-                // Tạo marker image cho bạn bè này
+                // Create marker image for this friend
                 createFriendMarkerImage(for: mapView, friendId: friendId, name: friend.fullName, isOnline: isOnline, profileImageUrl: friend.profileImageUrl)
                 
-                // Tạo annotation
+                // Create annotation
                 var annotation = PointAnnotation(coordinate: location.toCoordinate())
                 annotation.iconAnchor = .bottom
                 
@@ -369,18 +369,18 @@ struct MapViewRepresentable: UIViewRepresentable {
                 annotation.iconImage = markerIconId
                 annotation.iconSize = 1.0
                 
-                // Lưu mapping giữa annotation ID và friend ID
+                // Save mapping between annotation ID and friend ID
                 friendIdByAnnotationId[annotation.id] = friendId
                 
                 annotations.append(annotation)
                 
-                // Thêm hiệu ứng pulse cho bạn bè online
+                // Add pulse effect for online friends
                 if isOnline {
                     updatePulseEffect(for: mapView, at: location.toCoordinate(), isUser: false)
                 }
             }
             
-            // Thêm tất cả annotation vào manager
+            // Add all annotations to manager
             annotationManager.annotations = annotations
             print("DEBUG: Added \(annotations.count) friend annotations to map")
         }
