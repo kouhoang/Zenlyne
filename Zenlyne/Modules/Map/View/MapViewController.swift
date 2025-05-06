@@ -120,7 +120,7 @@ struct MapViewController: View {
                 
                 // Friend info panel
                 if let friendId = selectedFriendId, let friend = viewModel.getFriend(byId: friendId) {
-                    FriendInfoPanel(
+                    UpdatedFriendInfoPanel(
                         friend: friend,
                         location: viewModel.friendLocations[friendId],
                         onClose: { selectedFriendId = nil }
@@ -242,10 +242,12 @@ struct MapViewController: View {
     }
 }
 
-struct FriendInfoPanel: View {
+struct UpdatedFriendInfoPanel: View {
     let friend: User
     let location: UserLocation?
     let onClose: () -> Void
+    @State private var showChatView = false
+    @State private var showCallOptions = false
     
     // Format coordinates nicely
     private func formatCoordinate(_ coordinate: CLLocationCoordinate2D) -> String {
@@ -331,12 +333,12 @@ struct FriendInfoPanel: View {
                 // Online status with green dot like in the image
                 HStack(spacing: 4) {
                     Circle()
-                        .fill(Color.green)
+                        .fill(friend.isOnline ? Color.green : Color.gray)
                         .frame(width: 6, height: 6)
                     
-                    Text("Đang hoạt động")
+                    Text(friend.isOnline ? "Đang hoạt động" : "Không hoạt động")
                         .font(.subheadline)
-                        .foregroundColor(.green)
+                        .foregroundColor(friend.isOnline ? .green : .gray)
                 }
                 
                 // Last active timestamp
@@ -348,7 +350,7 @@ struct FriendInfoPanel: View {
             }
             .padding(.bottom, 8)
             
-            // Location details (unchanged)
+            // Location details
             if let location = location {
                 HStack(alignment: .top) {
                     VStack(alignment: .leading, spacing: 4) {
@@ -380,11 +382,11 @@ struct FriendInfoPanel: View {
                 .cornerRadius(8)
             }
             
-            // Action buttons (unchanged)
+            // Action buttons with updated messaging functionality
             HStack(spacing: 20) {
                 // Message button
                 Button(action: {
-                    // Action for messaging
+                    showChatView = true
                 }) {
                     VStack(spacing: 4) {
                         Image(systemName: "message.fill")
@@ -394,10 +396,20 @@ struct FriendInfoPanel: View {
                     }
                     .frame(maxWidth: .infinity)
                 }
+                .fullScreenCover(isPresented: $showChatView) {
+                    // Navigate to chat with this friend
+                    NavigationView {
+                        ChatView(
+                            viewModel: MessagingViewModel(),
+                            chatId: [Auth.auth().currentUser?.uid ?? "", friend.id].sorted().joined(separator: "_"),
+                            otherUserId: friend.id
+                        )
+                    }
+                }
                 
                 // Call button
                 Button(action: {
-                    // Action for calling
+                    showCallOptions = true
                 }) {
                     VStack(spacing: 4) {
                         Image(systemName: "phone.fill")
@@ -406,6 +418,24 @@ struct FriendInfoPanel: View {
                             .font(.caption)
                     }
                     .frame(maxWidth: .infinity)
+                }
+                .actionSheet(isPresented: $showCallOptions) {
+                    ActionSheet(
+                        title: Text("Gọi cho \(friend.fullName)"),
+                        buttons: [
+                            .default(Text("Gọi điện thoại")) {
+                                // Handle phone call here
+                                if let url = URL(string: "tel://+84123456789") {
+                                    UIApplication.shared.open(url)
+                                }
+                            },
+                            .default(Text("Gọi video")) {
+                                // Handle video call here
+                                // This would connect to your video call implementation
+                            },
+                            .cancel(Text("Hủy"))
+                        ]
+                    )
                 }
                 
                 // Directions button
@@ -437,6 +467,13 @@ struct FriendInfoPanel: View {
                 .shadow(color: Color.black.opacity(0.2), radius: 10, x: 0, y: 5)
         )
         .padding(.horizontal)
+        .onAppear {
+            // Create chat if it doesn't exist yet
+            if let currentUserId = Auth.auth().currentUser?.uid {
+                let messagingService = MessagingService()
+                messagingService.createChatIfNeeded(with: friend.id) { _ in }
+            }
+        }
     }
 }
 

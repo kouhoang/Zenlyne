@@ -13,21 +13,19 @@ struct UserLocation: Codable {
     let longitude: Double
     let timestamp: TimeInterval
     
-    init(coordinate: CLLocationCoordinate2D) {
+    init(latitude: Double, longitude: Double, timestamp: TimeInterval = Date().timeIntervalSince1970) {
+        self.latitude = latitude
+        self.longitude = longitude
+        self.timestamp = timestamp
+    }
+    
+    init(coordinate: CLLocationCoordinate2D, timestamp: TimeInterval = Date().timeIntervalSince1970) {
         self.latitude = coordinate.latitude
         self.longitude = coordinate.longitude
-        self.timestamp = Date().timeIntervalSince1970
+        self.timestamp = timestamp
     }
     
     func toCoordinate() -> CLLocationCoordinate2D {
         return CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
-    }
-    
-    func toDictionary() -> [String: Any] {
-        return [
-            "latitude": latitude,
-            "longitude": longitude,
-            "timestamp": timestamp
-        ]
     }
 }

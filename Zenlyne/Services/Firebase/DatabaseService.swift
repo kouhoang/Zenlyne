@@ -586,10 +586,10 @@ class FirebaseService: FirebaseServiceProtocol {
 }
 
 // Helper extension
-extension UserLocation {
-    init?(latitude: Double, longitude: Double, timestamp: TimeInterval) {
-        self.latitude = latitude
-        self.longitude = longitude
-        self.timestamp = timestamp
-    }
-}
+//extension UserLocation {
+//    init?(latitude: Double, longitude: Double, timestamp: TimeInterval) {
+//        self.latitude = latitude
+//        self.longitude = longitude
+//        self.timestamp = timestamp
+//    }
+//}
