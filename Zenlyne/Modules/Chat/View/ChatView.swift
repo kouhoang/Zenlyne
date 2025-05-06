@@ -2,7 +2,7 @@
 //  ChatView.swift
 //  Zenlyne
 //
-//  Created by admin on 26/4/25.
+//  Created by admin on 6/5/25.
 //
 
 import SwiftUI
@@ -17,7 +17,7 @@ struct ChatView: View {
     @State private var scrollToBottom = false
     @FocusState private var isInputFocused: Bool
     
-    @Environment(\.presentationMode) var presentationMode // Để đóng view
+    @Environment(\.presentationMode) var presentationMode
     
     init(viewModel: MessagingViewModel, chatId: String, otherUserId: String?) {
         self.viewModel = viewModel
@@ -34,6 +34,7 @@ struct ChatView: View {
                 if viewModel.isLoading && viewModel.messages.isEmpty {
                     Spacer()
                     ProgressView()
+                        .scaleEffect(1.5)
                     Spacer()
                 } else {
                     // Messages list
@@ -64,6 +65,7 @@ struct ChatView: View {
                             }
                         }
                         .onAppear {
+                            // Auto-scroll to bottom after a short delay to ensure view is loaded
                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                                 scrollToBottom.toggle()
                             }
@@ -137,16 +139,13 @@ struct ChatView: View {
         }
         .onAppear {
             if let otherUserId = otherUserId {
+                // Start real-time message loading
                 viewModel.loadMessages(forChatWithUser: otherUserId)
             }
         }
         .sheet(isPresented: $showingProfile) {
-            Group {
-                if let user = otherUser {
-                    FriendProfileView(user: user)
-                } else {
-                    EmptyView()
-                }
+            if let user = otherUser {
+                FriendProfileView(user: user)
             }
         }
     }
@@ -158,10 +157,18 @@ struct ChatView: View {
     
     private func sendMessage() {
         guard let otherUserId = otherUserId else { return }
-        viewModel.sendMessage(to: otherUserId)
+        
+        // Send message with animation
+        withAnimation {
+            viewModel.sendMessage(to: otherUserId) { success in
+                if success {
+                    // Auto-scroll to bottom after sending
+                    scrollToBottom.toggle()
+                }
+            }
+        }
     }
 }
-
 
 struct MessageRow: View {
     let message: Message
@@ -183,10 +190,8 @@ struct MessageRow: View {
                 Spacer()
             } else {
                 // Avatar for other user's messages
-                if !isFromCurrentUser {
-                    AvatarView(user: otherUser)
-                        .frame(width: 30, height: 30)
-                }
+                AvatarView(user: otherUser)
+                    .frame(width: 30, height: 30)
             }
             
             VStack(alignment: isFromCurrentUser ? .trailing : .leading, spacing: 2) {
@@ -320,7 +325,6 @@ struct FriendProfileView: View {
                             .foregroundColor(.green)
                     } else if let lastSeen = user.lastSeen {
                         let formatter = RelativeDateTimeFormatter()
-//                        formatter.unitsStyle = .full
                         Text("Hoạt động \(formatter.localizedString(for: lastSeen, relativeTo: Date()))")
                             .font(.subheadline)
                             .foregroundColor(.gray)

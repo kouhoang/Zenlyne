@@ -89,28 +89,10 @@ struct MapViewController: View {
                                 .shadow(radius: 4)
                         }
                         
-                        //                        Button(action: {
-                        //                            if let userId = Auth.auth().currentUser?.uid {
-                        //                                let firebaseService = FirebaseService()
-                        //                                firebaseService.createMockLocationsForTesting(currentUserId: userId)
-                        //
-                        //                                // Reload sau 2 giây
-                        //                                DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                        //                                    if !self.viewModel.friends.isEmpty {
-                        //                                        let friendIds = self.viewModel.friends.map { $0.id }
-                        //                                        self.viewModel.startObservingFriendLocations(friendIds: friendIds)
-                        //                                    }
-                        //                                }
-                        //                            }
-                        //                        }) {
-                        //                            Text("Test Locations")
-                        //                                .padding(10)
-                        //                                .background(Color.green)
-                        //                                .foregroundColor(.white)
-                        //                                .cornerRadius(10)
-                        //                        }
-                        //                        .padding()
-                        //                        .opacity(0.7)
+                        // Button for message count badge - wrapped in AnyView to fix the error
+                        AnyView(
+                            MessageCountButton()
+                        )
                     }
                     .padding(.top, 70)
                     .padding(.trailing, 0)
@@ -237,6 +219,56 @@ struct MapViewController: View {
         firebaseService.getPendingFriendRequestsCount(for: userId) { count in
             DispatchQueue.main.async {
                 self.pendingRequestsCount = count
+            }
+        }
+    }
+}
+
+// Message Badge Button that conforms to View
+struct MessageCountButton: View {
+    @StateObject private var viewModel = MessagingViewModel()
+    @State private var showingBadge = false
+    @State private var showConversationList = false
+    
+    var body: some View {
+        Button(action: {
+            showConversationList = true
+        }) {
+            ZStack {
+                Image(systemName: "message.fill")
+                    .font(.system(size: 40))
+                    .foregroundColor(.purple)
+                    .background(Color.white.clipShape(Circle()))
+                    .shadow(radius: 4)
+                
+                if viewModel.totalUnreadCount > 0 {
+                    Text("\(viewModel.totalUnreadCount)")
+                        .font(.caption)
+                        .padding(5)
+                        .foregroundColor(.white)
+                        .background(Color.red)
+                        .clipShape(Circle())
+                        .offset(x: 15, y: -15)
+                        .opacity(showingBadge ? 1 : 0)
+                }
+            }
+        }
+        .fullScreenCover(isPresented: $showConversationList) {
+            NavigationView {
+                ConversationListView()
+            }
+        }
+        .onAppear {
+            viewModel.updateTotalUnreadCount()
+            
+            // Add a small delay so the animation is visible
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                showingBadge = true
+            }
+            
+            // Set up a timer to refresh unread count periodically
+            Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { _ in
+                viewModel.updateTotalUnreadCount()
             }
         }
     }
@@ -384,28 +416,8 @@ struct UpdatedFriendInfoPanel: View {
             
             // Action buttons with updated messaging functionality
             HStack(spacing: 20) {
-                // Message button
-                Button(action: {
-                    showChatView = true
-                }) {
-                    VStack(spacing: 4) {
-                        Image(systemName: "message.fill")
-                            .font(.system(size: 20))
-                        Text("Nhắn tin")
-                            .font(.caption)
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-                .fullScreenCover(isPresented: $showChatView) {
-                    // Navigate to chat with this friend
-                    NavigationView {
-                        ChatView(
-                            viewModel: MessagingViewModel(),
-                            chatId: [Auth.auth().currentUser?.uid ?? "", friend.id].sorted().joined(separator: "_"),
-                            otherUserId: friend.id
-                        )
-                    }
-                }
+                // Message button - Using ChatButtonView to fix the View issue
+                ChatButtonView(friend: friend)
                 
                 // Call button
                 Button(action: {
@@ -467,13 +479,6 @@ struct UpdatedFriendInfoPanel: View {
                 .shadow(color: Color.black.opacity(0.2), radius: 10, x: 0, y: 5)
         )
         .padding(.horizontal)
-        .onAppear {
-            // Create chat if it doesn't exist yet
-            if let currentUserId = Auth.auth().currentUser?.uid {
-                let messagingService = MessagingService()
-                messagingService.createChatIfNeeded(with: friend.id) { _ in }
-            }
-        }
     }
 }
 

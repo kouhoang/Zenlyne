@@ -1,14 +1,14 @@
 //
-//  MessagingViewModel.swift
+//  FirestoreMessagingViewModel.swift
 //  Zenlyne
 //
-//  Created by admin on 26/4/25.
+//  Created by admin on 6/5/25.
 //
 
 import Foundation
 import Combine
 import FirebaseAuth
-import FirebaseFirestoreInternal
+import FirebaseFirestore
 
 class MessagingViewModel: ObservableObject {
     // MARK: - Published Properties
@@ -23,8 +23,8 @@ class MessagingViewModel: ObservableObject {
     
     // MARK: - Private Properties
     
-    private let messagingService = MessagingService()
-    private let friendService = FriendRequestViewModel()
+    private let chatService = FirebaseChatService()
+    private let firestore = Firestore.firestore()
     private var cancellables = Set<AnyCancellable>()
     
     // MARK: - Init & Deinit
@@ -34,7 +34,7 @@ class MessagingViewModel: ObservableObject {
     }
     
     deinit {
-        messagingService.removeObservers()
+        chatService.removeAllObservers()
     }
     
     // MARK: - Setup
@@ -45,11 +45,11 @@ class MessagingViewModel: ObservableObject {
     
     // MARK: - Public Methods
     
-    /// Loads all chats for the current user
+    /// Loads all chats for the current user with real-time updates
     func loadChats() {
         isLoading = true
         
-        messagingService.getUserChats { [weak self] result in
+        chatService.getUserChats { [weak self] result in
             guard let self = self else { return }
             
             DispatchQueue.main.async {
@@ -71,7 +71,7 @@ class MessagingViewModel: ObservableObject {
     func loadMessages(forChatWithUser userId: String) {
         isLoading = true
         
-        messagingService.getMessages(with: userId) { [weak self] result in
+        chatService.getMessages(with: userId) { [weak self] result in
             guard let self = self else { return }
             
             DispatchQueue.main.async {
@@ -96,14 +96,18 @@ class MessagingViewModel: ObservableObject {
         
         let messageContent = newMessageText.trimmingCharacters(in: .whitespacesAndNewlines)
         
-        messagingService.sendMessage(to: userId, content: messageContent) { [weak self] result in
+        chatService.sendMessage(to: userId, content: messageContent) { [weak self] result in
             guard let self = self else { return }
             
             DispatchQueue.main.async {
                 switch result {
                 case .success(let message):
                     // Add the new message to the list if we're in a chat view
-                    self.messages.append(message)
+                    if let index = self.messages.firstIndex(where: { $0.id == message.id }) {
+                        // Message already exists (from real-time update)
+                    } else {
+                        self.messages.append(message)
+                    }
                     self.newMessageText = ""
                     completion(true)
                 case .failure(let error):
@@ -116,7 +120,7 @@ class MessagingViewModel: ObservableObject {
     
     /// Creates a new chat with a user if it doesn't exist
     func createChatIfNeeded(with userId: String, completion: @escaping (Bool) -> Void = { _ in }) {
-        messagingService.createChatIfNeeded(with: userId) { result in
+        chatService.createChatIfNeeded(with: userId) { result in
             switch result {
             case .success(_):
                 completion(true)
@@ -128,7 +132,7 @@ class MessagingViewModel: ObservableObject {
     
     /// Retrieves the total count of unread messages
     func updateTotalUnreadCount() {
-        messagingService.getTotalUnreadMessagesCount { [weak self] count in
+        chatService.getTotalUnreadMessagesCount { [weak self] count in
             DispatchQueue.main.async {
                 self?.totalUnreadCount = count
             }
@@ -137,7 +141,7 @@ class MessagingViewModel: ObservableObject {
     
     /// Deletes a chat from the user's list
     func deleteChat(chatId: String, completion: @escaping (Bool) -> Void = { _ in }) {
-        messagingService.deleteChat(chatId: chatId) { [weak self] success in
+        chatService.deleteChat(chatId: chatId) { [weak self] success in
             guard let self = self else { return }
             
             DispatchQueue.main.async {
@@ -166,11 +170,9 @@ class MessagingViewModel: ObservableObject {
         }
     }
     
-    /// Loads information for a specific user
+    /// Loads information for a specific user from Firestore
     private func loadUserInfo(userId: String) {
-        let db = Firestore.firestore()
-        
-        db.collection("users").document(userId).getDocument { [weak self] snapshot, error in
+        firestore.collection("users").document(userId).getDocument { [weak self] snapshot, error in
             guard let self = self,
                   let document = snapshot,
                   let data = document.data(),
@@ -184,8 +186,8 @@ class MessagingViewModel: ObservableObject {
                 user.profileImageUrl = data["profileImageUrl"] as? String
                 user.isOnline = data["isOnline"] as? Bool ?? false
                 
-                if let lastSeenTimestamp = data["lastSeen"] as? TimeInterval {
-                    user.lastSeen = Date(timeIntervalSince1970: lastSeenTimestamp)
+                if let lastSeenTimestamp = data["lastSeen"] as? Timestamp {
+                    user.lastSeen = lastSeenTimestamp.dateValue()
                 }
                 
                 self.chatUsers[userId] = user

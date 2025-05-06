@@ -2,14 +2,14 @@
 //  ConversationListView.swift
 //  Zenlyne
 //
-//  Created by admin on 26/4/25.
+//  Created by admin on 6/5/25.
 //
 
 import SwiftUI
 import FirebaseAuth
 
 struct ConversationListView: View {
-    @ObservedObject var viewModel = MessagingViewModel()
+    @StateObject var viewModel = MessagingViewModel()
     @Environment(\.presentationMode) var presentationMode
     @State private var showNewMessageSheet = false
     @State private var searchText = ""
@@ -61,6 +61,7 @@ struct ConversationListView: View {
                 }
             )
             .onAppear {
+                // Start real-time chat updates
                 viewModel.loadChats()
             }
             .sheet(isPresented: $showNewMessageSheet) {
@@ -114,9 +115,7 @@ struct ConversationListView: View {
                 }
                 .swipeActions(edge: .trailing) {
                     Button(role: .destructive) {
-                        viewModel.deleteChat(chatId: chat.id) { _ in
-                            // Success/error handling could go here
-                        }
+                        viewModel.deleteChat(chatId: chat.id)
                     } label: {
                         Label("Xóa", systemImage: "trash")
                     }
@@ -142,7 +141,8 @@ struct ConversationListView: View {
                 }
                 
                 return user.fullName.localizedCaseInsensitiveContains(searchText) ||
-                       user.email.localizedCaseInsensitiveContains(searchText)
+                       user.email.localizedCaseInsensitiveContains(searchText) ||
+                       (chat.lastMessage?.content.localizedCaseInsensitiveContains(searchText) ?? false)
             }
         }
     }
@@ -161,9 +161,9 @@ struct ConversationListView: View {
                     viewModel.chatUsers[user.id] = user
                 }
                 
-                // Navigate to the chat
+                // Check if chat already exists in our list
                 if let index = viewModel.chats.firstIndex(where: { $0.id == chatId }) {
-                    // Chat already exists
+                    // Chat already exists - do nothing
                 } else {
                     // Create new chat entry
                     let newChat = Chat(
@@ -265,8 +265,8 @@ struct ConversationRowView: View {
                 HStack {
                     if let lastMessage = chat.lastMessage {
                         // Truncate message preview if too long
-                        Text(lastMessage.content.count > 30 ? 
-                             String(lastMessage.content.prefix(30)) + "..." : 
+                        Text(lastMessage.content.count > 30 ?
+                             String(lastMessage.content.prefix(30)) + "..." :
                              lastMessage.content)
                             .font(.subheadline)
                             .foregroundColor(chat.unreadCount > 0 ? .primary : .gray)
@@ -294,142 +294,5 @@ struct ConversationRowView: View {
             }
         }
         .frame(height: 70)
-    }
-}
-
-// View to select a new message recipient
-struct NewMessageView: View {
-    @State private var searchText = ""
-    @State private var friends: [User] = []
-    @State private var isLoading = false
-    @Environment(\.presentationMode) var presentationMode
-    
-    let onSelectUser: (User) -> Void
-    
-    var body: some View {
-        NavigationView {
-            VStack {
-                if isLoading {
-                    ProgressView()
-                        .scaleEffect(1.5)
-                        .progressViewStyle(CircularProgressViewStyle())
-                } else if friends.isEmpty {
-                    VStack(spacing: 20) {
-                        Image(systemName: "person.crop.circle.badge.exclamationmark")
-                            .font(.system(size: 60))
-                            .foregroundColor(.orange)
-                        
-                        Text("Không có bạn bè nào")
-                            .font(.headline)
-                        
-                        Text("Thêm bạn bè trước khi bắt đầu cuộc trò chuyện")
-                            .font(.subheadline)
-                            .foregroundColor(.gray)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal)
-                    }
-                    .padding()
-                } else {
-                    List {
-                        ForEach(filteredFriends) { friend in
-                            Button(action: {
-                                onSelectUser(friend)
-                            }) {
-                                HStack {
-                                    // Profile image
-                                    ZStack {
-                                        Circle()
-                                            .fill(Color.blue.opacity(0.2))
-                                            .frame(width: 50, height: 50)
-                                        
-                                        if let profileImage = friend.profileImageUrl {
-                                            AsyncImage(url: URL(string: profileImage)) { image in
-                                                image
-                                                    .resizable()
-                                                    .scaledToFill()
-                                            } placeholder: {
-                                                Text(friend.initials)
-                                                    .font(.title3)
-                                                    .foregroundColor(.blue)
-                                            }
-                                            .frame(width: 46, height: 46)
-                                            .clipShape(Circle())
-                                        } else {
-                                            Text(friend.initials)
-                                                .font(.title3)
-                                                .foregroundColor(.blue)
-                                        }
-                                        
-                                        // Online status indicator
-                                        if friend.isOnline {
-                                            Circle()
-                                                .fill(Color.green)
-                                                .frame(width: 12, height: 12)
-                                                .overlay(
-                                                    Circle()
-                                                        .stroke(Color.white, lineWidth: 2)
-                                                )
-                                                .position(x: 40, y: 40)
-                                        }
-                                    }
-                                    
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text(friend.fullName)
-                                            .font(.headline)
-                                        
-                                        Text(friend.isOnline ? "Đang hoạt động" : "Không hoạt động")
-                                            .font(.subheadline)
-                                            .foregroundColor(friend.isOnline ? .green : .gray)
-                                    }
-                                    .padding(.leading, 8)
-                                }
-                            }
-                        }
-                    }
-                    .listStyle(PlainListStyle())
-                }
-            }
-            .navigationTitle("Tin nhắn mới")
-            .navigationBarTitleDisplayMode(.inline)
-            .searchable(text: $searchText, prompt: "Tìm kiếm bạn bè")
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Hủy") {
-                        presentationMode.wrappedValue.dismiss()
-                    }
-                }
-            }
-        }
-        .onAppear {
-            loadFriends()
-        }
-    }
-    
-    private var filteredFriends: [User] {
-        if searchText.isEmpty {
-            return friends
-        } else {
-            return friends.filter { 
-                $0.fullName.localizedCaseInsensitiveContains(searchText) ||
-                $0.email.localizedCaseInsensitiveContains(searchText)
-            }
-        }
-    }
-    
-    private func loadFriends() {
-        isLoading = true
-        
-        guard let currentUserId = Auth.auth().currentUser?.uid else {
-            isLoading = false
-            return
-        }
-        
-        let friendViewModel = FriendRequestViewModel()
-        friendViewModel.fetchFriends(forUserId: currentUserId) { loadedFriends in
-            DispatchQueue.main.async {
-                self.friends = loadedFriends
-                self.isLoading = false
-            }
-        }
     }
 }
