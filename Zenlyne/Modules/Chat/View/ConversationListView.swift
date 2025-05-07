@@ -14,6 +14,8 @@ struct ConversationListView: View {
     @State private var showNewMessageSheet = false
     @State private var searchText = ""
     
+    private let firebaseService = FirebaseService()
+    
     var body: some View {
         NavigationView {
             ZStack {
@@ -63,6 +65,9 @@ struct ConversationListView: View {
             .onAppear {
                 // Start real-time chat updates
                 viewModel.loadChats()
+                
+                // Update friend online statuses
+                updateContactStatuses()
             }
             .sheet(isPresented: $showNewMessageSheet) {
                 NewMessageView(onSelectUser: { user in
@@ -125,6 +130,7 @@ struct ConversationListView: View {
         .listStyle(PlainListStyle())
         .refreshable {
             viewModel.loadChats()
+            updateContactStatuses()
         }
         .searchable(text: $searchText, prompt: "Tìm kiếm")
     }
@@ -176,6 +182,25 @@ struct ConversationListView: View {
             }
         }
     }
+    
+    // Start monitoring online status of chat participants
+    private func updateContactStatuses() {
+        guard let currentUserId = Auth.auth().currentUser?.uid else { return }
+        
+        // For each chat, monitor the other participant's online status
+        for chat in viewModel.chats {
+            if let otherUserId = chat.getOtherParticipantId(currentUserId: currentUserId) {
+                firebaseService.observeUserOnlineStatus(userId: otherUserId) { isOnline in
+                    DispatchQueue.main.async {
+                        if var user = viewModel.chatUsers[otherUserId] {
+                            user.isOnline = isOnline
+                            viewModel.chatUsers[otherUserId] = user
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 // Individual conversation row
@@ -209,14 +234,27 @@ struct ConversationRowView: View {
         }
     }
     
+    // Helper method to show last seen text
+    private func lastSeenText(for user: User) -> String {
+        if let lastSeen = user.lastSeen {
+            let formatter = RelativeDateTimeFormatter()
+            formatter.unitsStyle = .abbreviated
+            return "Hoạt động \(formatter.localizedString(for: lastSeen, relativeTo: Date()))"
+        } else {
+            return "Không hoạt động"
+        }
+    }
+    
     var body: some View {
         HStack(spacing: 12) {
-            // Profile Photo
-            ZStack {
+            // Profile Photo with status indicator at bottom left
+            ZStack(alignment: .bottomLeading) {
+                // Avatar background
                 Circle()
                     .fill(Color.blue.opacity(0.2))
                     .frame(width: 60, height: 60)
                 
+                // User image or initials
                 if let profileImage = user?.profileImageUrl {
                     AsyncImage(url: URL(string: profileImage)) { image in
                         image
@@ -229,39 +267,54 @@ struct ConversationRowView: View {
                     }
                     .frame(width: 56, height: 56)
                     .clipShape(Circle())
+                    .padding(2) // Small padding so the avatar isn't right at the edge
                 } else {
                     Text(user?.initials ?? "?")
                         .font(.title2)
                         .foregroundColor(.blue)
+                        .frame(width: 56, height: 56)
+                        .padding(2)
                 }
                 
-                // Online status indicator
-                if let isOnline = user?.isOnline, isOnline {
+                // Status indicator at bottom left
+                if let user = user {
                     Circle()
-                        .fill(Color.green)
+                        .fill(user.isOnline ? Color.green : Color.red)
                         .frame(width: 14, height: 14)
                         .overlay(
                             Circle()
                                 .stroke(Color.white, lineWidth: 2)
                         )
-                        .position(x: 48, y: 48)
+                        .offset(x: 38, y: -4)
                 }
             }
+            .frame(width: 60, height: 60)
             
-            // Contact info and message preview
+            // User info and message content
             VStack(alignment: .leading, spacing: 4) {
+                // Top row: name and time
                 HStack {
+                    // User name
                     Text(user?.fullName ?? "Người dùng")
                         .font(.headline)
                         .foregroundColor(.primary)
                     
                     Spacer()
                     
+                    // Message time
                     Text(formatTime(chat.lastMessage?.timestamp))
                         .font(.caption)
                         .foregroundColor(.gray)
                 }
                 
+                // Middle row: online status text if offline
+                if let user = user, !user.isOnline {
+                    Text(lastSeenText(for: user))
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                }
+                
+                // Bottom row: message preview
                 HStack {
                     if let lastMessage = chat.lastMessage {
                         // Truncate message preview if too long
@@ -293,6 +346,10 @@ struct ConversationRowView: View {
                 }
             }
         }
-        .frame(height: 70)
+        .padding(.vertical, 8)
     }
+}
+
+#Preview {
+    ConversationListView()
 }

@@ -55,29 +55,6 @@ struct MapViewController: View {
                                 .shadow(radius: 4)
                         }
                         
-                        // Friend Requests Button
-                        Button(action: {
-                            showFriendRequestsView.toggle()
-                        }) {
-                            ZStack {
-                                Image(systemName: "envelope.fill")
-                                    .font(.system(size: 40))
-                                    .foregroundColor(.purple)
-                                    .background(Color.white.clipShape(Circle()))
-                                    .shadow(radius: 4)
-                                
-                                if pendingRequestsCount > 0 {
-                                    Text("\(pendingRequestsCount)")
-                                        .font(.caption)
-                                        .padding(5)
-                                        .foregroundColor(.white)
-                                        .background(Color.red)
-                                        .clipShape(Circle())
-                                        .offset(x: 15, y: -15)
-                                }
-                            }
-                        }
-                        
                         // Add Friend Button
                         Button(action: {
                             showAddFriendView.toggle()
