@@ -19,111 +19,119 @@ struct NewMessageView: View {
     let onSelectUser: (User) -> Void
     
     var body: some View {
-        NavigationView {
-            VStack {
-                if isLoading {
-                    ProgressView()
-                        .scaleEffect(1.5)
-                        .progressViewStyle(CircularProgressViewStyle())
-                } else if friends.isEmpty {
-                    VStack(spacing: 20) {
-                        Image(systemName: "person.crop.circle.badge.exclamationmark")
-                            .font(.system(size: 60))
-                            .foregroundColor(.orange)
-                        
-                        Text("Không có bạn bè nào")
-                            .font(.headline)
-                        
-                        Text("Thêm bạn bè trước khi bắt đầu cuộc trò chuyện")
-                            .font(.subheadline)
+        VStack(spacing: 0) {
+            // Header
+            HStack {
+                Button(action: {
+                    presentationMode.wrappedValue.dismiss()
+                }) {
+                    Text("Hủy")
+                        .foregroundColor(.blue)
+                }
+                
+                Spacer()
+                
+                Text("Tin nhắn mới")
+                    .font(.headline)
+                    .fontWeight(.semibold)
+                
+                Spacer()
+                
+                // Spacer to balance the layout
+                Text("").frame(width: 40)
+            }
+            .padding()
+            
+            // Search bar
+            HStack {
+                Image(systemName: "magnifyingglass")
+                    .foregroundColor(.gray)
+                    .padding(.leading, 8)
+                
+                TextField("Tìm kiếm bạn bè", text: $searchText)
+                    .padding(10)
+                
+                if !searchText.isEmpty {
+                    Button(action: {
+                        searchText = ""
+                    }) {
+                        Image(systemName: "xmark.circle.fill")
                             .foregroundColor(.gray)
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal)
                     }
-                    .padding()
-                } else {
-                    List {
-                        ForEach(filteredFriends) { friend in
+                    .padding(.trailing, 8)
+                }
+            }
+            .background(Color(.systemGray6))
+            .cornerRadius(10)
+            .padding(.horizontal)
+            
+            // Friends list
+            if isLoading {
+                Spacer()
+                ProgressView()
+                    .scaleEffect(1.5)
+                    .progressViewStyle(CircularProgressViewStyle())
+                Spacer()
+            } else if friends.isEmpty {
+                Spacer()
+                VStack(spacing: 20) {
+                    Image(systemName: "person.crop.circle.badge.exclamationmark")
+                        .font(.system(size: 60))
+                        .foregroundColor(.orange)
+                    
+                    Text("Không có bạn bè nào")
+                        .font(.headline)
+                    
+                    Text("Thêm bạn bè trước khi bắt đầu cuộc trò chuyện")
+                        .font(.subheadline)
+                        .foregroundColor(.gray)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal)
+                }
+                .padding()
+                Spacer()
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        // Hiển thị người dùng đang hoạt động trước
+                        ForEach(sortedFriends) { friend in
                             Button(action: {
                                 onSelectUser(friend)
                             }) {
-                                HStack {
-                                    // Profile image
-                                    ZStack {
-                                        Circle()
-                                            .fill(Color.blue.opacity(0.2))
-                                            .frame(width: 50, height: 50)
-                                        
-                                        if let profileImage = friend.profileImageUrl {
-                                            AsyncImage(url: URL(string: profileImage)) { image in
-                                                image
-                                                    .resizable()
-                                                    .scaledToFill()
-                                            } placeholder: {
-                                                Text(friend.initials)
-                                                    .font(.title3)
-                                                    .foregroundColor(.blue)
-                                            }
-                                            .frame(width: 46, height: 46)
-                                            .clipShape(Circle())
-                                        } else {
-                                            Text(friend.initials)
-                                                .font(.title3)
-                                                .foregroundColor(.blue)
-                                        }
-                                        
-                                        // Online status indicator
-                                        if friend.isOnline {
-                                            Circle()
-                                                .fill(Color.green)
-                                                .frame(width: 12, height: 12)
-                                                .overlay(
-                                                    Circle()
-                                                        .stroke(Color.white, lineWidth: 2)
-                                                )
-                                                .position(x: 40, y: 40)
-                                        }
-                                    }
-                                    
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text(friend.fullName)
-                                            .font(.headline)
-                                        
-                                        Text(friend.isOnline ? "Đang hoạt động" : "Không hoạt động")
-                                            .font(.subheadline)
-                                            .foregroundColor(friend.isOnline ? .green : .gray)
-                                    }
-                                    .padding(.leading, 8)
-                                }
+                                FriendRowView(user: friend)
+                                    .contentShape(Rectangle())
                             }
+                            .buttonStyle(PlainButtonStyle())
+                            
+                            Divider()
+                                .padding(.leading, 72) // Căn chỉnh theo avatar
                         }
                     }
-                    .listStyle(PlainListStyle())
-                }
-            }
-            .navigationTitle("Tin nhắn mới")
-            .navigationBarTitleDisplayMode(.inline)
-            .searchable(text: $searchText, prompt: "Tìm kiếm bạn bè")
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Hủy") {
-                        presentationMode.wrappedValue.dismiss()
-                    }
+                    .padding(.vertical, 8)
                 }
             }
         }
+        .background(Color(.systemBackground))
         .onAppear {
             loadFriends()
         }
     }
     
-    private var filteredFriends: [User] {
-        if searchText.isEmpty {
-            return friends
-        } else {
-            return friends.filter {
-                $0.fullName.localizedCaseInsensitiveContains(searchText) ||
-                $0.email.localizedCaseInsensitiveContains(searchText)
+    // Sắp xếp bạn bè theo trạng thái online/offline
+    private var sortedFriends: [User] {
+        let filteredUsers = searchText.isEmpty ? friends : friends.filter {
+            $0.fullName.localizedCaseInsensitiveContains(searchText) ||
+            $0.email.localizedCaseInsensitiveContains(searchText)
+        }
+        
+        return filteredUsers.sorted { (user1, user2) -> Bool in
+            if user1.isOnline && !user2.isOnline {
+                return true
+            } else if !user1.isOnline && user2.isOnline {
+                return false
+            } else {
+                // Nếu cùng trạng thái, sắp xếp theo tên
+                return user1.fullName < user2.fullName
             }
         }
     }
@@ -137,9 +145,7 @@ struct NewMessageView: View {
         }
         
         let db = Firestore.firestore()
-        // Fix for the 'Initializer for conditional binding must have Optional type' error
         db.collection("users").document(currentUserId).getDocument { snapshot, error in
-            // Don't use conditional binding with self here
             if snapshot == nil || error != nil {
                 self.isLoading = false
                 return
@@ -191,4 +197,84 @@ struct NewMessageView: View {
             }
         }
     }
+}
+
+struct FriendRowView: View {
+    let user: User
+    
+    // Helper method để hiển thị thời gian hoạt động cuối
+    private func lastSeenText(for user: User) -> String {
+        if let lastSeen = user.lastSeen {
+            let formatter = RelativeDateTimeFormatter()
+            formatter.unitsStyle = .abbreviated
+            return "Hoạt động \(formatter.localizedString(for: lastSeen, relativeTo: Date()))"
+        } else {
+            return "Không hoạt động"
+        }
+    }
+    
+    var body: some View {
+        HStack(spacing: 12) {
+            // Profile Photo with status indicator
+            ZStack(alignment: .bottomTrailing) {
+                // Avatar background
+                Circle()
+                    .fill(Color.blue.opacity(0.2))
+                    .frame(width: 60, height: 60)
+                
+                // User image or initials
+                if let profileImage = user.profileImageUrl {
+                    AsyncImage(url: URL(string: profileImage)) { image in
+                        image
+                            .resizable()
+                            .scaledToFill()
+                    } placeholder: {
+                        Text(user.initials)
+                            .font(.title2)
+                            .foregroundColor(.blue)
+                    }
+                    .frame(width: 56, height: 56)
+                    .clipShape(Circle())
+                    .padding(2)
+                } else {
+                    Text(user.initials)
+                        .font(.title2)
+                        .foregroundColor(.blue)
+                        .frame(width: 56, height: 56)
+                        .padding(2)
+                }
+                
+                // Status indicator
+                Circle()
+                    .fill(user.isOnline ? Color.green : Color.gray)
+                    .frame(width: 14, height: 14)
+                    .overlay(
+                        Circle()
+                            .stroke(Color.white, lineWidth: 2)
+                    )
+                    .offset(x: 0, y: 0)
+            }
+            .frame(width: 60, height: 60)
+            
+            // User info
+            VStack(alignment: .leading, spacing: 4) {
+                Text(user.fullName)
+                    .font(.headline)
+                    .foregroundColor(.primary)
+                
+                Text(user.isOnline ? "Đang hoạt động" : lastSeenText(for: user))
+                    .font(.subheadline)
+                    .foregroundColor(user.isOnline ? .green : .gray)
+            }
+            
+            Spacer()
+        }
+        .padding(.vertical, 8)
+        .padding(.horizontal)
+        .background(Color(.systemBackground))
+    }
+}
+
+#Preview {
+    NewMessageView(onSelectUser: { _ in })
 }
