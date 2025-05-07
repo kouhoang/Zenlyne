@@ -231,9 +231,8 @@ struct MessageCountButton: View {
             }
         }
         .fullScreenCover(isPresented: $showConversationList) {
-            NavigationView {
-                ConversationListView()
-            }
+            // Use the updated ConversationListView directly without a NavigationView
+            ConversationListView()
         }
         .onAppear {
             viewModel.updateTotalUnreadCount()

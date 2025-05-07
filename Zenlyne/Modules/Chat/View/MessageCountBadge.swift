@@ -19,7 +19,7 @@ struct MessageCountBadge: View {
             showConversationList = true
         }) {
             ZStack {
-                Image(systemName: "envelope.fill")
+                Image(systemName: "message.fill")
                     .font(.system(size: 40))
                     .foregroundColor(.purple)
                     .background(Color.white.clipShape(Circle()))
@@ -39,9 +39,7 @@ struct MessageCountBadge: View {
             }
         }
         .fullScreenCover(isPresented: $showConversationList) {
-            NavigationView {
-                ConversationListView()
-            }
+            ConversationListView()
         }
         .onAppear {
             viewModel.updateTotalUnreadCount()
@@ -59,10 +57,50 @@ struct MessageCountBadge: View {
     }
 }
 
-// Helper function to wrap MessageCountBadge for MapViewController
-// This will help avoid the "buildExpression" issue
-func createMessageBadge() -> AnyView {
-    return AnyView(MessageCountBadge())
+// This view solves the issue with ChatButtonView functionality in the friend info panel
+struct ChatButtonView: View {
+    let friend: User
+    @State private var showChatView = false
+    
+    var body: some View {
+        Button(action: {
+            showChatView = true
+        }) {
+            VStack(spacing: 4) {
+                Image(systemName: "message.fill")
+                    .font(.system(size: 20))
+                Text("Nhắn tin")
+                    .font(.caption)
+            }
+            .frame(maxWidth: .infinity)
+            .foregroundColor(.blue)
+        }
+        .fullScreenCover(isPresented: $showChatView) {
+            // Directly open chat with this friend
+            createChatView(with: friend)
+        }
+    }
+    
+    private func createChatView(with friend: User) -> some View {
+        let viewModel = MessagingViewModel()
+        // Preload the friend info
+        viewModel.chatUsers[friend.id] = friend
+        
+        guard let currentUserId = Auth.auth().currentUser?.uid else {
+            return AnyView(Text("Error: User not logged in"))
+        }
+        
+        let chatId = [currentUserId, friend.id].sorted().joined(separator: "_")
+        
+        // Create a navigation view with the chat view
+        return AnyView(
+            ChatView(
+                viewModel: viewModel,
+                chatId: chatId,
+                otherUserId: friend.id
+            )
+        )
+    }
 }
 
 // Extension to integrate messaging functionality in MapViewController
@@ -70,9 +108,7 @@ extension MapViewController {
     // Method to show the conversation list
     func showConversationList() -> some View {
         return AnyView(
-            NavigationView {
-                ConversationListView()
-            }
+            ConversationListView()
         )
     }
     
@@ -91,13 +127,11 @@ extension MapViewController {
         let chatId = [currentUserId, friend.id].sorted().joined(separator: "_")
         
         return AnyView(
-            NavigationView {
-                ChatView(
-                    viewModel: messagingViewModel,
-                    chatId: chatId,
-                    otherUserId: friend.id
-                )
-            }
+            ChatView(
+                viewModel: messagingViewModel,
+                chatId: chatId,
+                otherUserId: friend.id
+            )
         )
     }
 }

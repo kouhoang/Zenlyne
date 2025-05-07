@@ -13,55 +13,82 @@ struct ConversationListView: View {
     @Environment(\.presentationMode) var presentationMode
     @State private var showNewMessageSheet = false
     @State private var searchText = ""
+    @State private var selectedChatId: String? = nil
     
     private let firebaseService = FirebaseService()
     
     var body: some View {
         NavigationView {
-            ZStack {
-                // Background
-                Color(.systemBackground).ignoresSafeArea()
+            VStack(spacing: 0) {
+                // Header
+                HStack {
+                    Button(action: {
+                        presentationMode.wrappedValue.dismiss()
+                    }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.title)
+                            .foregroundColor(.gray)
+                    }
+                    
+                    Spacer()
+                    
+                    Text("Tin Nhắn")
+                        .font(.title)
+                        .fontWeight(.bold)
+                    
+                    Spacer()
+                    
+                    Button(action: {
+                        showNewMessageSheet = true
+                    }) {
+                        Image(systemName: "square.and.pencil")
+                            .font(.title2)
+                            .foregroundColor(.blue)
+                    }
+                }
+                .padding()
+                
+                // Search bar
+                HStack {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundColor(.gray)
+                        .padding(.leading, 8)
+                    
+                    TextField("Tìm kiếm", text: $searchText)
+                        .padding(10)
+                    
+                    if !searchText.isEmpty {
+                        Button(action: {
+                            searchText = ""
+                        }) {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundColor(.gray)
+                        }
+                        .padding(.trailing, 8)
+                    }
+                }
+                .background(Color(.systemGray6))
+                .cornerRadius(10)
+                .padding(.horizontal)
                 
                 // Content
-                VStack {
-                    // List of conversations
+                ZStack {
                     if viewModel.chats.isEmpty && !viewModel.isLoading {
                         emptyStateView
                     } else {
                         conversationsList
                     }
-                }
-                .navigationTitle("Tin Nhắn")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .navigationBarLeading) {
-                        Button(action: {
-                            presentationMode.wrappedValue.dismiss()
-                        }) {
-                            Image(systemName: "arrow.left")
-                                .foregroundColor(.blue)
-                        }
-                    }
                     
-                    ToolbarItem(placement: .navigationBarTrailing) {
-                        Button(action: {
-                            showNewMessageSheet = true
-                        }) {
-                            Image(systemName: "square.and.pencil")
-                                .foregroundColor(.blue)
-                        }
-                    }
-                }
-            }
-            .overlay(
-                Group {
                     if viewModel.isLoading {
                         ProgressView()
                             .scaleEffect(1.5)
                             .progressViewStyle(CircularProgressViewStyle())
                     }
                 }
-            )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            .background(Color(.systemBackground).edgesIgnoringSafeArea(.all))
+            .navigationBarHidden(true)
             .onAppear {
                 // Start real-time chat updates
                 viewModel.loadChats()
@@ -110,32 +137,46 @@ struct ConversationListView: View {
     }
     
     private var conversationsList: some View {
-        VStack(spacing: 0) {
-            List {
-                ForEach(filteredChats) { chat in
-                    NavigationLink(destination: ChatView(viewModel: viewModel, chatId: chat.id, otherUserId: chat.getOtherParticipantId(currentUserId: Auth.auth().currentUser?.uid ?? ""))) {
-                        ConversationRowView(
-                            chat: chat,
-                            user: viewModel.getOtherUser(in: chat)
-                        )
+        List {
+            ForEach(filteredChats) { chat in
+                ZStack {
+                    NavigationLink(
+                        destination: ChatView(
+                            viewModel: viewModel,
+                            chatId: chat.id,
+                            otherUserId: chat.getOtherParticipantId(currentUserId: Auth.auth().currentUser?.uid ?? "")
+                        ),
+                        tag: chat.id,
+                        selection: $selectedChatId
+                    ) {
+                        EmptyView()
                     }
-                    .swipeActions(edge: .trailing) {
-                        Button(role: .destructive) {
-                            viewModel.deleteChat(chatId: chat.id)
-                        } label: {
-                            Label("Xóa", systemImage: "trash")
-                        }
+                    .opacity(0.0)
+                    .buttonStyle(PlainButtonStyle())
+                    
+                    ConversationRowView(
+                        chat: chat,
+                        user: viewModel.getOtherUser(in: chat)
+                    )
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        selectedChatId = chat.id
+                    }
+                }
+                .swipeActions(edge: .trailing) {
+                    Button(role: .destructive) {
+                        viewModel.deleteChat(chatId: chat.id)
+                    } label: {
+                        Label("Xóa", systemImage: "trash")
                     }
                 }
             }
-            .listStyle(PlainListStyle())
-            .padding(.top, -100)
         }
+        .listStyle(PlainListStyle())
         .refreshable {
             viewModel.loadChats()
             updateContactStatuses()
         }
-        .searchable(text: $searchText, prompt: "Tìm kiếm")
     }
     
     // Filtered chats based on search text
@@ -172,7 +213,8 @@ struct ConversationListView: View {
                 
                 // Check if chat already exists in our list
                 if let index = viewModel.chats.firstIndex(where: { $0.id == chatId }) {
-                    // Chat already exists - do nothing
+                    // Chat already exists - open it
+                    selectedChatId = chatId
                 } else {
                     // Create new chat entry
                     let newChat = Chat(
@@ -181,6 +223,9 @@ struct ConversationListView: View {
                         unreadCount: 0
                     )
                     viewModel.chats.insert(newChat, at: 0)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        selectedChatId = chatId
+                    }
                 }
             }
         }
@@ -206,7 +251,7 @@ struct ConversationListView: View {
     }
 }
 
-// Individual conversation row
+// Individual conversation row (keeping this part unchanged)
 struct ConversationRowView: View {
     let chat: Chat
     let user: User?
