@@ -110,24 +110,27 @@ struct ConversationListView: View {
     }
     
     private var conversationsList: some View {
-        List {
-            ForEach(filteredChats) { chat in
-                NavigationLink(destination: ChatView(viewModel: viewModel, chatId: chat.id, otherUserId: chat.getOtherParticipantId(currentUserId: Auth.auth().currentUser?.uid ?? ""))) {
-                    ConversationRowView(
-                        chat: chat,
-                        user: viewModel.getOtherUser(in: chat)
-                    )
-                }
-                .swipeActions(edge: .trailing) {
-                    Button(role: .destructive) {
-                        viewModel.deleteChat(chatId: chat.id)
-                    } label: {
-                        Label("Xóa", systemImage: "trash")
+        VStack(spacing: 0) {
+            List {
+                ForEach(filteredChats) { chat in
+                    NavigationLink(destination: ChatView(viewModel: viewModel, chatId: chat.id, otherUserId: chat.getOtherParticipantId(currentUserId: Auth.auth().currentUser?.uid ?? ""))) {
+                        ConversationRowView(
+                            chat: chat,
+                            user: viewModel.getOtherUser(in: chat)
+                        )
+                    }
+                    .swipeActions(edge: .trailing) {
+                        Button(role: .destructive) {
+                            viewModel.deleteChat(chatId: chat.id)
+                        } label: {
+                            Label("Xóa", systemImage: "trash")
+                        }
                     }
                 }
             }
+            .listStyle(PlainListStyle())
+            .padding(.top, -100)
         }
-        .listStyle(PlainListStyle())
         .refreshable {
             viewModel.loadChats()
             updateContactStatuses()
@@ -267,7 +270,7 @@ struct ConversationRowView: View {
                     }
                     .frame(width: 56, height: 56)
                     .clipShape(Circle())
-                    .padding(2) // Small padding so the avatar isn't right at the edge
+                    .padding(2)
                 } else {
                     Text(user?.initials ?? "?")
                         .font(.title2)
@@ -276,7 +279,7 @@ struct ConversationRowView: View {
                         .padding(2)
                 }
                 
-                // Status indicator at bottom left
+                // Status indicator at bottom right
                 if let user = user {
                     Circle()
                         .fill(user.isOnline ? Color.green : Color.red)

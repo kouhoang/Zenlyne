@@ -39,7 +39,7 @@ class LocationViewModel: NSObject, ObservableObject {
          firebaseService: FirebaseServiceProtocol = FirebaseService()) {
         // Default camera position (Ho Chi Minh City)
         self.cameraOptions = CameraOptions(
-            center: CLLocationCoordinate2D(latitude: 10.762622, longitude: 106.660172),
+            center: CLLocationCoordinate2D(latitude: 21.01991, longitude: 105.7838),
             zoom: 14.0,
             bearing: 0,
             pitch: 0

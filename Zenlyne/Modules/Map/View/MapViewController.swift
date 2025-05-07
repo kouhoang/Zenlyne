@@ -138,7 +138,7 @@ struct MapViewController: View {
             // Start tracking location when app appears
             viewModel.startTrackingLocation()
             
-            // Đảm bảo chúng ta load bạn bè và vị trí của họ
+            // Make sure they load their friends and location
             if let currentUserId = Auth.auth().currentUser?.uid {
                 print("DEBUG: Loading friends for current user: \(currentUserId)")
                 let friendViewModel = FriendRequestViewModel()
@@ -169,7 +169,7 @@ struct MapViewController: View {
                     print("DEBUG: Friend selected: \(friendId)")
                     self.selectedFriendId = friendId
                     
-                    // Đảm bảo tập trung vị trí vào bạn bè được chọn
+                    // Make sure the location is focused on the selected friend
                     self.viewModel.focusOnFriendLocation(friendId: friendId)
                 }
             }
