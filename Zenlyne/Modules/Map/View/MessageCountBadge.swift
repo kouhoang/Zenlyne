@@ -8,7 +8,6 @@
 import SwiftUI
 import FirebaseAuth
 
-// This struct is specifically designed to be used directly in the MapViewController
 struct MessageCountBadge: View {
     @StateObject private var viewModel = MessagingViewModel()
     @State private var showingBadge = false
@@ -57,7 +56,6 @@ struct MessageCountBadge: View {
     }
 }
 
-// This view solves the issue with ChatButtonView functionality in the friend info panel
 struct ChatButtonView: View {
     let friend: User
     @State private var showChatView = false
@@ -103,7 +101,6 @@ struct ChatButtonView: View {
     }
 }
 
-// Extension to integrate messaging functionality in MapViewController
 extension MapViewController {
     // Method to show the conversation list
     func showConversationList() -> some View {

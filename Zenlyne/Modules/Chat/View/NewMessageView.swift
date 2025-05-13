@@ -93,7 +93,6 @@ struct NewMessageView: View {
             } else {
                 ScrollView {
                     LazyVStack(spacing: 0) {
-                        // Hiển thị người dùng đang hoạt động trước
                         ForEach(sortedFriends) { friend in
                             Button(action: {
                                 onSelectUser(friend)
@@ -104,7 +103,7 @@ struct NewMessageView: View {
                             .buttonStyle(PlainButtonStyle())
                             
                             Divider()
-                                .padding(.leading, 72) // Căn chỉnh theo avatar
+                                .padding(.leading, 72)
                         }
                     }
                     .padding(.vertical, 8)
@@ -117,7 +116,6 @@ struct NewMessageView: View {
         }
     }
     
-    // Sắp xếp bạn bè theo trạng thái online/offline
     private var sortedFriends: [User] {
         let filteredUsers = searchText.isEmpty ? friends : friends.filter {
             $0.fullName.localizedCaseInsensitiveContains(searchText) ||
@@ -130,7 +128,6 @@ struct NewMessageView: View {
             } else if !user1.isOnline && user2.isOnline {
                 return false
             } else {
-                // Nếu cùng trạng thái, sắp xếp theo tên
                 return user1.fullName < user2.fullName
             }
         }

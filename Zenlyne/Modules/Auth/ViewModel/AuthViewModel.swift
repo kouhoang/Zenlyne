@@ -1,5 +1,5 @@
 //
-//  LoginViewModel.swift
+//  AuthViewModel.swift - Updated with password reset
 //  Zenlyne
 //
 //  Created by admin on 14/3/25.
@@ -19,6 +19,8 @@ class AuthViewModel: ObservableObject {
     @Published var userSessions: FirebaseAuth.User?
     @Published var currentUser: User?
     @Published var isSignedOut = false
+    @Published var resetPasswordSuccess = false
+    @Published var resetPasswordError: String?
     
     init() {
         self.userSessions = Auth.auth().currentUser
@@ -61,6 +63,19 @@ class AuthViewModel: ObservableObject {
             await fetchUser()
         } catch {
             print("DEBUG: Failed to create user with error \(error.localizedDescription)")
+            throw error
+        }
+    }
+    
+    func resetPassword(email: String) async throws {
+        do {
+            try await Auth.auth().sendPasswordReset(withEmail: email)
+            self.resetPasswordSuccess = true
+            self.resetPasswordError = nil
+        } catch {
+            print("DEBUG: Failed to send password reset email with error \(error.localizedDescription)")
+            self.resetPasswordSuccess = false
+            self.resetPasswordError = error.localizedDescription
             throw error
         }
     }

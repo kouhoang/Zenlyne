@@ -11,6 +11,7 @@ struct LoginViewController: View {
     @State private var email = ""
     @State private var password = ""
     @State private var showError = false
+    @State private var showForgotPassword = false
     @EnvironmentObject var viewModel: AuthViewModel
     
     var body: some View {
@@ -67,6 +68,19 @@ struct LoginViewController: View {
                     }
                     .padding(.horizontal).padding(.top, 12)
                     
+                    // Forgot password button
+                    Button {
+                        showForgotPassword = true
+                    } label: {
+                        Text("Forgot password?")
+                            .font(.system(size: 14))
+                            .fontWeight(.semibold)
+                            .foregroundColor(.blue)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .padding(.trailing, 16)
+                    .padding(.top, 8)
+                    
                     // sign in button
                     Button {
                         Task {
@@ -85,7 +99,7 @@ struct LoginViewController: View {
                         .foregroundStyle(.white)
                         .frame(width: UIScreen.main.bounds.width - 32, height: 48)
                     }
-                    .background(Color(.systemBlue)).disabled(!formIsValid).opacity(formIsValid ? 1.5 : 0.5).cornerRadius(10).padding(.top, 24)
+                    .background(Color(.systemBlue)).disabled(!formIsValid).opacity(formIsValid ? 1.5 : 0.5).cornerRadius(10).padding(.top, 16)
                     
                     Spacer()
                     
@@ -99,6 +113,14 @@ struct LoginViewController: View {
                         }
                         .font(.system(size: 14))
                     }
+                }
+                
+                // Navigation to ForgotPasswordView
+                NavigationLink(
+                    destination: ForgotPasswordView().navigationBarBackButtonHidden(false),
+                    isActive: $showForgotPassword
+                ) {
+                    EmptyView()
                 }
             }
         }
