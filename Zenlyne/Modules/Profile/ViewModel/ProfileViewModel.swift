@@ -52,7 +52,9 @@ class ProfileViewModel: ObservableObject {
             guard let self = self else { return }
             
             if let error = error {
-                self.errorMessage = "Error loading user data: \(error.localizedDescription)"
+                DispatchQueue.main.async {
+                    self.errorMessage = "Error loading user data: \(error.localizedDescription)"
+                }
                 return
             }
             
@@ -106,24 +108,33 @@ class ProfileViewModel: ObservableObject {
             guard let self = self else { return }
             
             if let error = error {
-                self.isLoading = false
-                self.errorMessage = "Upload failed: \(error.localizedDescription)"
+                DispatchQueue.main.async {
+                    self.isLoading = false
+                    self.errorMessage = "Upload failed: \(error.localizedDescription)"
+                }
                 completion(false)
                 return
             }
             
             storageRef.downloadURL { [weak self] url, error in
                 guard let self = self else { return }
-                self.isLoading = false
+                
+                DispatchQueue.main.async {
+                    self.isLoading = false
+                }
                 
                 if let error = error {
-                    self.errorMessage = "Failed to get image URL: \(error.localizedDescription)"
+                    DispatchQueue.main.async {
+                        self.errorMessage = "Failed to get image URL: \(error.localizedDescription)"
+                    }
                     completion(false)
                     return
                 }
                 
                 guard let imageUrl = url?.absoluteString else {
-                    self.errorMessage = "Invalid image URL"
+                    DispatchQueue.main.async {
+                        self.errorMessage = "Invalid image URL"
+                    }
                     completion(false)
                     return
                 }
@@ -131,7 +142,9 @@ class ProfileViewModel: ObservableObject {
                 // Update user profile in Firestore
                 self.updateUserProfileImage(imageUrl: imageUrl) { success in
                     if success {
-                        self.successMessage = "Profile picture updated"
+                        DispatchQueue.main.async {
+                            self.successMessage = "Profile picture updated"
+                        }
                     }
                     completion(success)
                 }
@@ -150,7 +163,9 @@ class ProfileViewModel: ObservableObject {
             guard let self = self else { return }
             
             if let error = error {
-                self.errorMessage = "Failed to update profile: \(error.localizedDescription)"
+                DispatchQueue.main.async {
+                    self.errorMessage = "Failed to update profile: \(error.localizedDescription)"
+                }
                 completion(false)
                 return
             }
@@ -163,7 +178,9 @@ class ProfileViewModel: ObservableObject {
     
     func updateUserName(completion: @escaping (Bool) -> Void) {
         guard !newFullName.isEmpty else {
-            errorMessage = "Name cannot be empty"
+            DispatchQueue.main.async {
+                self.errorMessage = "Name cannot be empty"
+            }
             completion(false)
             return
         }
@@ -173,7 +190,9 @@ class ProfileViewModel: ObservableObject {
             return
         }
         
-        isLoading = true
+        DispatchQueue.main.async {
+            self.isLoading = true
+        }
         
         // Update display name in Firebase Auth
         let profileChangeRequest = currentUser.createProfileChangeRequest()
@@ -183,8 +202,10 @@ class ProfileViewModel: ObservableObject {
             guard let self = self else { return }
             
             if let error = error {
-                self.isLoading = false
-                self.errorMessage = "Failed to update auth profile: \(error.localizedDescription)"
+                DispatchQueue.main.async {
+                    self.isLoading = false
+                    self.errorMessage = "Failed to update auth profile: \(error.localizedDescription)"
+                }
                 completion(false)
                 return
             }
@@ -193,32 +214,39 @@ class ProfileViewModel: ObservableObject {
             let userRef = self.db.collection("users").document(currentUser.uid)
             userRef.updateData(["fullName": self.newFullName]) { [weak self] error in
                 guard let self = self else { return }
-                self.isLoading = false
                 
-                if let error = error {
-                    self.errorMessage = "Failed to update database: \(error.localizedDescription)"
-                    completion(false)
-                    return
+                DispatchQueue.main.async {
+                    self.isLoading = false
+                    
+                    if let error = error {
+                        self.errorMessage = "Failed to update database: \(error.localizedDescription)"
+                        completion(false)
+                        return
+                    }
+                    
+                    // Update was successful
+                    self.userFullName = self.newFullName
+                    self.isEditingName = false
+                    self.successMessage = "Name updated successfully"
+                    completion(true)
                 }
-                
-                // Update was successful
-                self.userFullName = self.newFullName
-                self.isEditingName = false
-                self.successMessage = "Name updated successfully"
-                completion(true)
             }
         }
     }
     
     func updatePassword(completion: @escaping (Bool) -> Void) {
         guard newPassword.count >= 6 else {
-            errorMessage = "Password must be at least 6 characters"
+            DispatchQueue.main.async {
+                self.errorMessage = "Password must be at least 6 characters"
+            }
             completion(false)
             return
         }
         
         guard newPassword == confirmPassword else {
-            errorMessage = "Passwords do not match"
+            DispatchQueue.main.async {
+                self.errorMessage = "Passwords do not match"
+            }
             completion(false)
             return
         }
@@ -228,7 +256,9 @@ class ProfileViewModel: ObservableObject {
             return
         }
         
-        isLoading = true
+        DispatchQueue.main.async {
+            self.isLoading = true
+        }
         
         // Reauthenticate user with current password
         let credential = EmailAuthProvider.credential(withEmail: userEmail, password: currentPassword)
@@ -237,8 +267,10 @@ class ProfileViewModel: ObservableObject {
             guard let self = self else { return }
             
             if let error = error {
-                self.isLoading = false
-                self.errorMessage = "Current password is incorrect: \(error.localizedDescription)"
+                DispatchQueue.main.async {
+                    self.isLoading = false
+                    self.errorMessage = "Current password is incorrect: \(error.localizedDescription)"
+                }
                 completion(false)
                 return
             }
@@ -246,22 +278,25 @@ class ProfileViewModel: ObservableObject {
             // Update password
             currentUser.updatePassword(to: self.newPassword) { [weak self] error in
                 guard let self = self else { return }
-                self.isLoading = false
                 
-                if let error = error {
-                    self.errorMessage = "Failed to update password: \(error.localizedDescription)"
-                    completion(false)
-                    return
+                DispatchQueue.main.async {
+                    self.isLoading = false
+                    
+                    if let error = error {
+                        self.errorMessage = "Failed to update password: \(error.localizedDescription)"
+                        completion(false)
+                        return
+                    }
+                    
+                    // Reset fields
+                    self.isEditingPassword = false
+                    self.currentPassword = ""
+                    self.newPassword = ""
+                    self.confirmPassword = ""
+                    
+                    self.successMessage = "Password updated successfully"
+                    completion(true)
                 }
-                
-                // Reset fields
-                self.isEditingPassword = false
-                self.currentPassword = ""
-                self.newPassword = ""
-                self.confirmPassword = ""
-                
-                self.successMessage = "Password updated successfully"
-                completion(true)
             }
         }
     }

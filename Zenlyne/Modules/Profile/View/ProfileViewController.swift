@@ -116,7 +116,11 @@ struct ProfileViewController: View {
                                         }
                                         
                                         Button(action: {
-                                            viewModel.updateUserName { _ in }
+                                            viewModel.updateUserName { success in
+                                                if success {
+                                                    // No need to show alert since we show success banner
+                                                }
+                                            }
                                         }) {
                                             Image(systemName: "checkmark.circle.fill")
                                                 .foregroundColor(.green)
@@ -199,9 +203,8 @@ struct ProfileViewController: View {
                                         Button(action: {
                                             viewModel.updatePassword { success in
                                                 if success {
-                                                    alertTitle = "Success"
-                                                    alertMessage = "Password updated successfully."
-                                                    showAlert = true
+                                                    // Success message is already shown in banner
+                                                    // from the viewModel
                                                 }
                                             }
                                         }) {
@@ -210,7 +213,9 @@ struct ProfileViewController: View {
                                         }
                                         .disabled(viewModel.currentPassword.isEmpty ||
                                                   viewModel.newPassword.isEmpty ||
-                                                  viewModel.confirmPassword.isEmpty)
+                                                  viewModel.confirmPassword.isEmpty ||
+                                                  viewModel.newPassword.count < 6 ||
+                                                  viewModel.newPassword != viewModel.confirmPassword)
                                     }
                                 }
                                 .padding()

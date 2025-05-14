@@ -1,5 +1,5 @@
 //
-//  AuthViewModel.swift - Updated with password reset
+//  AuthViewModel.swift
 //  Zenlyne
 //
 //  Created by admin on 14/3/25.
@@ -14,7 +14,6 @@ protocol AuthentiicationFormProtocol {
     var formIsValid: Bool { get }
 }
 
-@MainActor
 class AuthViewModel: ObservableObject {
     @Published var userSessions: FirebaseAuth.User?
     @Published var currentUser: User?
@@ -60,6 +59,12 @@ class AuthViewModel: ObservableObject {
                 "friendIds": []
             ]
             try await Firestore.firestore().collection("users").document(user.id).setData(userData)
+            
+            // Also update the display name in Firebase Auth
+            let changeRequest = result.user.createProfileChangeRequest()
+            changeRequest.displayName = fullName
+            try await changeRequest.commitChanges()
+            
             await fetchUser()
         } catch {
             print("DEBUG: Failed to create user with error \(error.localizedDescription)")
@@ -85,14 +90,54 @@ class AuthViewModel: ObservableObject {
             try Auth.auth().signOut() // sign out user on backend
             self.userSessions = nil // This will trigger navigation back to login
             self.currentUser = nil // wipe out current user data model
+            self.isSignedOut = true
         }
         catch {
             print("DEBUG: Failed to sign out with error \(error.localizedDescription)")
         }
     }
     
-    func deleteAccount() {
+    func updateUserName(newName: String) async throws {
+        guard let currentUser = Auth.auth().currentUser else {
+            throw AuthError.userNotFound
+        }
         
+        do {
+            // 1. Update Auth profile
+            let changeRequest = currentUser.createProfileChangeRequest()
+            changeRequest.displayName = newName
+            try await changeRequest.commitChanges()
+            
+            // 2. Update Firestore
+            try await Firestore.firestore().collection("users").document(currentUser.uid).updateData([
+                "fullName": newName
+            ])
+            
+            // 3. Update local user
+            await fetchUser()
+        } catch {
+            print("DEBUG: Failed to update user name with error \(error.localizedDescription)")
+            throw error
+        }
+    }
+    
+    func updateUserPassword(currentPassword: String, newPassword: String) async throws {
+        guard let currentUser = Auth.auth().currentUser,
+              let email = currentUser.email else {
+            throw AuthError.userNotFound
+        }
+        
+        do {
+            // 1. Reauthenticate user
+            let credential = EmailAuthProvider.credential(withEmail: email, password: currentPassword)
+            _ = try await currentUser.reauthenticate(with: credential)
+            
+            // 2. Update password
+            try await currentUser.updatePassword(to: newPassword)
+        } catch {
+            print("DEBUG: Failed to update password with error \(error.localizedDescription)")
+            throw error
+        }
     }
     
     func fetchUser() async {
@@ -112,6 +157,12 @@ class AuthViewModel: ObservableObject {
                    let fullName = userData["fullName"] as? String,
                    let email = userData["email"] as? String {
                     self.currentUser = User(id: uid, fullName: fullName, email: email)
+                    
+                    // Add profile image if available
+                    if let profileImageUrl = userData["profileImageUrl"] as? String {
+                        self.currentUser?.profileImageUrl = profileImageUrl
+                    }
+                    
                     print("DEBUG: Successfully decoded user data")
                 }
             } else {
@@ -200,7 +251,7 @@ class AuthViewModel: ObservableObject {
     
     func ensureUserDocumentExists() async {
         guard let currentUser = Auth.auth().currentUser else {
-            print("DEBUG: Không có người dùng nào đang đăng nhập")
+            print("DEBUG: No user is currently logged in")
             return
         }
         
@@ -211,7 +262,7 @@ class AuthViewModel: ObservableObject {
             let docSnapshot = try await docRef.getDocument()
             
             if !docSnapshot.exists {
-                print("DEBUG: Đang tạo tài liệu người dùng thiếu cho \(currentUser.email ?? "email không rõ")")
+                print("DEBUG: Creating missing user document for \(currentUser.email ?? "unknown email")")
                 
                 // Create basic user document
                 let userData: [String: Any] = [
@@ -222,15 +273,24 @@ class AuthViewModel: ObservableObject {
                 ]
                 
                 try await docRef.setData(userData)
-                print("DEBUG: Đã tạo thành công tài liệu người dùng")
+                print("DEBUG: Successfully created user document")
                 
-                // Refresh recurrent user information
+                // Refresh current user information
                 await fetchUser()
             } else {
-                print("DEBUG: Tài liệu người dùng tồn tại")
+                print("DEBUG: User document exists")
             }
         } catch {
-            print("DEBUG: Lỗi khi kiểm tra/tạo tài liệu người dùng: \(error.localizedDescription)")
+            print("DEBUG: Error checking/creating user document: \(error.localizedDescription)")
         }
     }
+}
+
+enum AuthError: Error {
+    case userNotFound
+    case emailInUse
+    case weakPassword
+    case invalidEmail
+    case wrongPassword
+    case unknownError
 }
