@@ -21,20 +21,13 @@ class ProfileViewModel: ObservableObject {
     
     // Edit mode states
     @Published var isEditingName: Bool = false
-    @Published var isEditingEmail: Bool = false
     @Published var isEditingPassword: Bool = false
     
     // New values
     @Published var newFullName: String = ""
-    @Published var newEmail: String = ""
     @Published var currentPassword: String = ""
     @Published var newPassword: String = ""
     @Published var confirmPassword: String = ""
-    
-    // Password reset verification
-    @Published var isVerificationSent: Bool = false
-    @Published var verificationCode: String = ""
-    @Published var enteredVerificationCode: String = ""
     
     // Loading and error handling
     @Published var isLoading: Bool = false
@@ -217,126 +210,7 @@ class ProfileViewModel: ObservableObject {
         }
     }
     
-    func updateUserEmail(completion: @escaping (Bool) -> Void) {
-        guard !newEmail.isEmpty, newEmail.contains("@") else {
-            errorMessage = "Please enter a valid email address"
-            completion(false)
-            return
-        }
-        
-        guard let currentUser = Auth.auth().currentUser else {
-            completion(false)
-            return
-        }
-        
-        isLoading = true
-        
-        // Reauthenticate before changing email
-        let credential = EmailAuthProvider.credential(withEmail: userEmail, password: currentPassword)
-        
-        currentUser.reauthenticate(with: credential) { [weak self] _, error in
-            guard let self = self else { return }
-            
-            if let error = error {
-                self.isLoading = false
-                self.errorMessage = "Authentication failed: \(error.localizedDescription)"
-                completion(false)
-                return
-            }
-            
-            // Update email in Firebase Auth
-            currentUser.updateEmail(to: self.newEmail) { [weak self] error in
-                guard let self = self else { return }
-                
-                if let error = error {
-                    self.isLoading = false
-                    self.errorMessage = "Failed to update email: \(error.localizedDescription)"
-                    completion(false)
-                    return
-                }
-                
-                // Update email in Firestore
-                let userRef = self.db.collection("users").document(currentUser.uid)
-                userRef.updateData(["email": self.newEmail]) { [weak self] error in
-                    guard let self = self else { return }
-                    self.isLoading = false
-                    
-                    if let error = error {
-                        self.errorMessage = "Failed to update database: \(error.localizedDescription)"
-                        completion(false)
-                        return
-                    }
-                    
-                    // Update was successful
-                    self.userEmail = self.newEmail
-                    self.isEditingEmail = false
-                    self.currentPassword = ""
-                    self.successMessage = "Email updated successfully"
-                    completion(true)
-                }
-            }
-        }
-    }
-    
-    func sendPasswordResetVerification(completion: @escaping (Bool) -> Void) {
-        guard let currentUser = Auth.auth().currentUser else {
-            completion(false)
-            return
-        }
-        
-        isLoading = true
-        
-        // Verify current password first
-        let credential = EmailAuthProvider.credential(withEmail: userEmail, password: currentPassword)
-        
-        currentUser.reauthenticate(with: credential) { [weak self] _, error in
-            guard let self = self else { return }
-            
-            if let error = error {
-                self.isLoading = false
-                self.errorMessage = "Current password is incorrect: \(error.localizedDescription)"
-                completion(false)
-                return
-            }
-            
-            // Generate a random 6-digit verification code
-            let code = String(Int.random(in: 100000...999999))
-            self.verificationCode = code
-            
-            // Send password reset email with verification code
-            Auth.auth().sendPasswordReset(withEmail: self.userEmail) { [weak self] error in
-                guard let self = self else { return }
-                self.isLoading = false
-                
-                if let error = error {
-                    self.errorMessage = "Failed to send verification: \(error.localizedDescription)"
-                    completion(false)
-                    return
-                }
-                
-                // Store verification code in Firestore with expiration
-                let userRef = self.db.collection("password_resets").document(currentUser.uid)
-                let expirationTime = Date().timeIntervalSince1970 + (15 * 60) // 15 minutes expiration
-                
-                userRef.setData([
-                    "code": code,
-                    "expires": expirationTime
-                ]) { error in
-                    if let error = error {
-                        self.errorMessage = "Failed to store verification code: \(error.localizedDescription)"
-                        completion(false)
-                        return
-                    }
-                    
-                    self.isVerificationSent = true
-                    self.successMessage = "Verification code sent to your email"
-                    completion(true)
-                }
-            }
-        }
-    }
-    
-    func verifyCodeAndUpdatePassword(completion: @escaping (Bool) -> Void) {
+    func updatePassword(completion: @escaping (Bool) -> Void) {
         guard newPassword.count >= 6 else {
             errorMessage = "Password must be at least 6 characters"
             completion(false)
@@ -356,44 +230,20 @@ class ProfileViewModel: ObservableObject {
         
         isLoading = true
         
-        // Check if verification code matches
-        let userRef = db.collection("password_resets").document(currentUser.uid)
-        userRef.getDocument { [weak self] snapshot, error in
+        // Reauthenticate user with current password
+        let credential = EmailAuthProvider.credential(withEmail: userEmail, password: currentPassword)
+        
+        currentUser.reauthenticate(with: credential) { [weak self] _, error in
             guard let self = self else { return }
             
             if let error = error {
                 self.isLoading = false
-                self.errorMessage = "Failed to verify code: \(error.localizedDescription)"
+                self.errorMessage = "Current password is incorrect: \(error.localizedDescription)"
                 completion(false)
                 return
             }
             
-            guard let data = snapshot?.data(),
-                  let storedCode = data["code"] as? String,
-                  let expiresAt = data["expires"] as? TimeInterval else {
-                self.isLoading = false
-                self.errorMessage = "Verification code not found"
-                completion(false)
-                return
-            }
-            
-            // Check if the code has expired
-            if Date().timeIntervalSince1970 > expiresAt {
-                self.isLoading = false
-                self.errorMessage = "Verification code has expired"
-                completion(false)
-                return
-            }
-            
-            // Check if the code matches
-            if storedCode != self.enteredVerificationCode {
-                self.isLoading = false
-                self.errorMessage = "Incorrect verification code"
-                completion(false)
-                return
-            }
-            
-            // Update password in Firebase Auth
+            // Update password
             currentUser.updatePassword(to: self.newPassword) { [weak self] error in
                 guard let self = self else { return }
                 self.isLoading = false
@@ -404,28 +254,16 @@ class ProfileViewModel: ObservableObject {
                     return
                 }
                 
-                // Delete the verification code document
-                userRef.delete()
-                
                 // Reset fields
                 self.isEditingPassword = false
-                self.isVerificationSent = false
                 self.currentPassword = ""
                 self.newPassword = ""
                 self.confirmPassword = ""
-                self.enteredVerificationCode = ""
-                self.verificationCode = ""
                 
                 self.successMessage = "Password updated successfully"
                 completion(true)
             }
         }
-    }
-    
-    func cancelEmailEdit() {
-        isEditingEmail = false
-        newEmail = userEmail
-        currentPassword = ""
     }
     
     func cancelNameEdit() {
@@ -435,11 +273,8 @@ class ProfileViewModel: ObservableObject {
     
     func cancelPasswordEdit() {
         isEditingPassword = false
-        isVerificationSent = false
         currentPassword = ""
         newPassword = ""
         confirmPassword = ""
-        enteredVerificationCode = ""
-        verificationCode = ""
     }
 }

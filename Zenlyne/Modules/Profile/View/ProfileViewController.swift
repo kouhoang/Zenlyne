@@ -27,47 +27,51 @@ struct ProfileViewController: View {
                 // Profile Section
                 Section {
                     VStack(spacing: 20) {
-                        // Profile Image
-                        Button {
-                            showingPhotoPicker = true
-                        } label: {
+                        // Profile Image - Only the circle is a button
+                        VStack {
                             ZStack {
-                                if let profileImage = viewModel.profileImage {
-                                    Image(uiImage: profileImage)
-                                        .resizable()
-                                        .scaledToFill()
-                                        .frame(width: 100, height: 100)
-                                        .clipShape(Circle())
-                                        .overlay(Circle().stroke(Color.blue, lineWidth: 2))
-                                } else {
+                                // The avatar circle inside a button
+                                ZStack {
+                                    if let profileImage = viewModel.profileImage {
+                                        Image(uiImage: profileImage)
+                                            .resizable()
+                                            .scaledToFill()
+                                            .frame(width: 100, height: 100)
+                                            .clipShape(Circle())
+                                            .overlay(Circle().stroke(Color.blue, lineWidth: 2))
+                                    } else {
+                                        Circle()
+                                            .fill(Color(.systemGray4))
+                                            .frame(width: 100, height: 100)
+                                            .overlay(
+                                                Text(getInitials(from: viewModel.userFullName))
+                                                    .font(.system(size: 36, weight: .bold))
+                                                    .foregroundColor(.white)
+                                            )
+                                    }
+                                    
+                                    if viewModel.isLoading {
+                                        ProgressView()
+                                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                            .frame(width: 100, height: 100)
+                                            .background(Color.black.opacity(0.3))
+                                            .clipShape(Circle())
+                                    }
+                                    
+                                    // Camera icon overlay on the bottom right
                                     Circle()
-                                        .fill(Color(.systemGray4))
-                                        .frame(width: 100, height: 100)
+                                        .fill(Color.blue)
+                                        .frame(width: 32, height: 32)
                                         .overlay(
-                                            Text(getInitials(from: viewModel.userFullName))
-                                                .font(.system(size: 36, weight: .bold))
+                                            Image(systemName: "camera.fill")
+                                                .font(.system(size: 16))
                                                 .foregroundColor(.white)
                                         )
+                                        .offset(x: 32, y: 32)
                                 }
-                                
-                                if viewModel.isLoading {
-                                    ProgressView()
-                                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                        .frame(width: 100, height: 100)
-                                        .background(Color.black.opacity(0.3))
-                                        .clipShape(Circle())
+                                .onTapGesture {
+                                    showingPhotoPicker = true
                                 }
-                                
-                                // Camera icon overlay on the bottom right
-                                Circle()
-                                    .fill(Color.blue)
-                                    .frame(width: 32, height: 32)
-                                    .overlay(
-                                        Image(systemName: "camera.fill")
-                                            .font(.system(size: 16))
-                                            .foregroundColor(.white)
-                                    )
-                                    .offset(x: 32, y: 32)
                             }
                             .padding(.top, 10)
                         }
@@ -84,7 +88,7 @@ struct ProfileViewController: View {
                             }
                         }
                         
-                        // Full Name
+                        // Full Name - This is now outside the button
                         if viewModel.isEditingName {
                             HStack {
                                 TextField("Full Name", text: $viewModel.newFullName)
@@ -129,60 +133,10 @@ struct ProfileViewController: View {
                         }
                         
                         // Email
-                        if viewModel.isEditingEmail {
-                            VStack(spacing: 10) {
-                                TextField("Email", text: $viewModel.newEmail)
-                                    .font(.subheadline)
-                                    .autocapitalization(.none)
-                                    .keyboardType(.emailAddress)
-                                    .disableAutocorrection(true)
-                                
-                                SecureField("Current Password", text: $viewModel.currentPassword)
-                                    .font(.subheadline)
-                                
-                                HStack {
-                                    Spacer()
-                                    
-                                    HStack(spacing: 10) {
-                                        Button(action: {
-                                            viewModel.cancelEmailEdit()
-                                        }) {
-                                            Text("Cancel")
-                                                .foregroundColor(.red)
-                                        }
-                                        
-                                        Button(action: {
-                                            viewModel.updateUserEmail { success in
-                                                if success {
-                                                    alertTitle = "Success"
-                                                    alertMessage = "Email updated successfully. Please sign in with your new email."
-                                                    showAlert = true
-                                                }
-                                            }
-                                        }) {
-                                            Text("Update")
-                                                .foregroundColor(.blue)
-                                        }
-                                        .disabled(viewModel.currentPassword.isEmpty || viewModel.newEmail.isEmpty)
-                                    }
-                                }
-                            }
-                        } else {
-                            HStack {
-                                Text(viewModel.userEmail)
-                                    .font(.subheadline)
-                                    .foregroundColor(.gray)
-                                
-                                Spacer()
-                                
-                                Button(action: {
-                                    viewModel.isEditingEmail = true
-                                    viewModel.newEmail = viewModel.userEmail
-                                }) {
-                                    Image(systemName: "pencil.circle")
-                                        .foregroundColor(.blue)
-                                }
-                            }
+                        HStack {
+                            Text(viewModel.userEmail)
+                                .font(.subheadline)
+                                .foregroundColor(.gray)
                         }
                     }
                     .frame(maxWidth: .infinity)
@@ -194,65 +148,44 @@ struct ProfileViewController: View {
                     // Change Password
                     if viewModel.isEditingPassword {
                         VStack(spacing: 15) {
-                            if !viewModel.isVerificationSent {
-                                SecureField("Current Password", text: $viewModel.currentPassword)
-                                    .textContentType(.password)
+                            SecureField("Current Password", text: $viewModel.currentPassword)
+                                .textContentType(.password)
+                                .padding(.vertical, 8)
+                            
+                            SecureField("New Password", text: $viewModel.newPassword)
+                                .textContentType(.newPassword)
+                                .padding(.vertical, 8)
+                            
+                            SecureField("Confirm New Password", text: $viewModel.confirmPassword)
+                                .textContentType(.newPassword)
+                                .padding(.vertical, 8)
+                            
+                            HStack {
+                                Spacer()
                                 
-                                HStack {
-                                    Spacer()
-                                    
-                                    Button(action: {
-                                        viewModel.cancelPasswordEdit()
-                                    }) {
-                                        Text("Cancel")
-                                            .foregroundColor(.red)
-                                    }
-                                    .padding(.trailing, 10)
-                                    
-                                    Button(action: {
-                                        viewModel.sendPasswordResetVerification { _ in }
-                                    }) {
-                                        Text("Send Verification Code")
-                                            .foregroundColor(.blue)
-                                    }
-                                    .disabled(viewModel.currentPassword.isEmpty)
+                                Button(action: {
+                                    viewModel.cancelPasswordEdit()
+                                }) {
+                                    Text("Cancel")
+                                        .foregroundColor(.red)
                                 }
-                            } else {
-                                Text("Enter the verification code sent to your email")
-                                    .font(.caption)
-                                    .foregroundColor(.gray)
+                                .padding(.trailing, 10)
                                 
-                                TextField("Verification Code", text: $viewModel.enteredVerificationCode)
-                                    .keyboardType(.numberPad)
-                                    .modifier(OTPModifier())
-                                
-                                SecureField("New Password", text: $viewModel.newPassword)
-                                    .textContentType(.newPassword)
-                                
-                                SecureField("Confirm New Password", text: $viewModel.confirmPassword)
-                                    .textContentType(.newPassword)
-                                
-                                HStack {
-                                    Spacer()
-                                    
-                                    Button(action: {
-                                        viewModel.cancelPasswordEdit()
-                                    }) {
-                                        Text("Cancel")
-                                            .foregroundColor(.red)
+                                Button(action: {
+                                    viewModel.updatePassword { success in
+                                        if success {
+                                            alertTitle = "Success"
+                                            alertMessage = "Password updated successfully."
+                                            showAlert = true
+                                        }
                                     }
-                                    .padding(.trailing, 10)
-                                    
-                                    Button(action: {
-                                        viewModel.verifyCodeAndUpdatePassword { _ in }
-                                    }) {
-                                        Text("Update Password")
-                                            .foregroundColor(.blue)
-                                    }
-                                    .disabled(viewModel.enteredVerificationCode.isEmpty ||
-                                              viewModel.newPassword.isEmpty ||
-                                              viewModel.confirmPassword.isEmpty)
+                                }) {
+                                    Text("Update Password")
+                                        .foregroundColor(.blue)
                                 }
+                                .disabled(viewModel.currentPassword.isEmpty ||
+                                          viewModel.newPassword.isEmpty ||
+                                          viewModel.confirmPassword.isEmpty)
                             }
                         }
                     } else {
