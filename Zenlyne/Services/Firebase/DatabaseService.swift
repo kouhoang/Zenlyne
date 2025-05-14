@@ -33,6 +33,7 @@ class FirebaseService: FirebaseServiceProtocol {
     private var locationObservers: [Any] = []
     private var onlineStatusObservers: [String: DatabaseHandle] = [:]
     private var locationListeners: [String: ListenerRegistration] = [:]
+    private var onlineStatusListeners: [String: ListenerRegistration] = [:]
     
     // MARK: - User Location Management
     
@@ -147,7 +148,7 @@ class FirebaseService: FirebaseServiceProtocol {
         // Get initial position
         fetchAllFriendLocations(userIds: userIds, completion: completion)
     }
-
+    
     func stopObservingFriendLocations() {
         for (_, listener) in locationListeners {
             listener.remove()
@@ -158,7 +159,7 @@ class FirebaseService: FirebaseServiceProtocol {
     
     // MARK: - Online Status Management
     
-    // Set online/offline status for users
+    // Set online/offline status for users setUserOnlineStatus method:
     func setUserOnlineStatus(userId: String, isOnline: Bool) {
         let db = Firestore.firestore()
         
@@ -169,6 +170,7 @@ class FirebaseService: FirebaseServiceProtocol {
             updateData["lastSeen"] = FieldValue.serverTimestamp()
         }
         
+        // Update in Firestore
         db.collection("users").document(userId).updateData(updateData) { error in
             if let error = error {
                 print("DEBUG: Error updating online status: \(error.localizedDescription)")
@@ -177,15 +179,28 @@ class FirebaseService: FirebaseServiceProtocol {
             }
         }
     }
-    
-    // Track a user's online status
+
+    // Improve the observeUserOnlineStatus method:
     func observeUserOnlineStatus(userId: String, completion: @escaping (Bool) -> Void) {
+        // First, check if we already have an observer for this user
+        if let handle = onlineStatusObservers[userId] {
+            database.removeObserver(withHandle: handle)
+            onlineStatusObservers.removeValue(forKey: userId)
+        }
+        
+        // Also remove any existing Firestore listener
+        if let listener = onlineStatusListeners[userId] {
+            listener.remove()
+            onlineStatusListeners.removeValue(forKey: userId)
+        }
+        
         let db = Firestore.firestore()
         
-        db.collection("users").document(userId)
+        // Set up a Firestore listener for real-time updates
+        let listener = db.collection("users").document(userId)
             .addSnapshotListener { snapshot, error in
                 if let error = error {
-                    print("DEBUG: Error listening to user document: \(error.localizedDescription)")
+                    print("DEBUG: Error observing user online status: \(error.localizedDescription)")
                     return
                 }
                 
@@ -197,15 +212,26 @@ class FirebaseService: FirebaseServiceProtocol {
                 let isOnline = data["isOnline"] as? Bool ?? false
                 completion(isOnline)
             }
+        
+        // Store the Firestore listener
+        onlineStatusListeners[userId] = listener
     }
-    
-    // Stop tracking user online status
+
+    // Update stopObservingUserOnlineStatus method:
     func stopObservingUserOnlineStatus(userId: String) {
+        // Remove RTDB observer if exists (your existing implementation)
         if let handle = onlineStatusObservers[userId] {
             database.removeObserver(withHandle: handle)
             onlineStatusObservers.removeValue(forKey: userId)
-            print("DEBUG: Stopped observing online status for user \(userId)")
         }
+        
+        // Also remove Firestore listener if exists
+        if let listener = onlineStatusListeners[userId] {
+            listener.remove()
+            onlineStatusListeners.removeValue(forKey: userId)
+        }
+        
+        print("DEBUG: Stopped observing online status for user \(userId)")
     }
     
     // MARK: - Friend Management
@@ -298,19 +324,19 @@ class FirebaseService: FirebaseServiceProtocol {
                 }
             }
             
-//            group.notify(queue: .main) {
-//                print("DEBUG: Finished loading \(friends.count) friends")
-//                completion(friends)
-//                
-//                if !friends.isEmpty {
-//                    let friendIds = friends.map { $0.id }
-//                    self.startObservingFriendLocations(userIds: friendIds) { locations in
-//                        for (friendId, location) in locations {
-//                            print("DEBUG: Friend \(friendId) location updated: \(location.latitude), \(location.longitude)")
-//                        }
-//                    }
-//                }
-//            }
+            //            group.notify(queue: .main) {
+            //                print("DEBUG: Finished loading \(friends.count) friends")
+            //                completion(friends)
+            //
+            //                if !friends.isEmpty {
+            //                    let friendIds = friends.map { $0.id }
+            //                    self.startObservingFriendLocations(userIds: friendIds) { locations in
+            //                        for (friendId, location) in locations {
+            //                            print("DEBUG: Friend \(friendId) location updated: \(location.latitude), \(location.longitude)")
+            //                        }
+            //                    }
+            //                }
+            //            }
         }
     }
     
@@ -523,73 +549,4 @@ class FirebaseService: FirebaseServiceProtocol {
             }
         }
     }
-    
-//    func createMockLocationsForTesting(currentUserId: String) {
-//        let db = Firestore.firestore()
-//        
-//        // Get friends list
-//        db.collection("users").document(currentUserId).getDocument { snapshot, error in
-//            guard let document = snapshot, document.exists,
-//                  let data = document.data(),
-//                  let friendIds = data["friendIds"] as? [String] else {
-//                print("DEBUG TEST: No friends found for mock data")
-//                return
-//            }
-//            
-//            print("DEBUG TEST: Creating mock locations for \(friendIds.count) friends")
-//            
-//            // User's current location
-//            var userLocation: CLLocationCoordinate2D? = nil
-//            if let locationData = data["lastLocation"] as? [String: Any],
-//               let latitude = locationData["latitude"] as? Double,
-//               let longitude = locationData["longitude"] as? Double {
-//                userLocation = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
-//                print("DEBUG TEST: User location: \(latitude), \(longitude)")
-//            } else {
-//                // Default position (NWS)
-//                userLocation = CLLocationCoordinate2D(latitude: 21.019919, longitude: 105.783856)
-//                print("DEBUG TEST: Using default user location")
-//            }
-//            
-//            // Create fake location for friends around user location
-//            for (index, friendId) in friendIds.enumerated() {
-//                guard let userLoc = userLocation else { continue }
-//                
-//                // Generate random positions around the user
-//                let offsetLat = Double(index + 1) * 0.001 * (index % 2 == 0 ? 1 : -1)
-//                let offsetLon = Double(index + 1) * 0.001 * (index % 3 == 0 ? 1 : -1)
-//                
-//                let friendLat = userLoc.latitude + offsetLat
-//                let friendLon = userLoc.longitude + offsetLon
-//                
-//                let mockLocationData: [String: Any] = [
-//                    "latitude": friendLat,
-//                    "longitude": friendLon,
-//                    "timestamp": Date().timeIntervalSince1970,
-//                    "expiresAt": Date().timeIntervalSince1970 + (72 * 60 * 60)
-//                ]
-//                
-//                // Update fake location to friends
-//                db.collection("users").document(friendId).updateData([
-//                    "lastLocation": mockLocationData,
-//                    "isOnline": index % 2 == 0  // Half online, half offline
-//                ]) { error in
-//                    if let error = error {
-//                        print("DEBUG TEST: Error creating mock location for friend \(friendId): \(error.localizedDescription)")
-//                    } else {
-//                        print("DEBUG TEST: Created mock location for friend \(friendId): \(friendLat), \(friendLon)")
-//                    }
-//                }
-//            }
-//        }
-//    }
 }
-
-// Helper extension
-//extension UserLocation {
-//    init?(latitude: Double, longitude: Double, timestamp: TimeInterval) {
-//        self.latitude = latitude
-//        self.longitude = longitude
-//        self.timestamp = timestamp
-//    }
-//}

@@ -37,12 +37,24 @@ class AuthViewModel: ObservableObject {
             self.userSessions = result.user
             await fetchUser()
             self.isSignedOut = false  // Reset sign out state on successful login
+            
+            // Set user as online after login
+            let db = Firestore.firestore()
+            db.collection("users").document(result.user.uid).updateData([
+                "isOnline": true,
+                "lastSeen": FieldValue.serverTimestamp()
+            ]) { error in
+                if let error = error {
+                    print("DEBUG: Error setting user online after login: \(error.localizedDescription)")
+                }
+            }
+            
         } catch {
             print("DEBUG: Failed to login with error \(error.localizedDescription)")
             throw error
         }
     }
-    
+
     func createUser(withEmail email: String, password: String, fullName: String) async throws {
         do {
             // create new user by Firebase Auth
@@ -87,6 +99,29 @@ class AuthViewModel: ObservableObject {
     
     func signOut() {
         do {
+            // Set user as offline before signing out
+            if let currentUserId = Auth.auth().currentUser?.uid {
+                let db = Firestore.firestore()
+                
+                // Update Firestore synchronously before signing out
+                let semaphore = DispatchSemaphore(value: 0)
+                
+                db.collection("users").document(currentUserId).updateData([
+                    "isOnline": false,
+                    "lastSeen": FieldValue.serverTimestamp()
+                ]) { error in
+                    if let error = error {
+                        print("DEBUG: Error setting user offline on logout: \(error.localizedDescription)")
+                    } else {
+                        print("DEBUG: Successfully set user offline on logout")
+                    }
+                    semaphore.signal()
+                }
+                
+                // Wait briefly for the offline status to be set
+                _ = semaphore.wait(timeout: .now() + 1.0)
+            }
+            
             try Auth.auth().signOut() // sign out user on backend
             self.userSessions = nil // This will trigger navigation back to login
             self.currentUser = nil // wipe out current user data model
