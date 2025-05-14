@@ -7,49 +7,69 @@
 
 import SwiftUI
 import PhotosUI
-import FirebaseStorage
+import FirebaseAuth
+import FirebaseFirestore
 
 struct ProfileViewController: View {
-    @EnvironmentObject var viewModel: AuthViewModel
+    @EnvironmentObject var authViewModel: AuthViewModel
+    @StateObject private var viewModel = ProfileViewModel()
     @State private var selectedItem: PhotosPickerItem?
-    @State private var profileImage: UIImage?
-    @State private var isLoading = false
     @State private var showingPhotoPicker = false
+    @State private var showAlert = false
+    @State private var alertTitle = ""
+    @State private var alertMessage = ""
+    @State private var showDeleteConfirmation = false
+    @Environment(\.dismiss) private var dismiss
     
     var body: some View {
-        if let user = viewModel.currentUser {
+        NavigationView {
             List {
+                // Profile Section
                 Section {
-                    HStack {
-                        // Avatar with choosing image feature
+                    VStack(spacing: 20) {
+                        // Profile Image
                         Button {
                             showingPhotoPicker = true
                         } label: {
                             ZStack {
-                                if let profileImage = profileImage {
+                                if let profileImage = viewModel.profileImage {
                                     Image(uiImage: profileImage)
                                         .resizable()
                                         .scaledToFill()
-                                        .frame(width: 72, height: 72)
+                                        .frame(width: 100, height: 100)
                                         .clipShape(Circle())
+                                        .overlay(Circle().stroke(Color.blue, lineWidth: 2))
                                 } else {
-                                    Text(user.initials)
-                                        .font(.title)
-                                        .fontWeight(.semibold)
-                                        .foregroundColor(.white)
-                                        .frame(width: 72, height: 72)
-                                        .background(Color(.systemGray3))
-                                        .clipShape(Circle())
+                                    Circle()
+                                        .fill(Color(.systemGray4))
+                                        .frame(width: 100, height: 100)
+                                        .overlay(
+                                            Text(getInitials(from: viewModel.userFullName))
+                                                .font(.system(size: 36, weight: .bold))
+                                                .foregroundColor(.white)
+                                        )
                                 }
                                 
-                                if isLoading {
+                                if viewModel.isLoading {
                                     ProgressView()
                                         .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                        .frame(width: 72, height: 72)
+                                        .frame(width: 100, height: 100)
                                         .background(Color.black.opacity(0.3))
                                         .clipShape(Circle())
                                 }
+                                
+                                // Camera icon overlay on the bottom right
+                                Circle()
+                                    .fill(Color.blue)
+                                    .frame(width: 32, height: 32)
+                                    .overlay(
+                                        Image(systemName: "camera.fill")
+                                            .font(.system(size: 16))
+                                            .foregroundColor(.white)
+                                    )
+                                    .offset(x: 32, y: 32)
                             }
+                            .padding(.top, 10)
                         }
                         .photosPicker(isPresented: $showingPhotoPicker, selection: $selectedItem, matching: .images)
                         .onChange(of: selectedItem) { newItem in
@@ -57,117 +77,641 @@ struct ProfileViewController: View {
                                 if let data = try? await newItem?.loadTransferable(type: Data.self),
                                    let image = UIImage(data: data) {
                                     await MainActor.run {
-                                        self.profileImage = image
-                                        isLoading = true
-                                        uploadProfileImage(image)
+                                        viewModel.profileImage = image
+                                        viewModel.uploadProfileImage(image) { _ in }
                                     }
                                 }
                             }
                         }
                         
+                        // Full Name
+                        if viewModel.isEditingName {
+                            HStack {
+                                TextField("Full Name", text: $viewModel.newFullName)
+                                    .font(.headline)
+                                    .autocapitalization(.words)
+                                    .disableAutocorrection(true)
+                                
+                                Spacer()
+                                
+                                HStack(spacing: 10) {
+                                    Button(action: {
+                                        viewModel.cancelNameEdit()
+                                    }) {
+                                        Image(systemName: "xmark.circle.fill")
+                                            .foregroundColor(.red)
+                                    }
+                                    
+                                    Button(action: {
+                                        viewModel.updateUserName { _ in }
+                                    }) {
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .foregroundColor(.green)
+                                    }
+                                }
+                            }
+                        } else {
+                            HStack {
+                                Text(viewModel.userFullName)
+                                    .font(.headline)
+                                    .fontWeight(.bold)
+                                
+                                Spacer()
+                                
+                                Button(action: {
+                                    viewModel.isEditingName = true
+                                    viewModel.newFullName = viewModel.userFullName
+                                }) {
+                                    Image(systemName: "pencil.circle")
+                                        .foregroundColor(.blue)
+                                }
+                            }
+                        }
                         
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(user.fullName).font(.subheadline).fontWeight(.semibold).padding(.top, 4)
-                            
-                            Text(user.email).font(.footnote).accentColor(.gray)
+                        // Email
+                        if viewModel.isEditingEmail {
+                            VStack(spacing: 10) {
+                                TextField("Email", text: $viewModel.newEmail)
+                                    .font(.subheadline)
+                                    .autocapitalization(.none)
+                                    .keyboardType(.emailAddress)
+                                    .disableAutocorrection(true)
+                                
+                                SecureField("Current Password", text: $viewModel.currentPassword)
+                                    .font(.subheadline)
+                                
+                                HStack {
+                                    Spacer()
+                                    
+                                    HStack(spacing: 10) {
+                                        Button(action: {
+                                            viewModel.cancelEmailEdit()
+                                        }) {
+                                            Text("Cancel")
+                                                .foregroundColor(.red)
+                                        }
+                                        
+                                        Button(action: {
+                                            viewModel.updateUserEmail { success in
+                                                if success {
+                                                    alertTitle = "Success"
+                                                    alertMessage = "Email updated successfully. Please sign in with your new email."
+                                                    showAlert = true
+                                                }
+                                            }
+                                        }) {
+                                            Text("Update")
+                                                .foregroundColor(.blue)
+                                        }
+                                        .disabled(viewModel.currentPassword.isEmpty || viewModel.newEmail.isEmpty)
+                                    }
+                                }
+                            }
+                        } else {
+                            HStack {
+                                Text(viewModel.userEmail)
+                                    .font(.subheadline)
+                                    .foregroundColor(.gray)
+                                
+                                Spacer()
+                                
+                                Button(action: {
+                                    viewModel.isEditingEmail = true
+                                    viewModel.newEmail = viewModel.userEmail
+                                }) {
+                                    Image(systemName: "pencil.circle")
+                                        .foregroundColor(.blue)
+                                }
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                }
+                
+                // Account settings section
+                Section(header: Text("Account Settings")) {
+                    // Change Password
+                    if viewModel.isEditingPassword {
+                        VStack(spacing: 15) {
+                            if !viewModel.isVerificationSent {
+                                SecureField("Current Password", text: $viewModel.currentPassword)
+                                    .textContentType(.password)
+                                
+                                HStack {
+                                    Spacer()
+                                    
+                                    Button(action: {
+                                        viewModel.cancelPasswordEdit()
+                                    }) {
+                                        Text("Cancel")
+                                            .foregroundColor(.red)
+                                    }
+                                    .padding(.trailing, 10)
+                                    
+                                    Button(action: {
+                                        viewModel.sendPasswordResetVerification { _ in }
+                                    }) {
+                                        Text("Send Verification Code")
+                                            .foregroundColor(.blue)
+                                    }
+                                    .disabled(viewModel.currentPassword.isEmpty)
+                                }
+                            } else {
+                                Text("Enter the verification code sent to your email")
+                                    .font(.caption)
+                                    .foregroundColor(.gray)
+                                
+                                TextField("Verification Code", text: $viewModel.enteredVerificationCode)
+                                    .keyboardType(.numberPad)
+                                    .modifier(OTPModifier())
+                                
+                                SecureField("New Password", text: $viewModel.newPassword)
+                                    .textContentType(.newPassword)
+                                
+                                SecureField("Confirm New Password", text: $viewModel.confirmPassword)
+                                    .textContentType(.newPassword)
+                                
+                                HStack {
+                                    Spacer()
+                                    
+                                    Button(action: {
+                                        viewModel.cancelPasswordEdit()
+                                    }) {
+                                        Text("Cancel")
+                                            .foregroundColor(.red)
+                                    }
+                                    .padding(.trailing, 10)
+                                    
+                                    Button(action: {
+                                        viewModel.verifyCodeAndUpdatePassword { _ in }
+                                    }) {
+                                        Text("Update Password")
+                                            .foregroundColor(.blue)
+                                    }
+                                    .disabled(viewModel.enteredVerificationCode.isEmpty ||
+                                              viewModel.newPassword.isEmpty ||
+                                              viewModel.confirmPassword.isEmpty)
+                                }
+                            }
+                        }
+                    } else {
+                        Button(action: {
+                            viewModel.isEditingPassword = true
+                        }) {
+                            HStack {
+                                Image(systemName: "lock.fill")
+                                    .foregroundColor(.blue)
+                                Text("Change Password")
+                            }
+                        }
+                    }
+                    
+                    // Privacy Settings
+                    NavigationLink(destination: PrivacySettingsView()) {
+                        HStack {
+                            Image(systemName: "hand.raised.fill")
+                                .foregroundColor(.blue)
+                            Text("Privacy Settings")
+                        }
+                    }
+                    
+                    // Notification Settings
+                    NavigationLink(destination: NotificationSettingsView()) {
+                        HStack {
+                            Image(systemName: "bell.fill")
+                                .foregroundColor(.blue)
+                            Text("Notification Settings")
                         }
                     }
                 }
                 
-                Section("General") {
+                // Application info section
+                Section(header: Text("App Information")) {
                     HStack {
-                        SettingsRowView(imageName: "gear", title: "Version", tintColor: Color(.systemGray))
-                        
+                        Image(systemName: "info.circle.fill")
+                            .foregroundColor(.blue)
+                        Text("About Zenlyne")
                         Spacer()
-                        
-                        Text("1.0.0").font(.subheadline).foregroundColor(.gray)
-                    }
-                }
-                
-                Section("Account") {
-                    Button {
-                        viewModel.signOut()
-                    } label: {
-                        SettingsRowView(imageName: "arrow.left.circle.fill", title: "Sign Out", tintColor: .red)
+                        Text("Version 1.0.0")
+                            .foregroundColor(.gray)
+                            .font(.caption)
                     }
                     
-                    Button {
-                        print("Delete account...")
-                    } label: {
-                        SettingsRowView(imageName: "xmark.circle.fill", title: "Delete Account", tintColor: .red)
+                    NavigationLink(destination: HelpSupportView()) {
+                        HStack {
+                            Image(systemName: "questionmark.circle.fill")
+                                .foregroundColor(.blue)
+                            Text("Help & Support")
+                        }
+                    }
+                    
+                    Link(destination: URL(string: "https://zenlyne.app/terms")!) {
+                        HStack {
+                            Image(systemName: "doc.text.fill")
+                                .foregroundColor(.blue)
+                            Text("Terms of Service")
+                            Spacer()
+                            Image(systemName: "arrow.up.forward.app")
+                                .foregroundColor(.gray)
+                        }
+                    }
+                    
+                    Link(destination: URL(string: "https://zenlyne.app/privacy")!) {
+                        HStack {
+                            Image(systemName: "shield.fill")
+                                .foregroundColor(.blue)
+                            Text("Privacy Policy")
+                            Spacer()
+                            Image(systemName: "arrow.up.forward.app")
+                                .foregroundColor(.gray)
+                        }
+                    }
+                }
+                
+                // Account actions section
+                Section {
+                    Button(action: {
+                        authViewModel.signOut()
+                    }) {
+                        HStack {
+                            Image(systemName: "arrow.left.circle.fill")
+                                .foregroundColor(.red)
+                            Text("Sign Out")
+                                .foregroundColor(.red)
+                        }
+                    }
+                    
+                    Button(action: {
+                        showDeleteConfirmation = true
+                    }) {
+                        HStack {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundColor(.red)
+                            Text("Delete Account")
+                                .foregroundColor(.red)
+                        }
                     }
                 }
             }
-            .onAppear {
-                loadProfileImage()
+            .navigationTitle("Profile")
+            .navigationBarTitleDisplayMode(.inline)
+            .alert(isPresented: $showAlert) {
+                Alert(
+                    title: Text(alertTitle),
+                    message: Text(alertMessage),
+                    dismissButton: .default(Text("OK"))
+                )
             }
+            .actionSheet(isPresented: $showDeleteConfirmation) {
+                ActionSheet(
+                    title: Text("Delete Account"),
+                    message: Text("Are you sure you want to delete your account? This action cannot be undone and all your data will be permanently removed."),
+                    buttons: [
+                        .destructive(Text("Delete Account")) {
+                            // Implement account deletion functionality
+                            deleteAccount()
+                        },
+                        .cancel()
+                    ]
+                )
+            }
+            .overlay(
+                Group {
+                    if !viewModel.errorMessage.isEmpty {
+                        ErrorBanner(message: viewModel.errorMessage) {
+                            viewModel.errorMessage = ""
+                        }
+                    } else if !viewModel.successMessage.isEmpty {
+                        SuccessBanner(message: viewModel.successMessage) {
+                            viewModel.successMessage = ""
+                        }
+                    }
+                }
+            )
+        }
+        .onAppear {
+            viewModel.loadUserData()
         }
     }
     
-    func loadProfileImage() {
-        guard let user = viewModel.currentUser, let profileImageUrl = user.profileImageUrl, let url = URL(string: profileImageUrl) else { return }
+    private func getInitials(from name: String) -> String {
+        let formatter = PersonNameComponentsFormatter()
+        if let components = formatter.personNameComponents(from: name) {
+            formatter.style = .abbreviated
+            return formatter.string(from: components)
+        }
         
-        URLSession.shared.dataTask(with: url) { data, _, error in
-            if let error = error {
-                print("DEBUG: Failed to fetch image: \(error.localizedDescription)")
-                return
-            }
-            
-            guard let data = data, let image = UIImage(data: data) else { return }
-            
-            DispatchQueue.main.async {
-                self.profileImage = image
-            }
-        }.resume()
+        // Fallback if formatter fails
+        let words = name.split(separator: " ")
+        if words.count > 1 {
+            return String(words[0].prefix(1)) + String(words.last!.prefix(1))
+        } else if !words.isEmpty {
+            return String(words[0].prefix(1))
+        } else {
+            return "?"
+        }
     }
     
-    func uploadProfileImage(_ image: UIImage) {
-        guard let uid = viewModel.userSessions?.uid else { return }
-        guard let imageData = image.jpegData(compressionQuality: 0.5) else { return }
+    private func deleteAccount() {
+        guard let user = Auth.auth().currentUser else { return }
         
-        let filename = "\(uid).jpg"
+        // 1. Get a reference to database
+        let db = Firestore.firestore()
         
-        // Create a reference to the root of Storage first
-        let storageRef = Storage.storage().reference()
-        
-        // Check if profile_images folder exists
-        // If not, create the folder first
-        let profileImagesRef = storageRef.child("profile_images")
-        
-        // Create a reference to the file to upload
-        let imageRef = profileImagesRef.child(filename)
-        
-        // Upload image
-        imageRef.putData(imageData, metadata: nil) { metadata, error in
+        // 2. Delete user data from Firestore
+        db.collection("users").document(user.uid).delete { error in
             if let error = error {
-                print("DEBUG: Failed to upload image with error: \(error.localizedDescription)")
-                self.isLoading = false
+                viewModel.errorMessage = "Error deleting user data: \(error.localizedDescription)"
                 return
             }
             
-            // After upload image successfully, get URL
-            imageRef.downloadURL { url, error in
-                if let error = error {
-                    print("DEBUG: Failed to get download URL: \(error.localizedDescription)")
-                    self.isLoading = false
-                    return
+            // 3. Delete friend relationships
+            // Get friends who have this user as a friend
+            db.collection("users").whereField("friendIds", arrayContains: user.uid)
+                .getDocuments { snapshot, error in
+                    if let documents = snapshot?.documents {
+                        // Remove this user from each friend's friendIds array
+                        for document in documents {
+                            let friendId = document.documentID
+                            db.collection("users").document(friendId).updateData([
+                                "friendIds": FieldValue.arrayRemove([user.uid])
+                            ])
+                        }
+                    }
+                    
+                    // 4. Delete user authentication account
+                    user.delete { error in
+                        if let error = error {
+                            viewModel.errorMessage = "Error deleting account: \(error.localizedDescription)"
+                            return
+                        }
+                        
+                        // 5. Sign out and return to login screen
+                        authViewModel.signOut()
+                    }
+                }
+        }
+    }
+}
+
+// MARK: - Helper Views
+
+struct OTPModifier: ViewModifier {
+    func body(content: Content) -> some View {
+        content
+            .padding()
+            .frame(height: 45)
+            .background(Color(.systemGray6))
+            .cornerRadius(8)
+            .padding(.horizontal)
+    }
+}
+
+struct ErrorBanner: View {
+    let message: String
+    let dismiss: () -> Void
+    
+    var body: some View {
+        VStack {
+            HStack {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundColor(.white)
+                
+                Text(message)
+                    .foregroundColor(.white)
+                    .font(.subheadline)
+                
+                Spacer()
+                
+                Button(action: dismiss) {
+                    Image(systemName: "xmark")
+                        .foregroundColor(.white)
+                }
+            }
+            .padding()
+            .background(Color.red)
+            .cornerRadius(8)
+            .padding()
+            
+            Spacer()
+        }
+    }
+}
+
+struct SuccessBanner: View {
+    let message: String
+    let dismiss: () -> Void
+    
+    var body: some View {
+        VStack {
+            HStack {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundColor(.white)
+                
+                Text(message)
+                    .foregroundColor(.white)
+                    .font(.subheadline)
+                
+                Spacer()
+                
+                Button(action: dismiss) {
+                    Image(systemName: "xmark")
+                        .foregroundColor(.white)
+                }
+            }
+            .padding()
+            .background(Color.green)
+            .cornerRadius(8)
+            .padding()
+            
+            Spacer()
+        }
+    }
+}
+
+// MARK: - Settings Views
+
+struct PrivacySettingsView: View {
+    var body: some View {
+        List {
+            Section(header: Text("Location Sharing")) {
+                Toggle("Share My Location", isOn: .constant(true))
+                    .tint(.blue)
+                
+                Toggle("Show My Online Status", isOn: .constant(true))
+                    .tint(.blue)
+                
+                Toggle("Show Last Seen Time", isOn: .constant(true))
+                    .tint(.blue)
+            }
+            
+            Section(header: Text("Who Can See My Location")) {
+                NavigationLink(destination: Text("Location Permission Settings")) {
+                    Text("Friends Only")
+                }
+            }
+            
+            Section(header: Text("Data Privacy")) {
+                Button("Download My Data") {
+                    // Implement data download
                 }
                 
-                guard let imageUrl = url?.absoluteString else {
-                    print("DEBUG: Failed to get valid URL")
-                    self.isLoading = false
-                    return
+                Button("Manage Location History") {
+                    // Implement location history management
                 }
-                
-                print("DEBUG: Successfully uploaded image with URL: \(imageUrl)")
-                
-                self.viewModel.updateUserProfileImage(imageUrl: imageUrl)
-                self.isLoading = false
             }
         }
+        .navigationTitle("Privacy Settings")
+    }
+}
+
+struct NotificationSettingsView: View {
+    var body: some View {
+        List {
+            Section(header: Text("Push Notifications")) {
+                Toggle("Friend Requests", isOn: .constant(true))
+                    .tint(.blue)
+                
+                Toggle("Friend Location Updates", isOn: .constant(true))
+                    .tint(.blue)
+                
+                Toggle("Messages", isOn: .constant(true))
+                    .tint(.blue)
+                
+                Toggle("Friend Activity", isOn: .constant(true))
+                    .tint(.blue)
+            }
+            
+            Section(header: Text("Email Notifications")) {
+                Toggle("Account Updates", isOn: .constant(true))
+                    .tint(.blue)
+                
+                Toggle("Security Alerts", isOn: .constant(true))
+                    .tint(.blue)
+                
+                Toggle("Newsletter", isOn: .constant(false))
+                    .tint(.blue)
+            }
+        }
+        .navigationTitle("Notifications")
+    }
+}
+
+struct HelpSupportView: View {
+    var body: some View {
+        List {
+            Section(header: Text("Support")) {
+                NavigationLink(destination: FAQView()) {
+                    Text("Frequently Asked Questions")
+                }
+                
+                NavigationLink(destination: Text("Tutorial Content")) {
+                    Text("How to Use Zenlyne")
+                }
+                
+                Button(action: {
+                    // Implement contact us action
+                    if let url = URL(string: "mailto:support@zenlyne.app") {
+                        UIApplication.shared.open(url)
+                    }
+                }) {
+                    Text("Contact Support")
+                }
+            }
+            
+            Section(header: Text("Troubleshooting")) {
+                Button(action: {
+                    // Implement refresh data action
+                }) {
+                    Text("Refresh Location Data")
+                }
+                
+                Button(action: {
+                    // Implement clear cache action
+                }) {
+                    Text("Clear App Cache")
+                }
+            }
+            
+            Section(header: Text("About")) {
+                HStack {
+                    Text("Version")
+                    Spacer()
+                    Text("1.0.0 (Build 101)")
+                        .foregroundColor(.gray)
+                }
+                
+                HStack {
+                    Text("Device ID")
+                    Spacer()
+                    Text(UIDevice.current.identifierForVendor?.uuidString.prefix(8) ?? "Unknown")
+                        .foregroundColor(.gray)
+                }
+            }
+        }
+        .navigationTitle("Help & Support")
+    }
+}
+
+struct FAQView: View {
+    var body: some View {
+        List {
+            FAQItem(question: "How does location sharing work?",
+                   answer: "Zenlyne shares your location with your friends when the app is open. You can control who sees your location in Privacy Settings.")
+            
+            FAQItem(question: "Can I see my friends' locations when they're offline?",
+                   answer: "You can see your friends' last known location for up to 24 hours after they go offline, unless they've disabled this feature.")
+            
+            FAQItem(question: "How accurate is the location data?",
+                   answer: "Location accuracy depends on your device's GPS and network connectivity. In most cases, it's accurate within 10-50 meters.")
+            
+            FAQItem(question: "How do I add friends?",
+                   answer: "Tap the '+' button on the friends list screen and enter your friend's email address to send them a friend request.")
+            
+            FAQItem(question: "Is my data secure?",
+                   answer: "We use industry-standard encryption to protect your data. Your location is only shared with friends you've approved.")
+        }
+        .navigationTitle("FAQ")
+    }
+}
+
+struct FAQItem: View {
+    let question: String
+    let answer: String
+    @State private var isExpanded = false
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Button(action: {
+                withAnimation {
+                    isExpanded.toggle()
+                }
+            }) {
+                HStack {
+                    Text(question)
+                        .font(.headline)
+                        .foregroundColor(.primary)
+                    
+                    Spacer()
+                    
+                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                        .foregroundColor(.blue)
+                }
+            }
+            
+            if isExpanded {
+                Text(answer)
+                    .font(.body)
+                    .foregroundColor(.secondary)
+                    .padding(.top, 5)
+            }
+        }
+        .padding(.vertical, 5)
     }
 }
 
 #Preview {
     ProfileViewController()
+        .environmentObject(AuthViewModel())
 }
