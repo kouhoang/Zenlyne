@@ -23,272 +23,368 @@ struct ProfileViewController: View {
     
     var body: some View {
         NavigationView {
-            List {
-                // Profile Section
-                Section {
-                    VStack(spacing: 20) {
-                        // Profile Image - Only the circle is a button
-                        VStack {
-                            ZStack {
-                                // The avatar circle inside a button
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    // Profile Section
+                    VStack(alignment: .leading) {
+                        Text("Profile")
+                            .font(.headline)
+                            .foregroundColor(.gray)
+                            .padding(.horizontal)
+                            .padding(.top, 20)
+                            .padding(.bottom, 5)
+                        
+                        VStack(spacing: 20) {
+                            VStack {
                                 ZStack {
-                                    if let profileImage = viewModel.profileImage {
-                                        Image(uiImage: profileImage)
-                                            .resizable()
-                                            .scaledToFill()
-                                            .frame(width: 100, height: 100)
-                                            .clipShape(Circle())
-                                            .overlay(Circle().stroke(Color.blue, lineWidth: 2))
-                                    } else {
-                                        Circle()
-                                            .fill(Color(.systemGray4))
-                                            .frame(width: 100, height: 100)
-                                            .overlay(
-                                                Text(getInitials(from: viewModel.userFullName))
-                                                    .font(.system(size: 36, weight: .bold))
-                                                    .foregroundColor(.white)
-                                            )
-                                    }
-                                    
-                                    if viewModel.isLoading {
-                                        ProgressView()
-                                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                            .frame(width: 100, height: 100)
-                                            .background(Color.black.opacity(0.3))
-                                            .clipShape(Circle())
-                                    }
-                                    
-                                    // Camera icon overlay on the bottom right
-                                    Circle()
-                                        .fill(Color.blue)
-                                        .frame(width: 32, height: 32)
-                                        .overlay(
-                                            Image(systemName: "camera.fill")
-                                                .font(.system(size: 16))
-                                                .foregroundColor(.white)
-                                        )
-                                        .offset(x: 32, y: 32)
-                                }
-                                .onTapGesture {
-                                    showingPhotoPicker = true
-                                }
-                            }
-                            .padding(.top, 10)
-                        }
-                        .photosPicker(isPresented: $showingPhotoPicker, selection: $selectedItem, matching: .images)
-                        .onChange(of: selectedItem) { newItem in
-                            Task {
-                                if let data = try? await newItem?.loadTransferable(type: Data.self),
-                                   let image = UIImage(data: data) {
-                                    await MainActor.run {
-                                        viewModel.profileImage = image
-                                        viewModel.uploadProfileImage(image) { _ in }
-                                    }
-                                }
-                            }
-                        }
-                        
-                        // Full Name - This is now outside the button
-                        if viewModel.isEditingName {
-                            HStack {
-                                TextField("Full Name", text: $viewModel.newFullName)
-                                    .font(.headline)
-                                    .autocapitalization(.words)
-                                    .disableAutocorrection(true)
-                                
-                                Spacer()
-                                
-                                HStack(spacing: 10) {
+                                    // Only the avatar circle is interactive for changing photo
                                     Button(action: {
-                                        viewModel.cancelNameEdit()
+                                        showingPhotoPicker = true
                                     }) {
-                                        Image(systemName: "xmark.circle.fill")
-                                            .foregroundColor(.red)
-                                    }
-                                    
-                                    Button(action: {
-                                        viewModel.updateUserName { _ in }
-                                    }) {
-                                        Image(systemName: "checkmark.circle.fill")
-                                            .foregroundColor(.green)
-                                    }
-                                }
-                            }
-                        } else {
-                            HStack {
-                                Text(viewModel.userFullName)
-                                    .font(.headline)
-                                    .fontWeight(.bold)
-                                
-                                Spacer()
-                                
-                                Button(action: {
-                                    viewModel.isEditingName = true
-                                    viewModel.newFullName = viewModel.userFullName
-                                }) {
-                                    Image(systemName: "pencil.circle")
-                                        .foregroundColor(.blue)
-                                }
-                            }
-                        }
-                        
-                        // Email
-                        HStack {
-                            Text(viewModel.userEmail)
-                                .font(.subheadline)
-                                .foregroundColor(.gray)
-                        }
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 10)
-                }
-                
-                // Account settings section
-                Section(header: Text("Account Settings")) {
-                    // Change Password
-                    if viewModel.isEditingPassword {
-                        VStack(spacing: 15) {
-                            SecureField("Current Password", text: $viewModel.currentPassword)
-                                .textContentType(.password)
-                                .padding(.vertical, 8)
-                            
-                            SecureField("New Password", text: $viewModel.newPassword)
-                                .textContentType(.newPassword)
-                                .padding(.vertical, 8)
-                            
-                            SecureField("Confirm New Password", text: $viewModel.confirmPassword)
-                                .textContentType(.newPassword)
-                                .padding(.vertical, 8)
-                            
-                            HStack {
-                                Spacer()
-                                
-                                Button(action: {
-                                    viewModel.cancelPasswordEdit()
-                                }) {
-                                    Text("Cancel")
-                                        .foregroundColor(.red)
-                                }
-                                .padding(.trailing, 10)
-                                
-                                Button(action: {
-                                    viewModel.updatePassword { success in
-                                        if success {
-                                            alertTitle = "Success"
-                                            alertMessage = "Password updated successfully."
-                                            showAlert = true
+                                        ZStack {
+                                            if let profileImage = viewModel.profileImage {
+                                                Image(uiImage: profileImage)
+                                                    .resizable()
+                                                    .scaledToFill()
+                                                    .frame(width: 100, height: 100)
+                                                    .clipShape(Circle())
+                                                    .overlay(Circle().stroke(Color.blue, lineWidth: 2))
+                                            } else {
+                                                Circle()
+                                                    .fill(Color(.systemGray4))
+                                                    .frame(width: 100, height: 100)
+                                                    .overlay(
+                                                        Text(getInitials(from: viewModel.userFullName))
+                                                            .font(.system(size: 36, weight: .bold))
+                                                            .foregroundColor(.white)
+                                                    )
+                                            }
+                                            
+                                            if viewModel.isLoading {
+                                                ProgressView()
+                                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                                    .frame(width: 100, height: 100)
+                                                    .background(Color.black.opacity(0.3))
+                                                    .clipShape(Circle())
+                                            }
+                                            
+                                            // Camera icon overlay on the bottom right
+                                            Circle()
+                                                .fill(Color.blue)
+                                                .frame(width: 32, height: 32)
+                                                .overlay(
+                                                    Image(systemName: "camera.fill")
+                                                        .font(.system(size: 16))
+                                                        .foregroundColor(.white)
+                                                )
+                                                .offset(x: 32, y: 32)
                                         }
                                     }
-                                }) {
-                                    Text("Update Password")
-                                        .foregroundColor(.blue)
                                 }
-                                .disabled(viewModel.currentPassword.isEmpty ||
-                                          viewModel.newPassword.isEmpty ||
-                                          viewModel.confirmPassword.isEmpty)
+                                .padding(.top, 10)
                             }
-                        }
-                    } else {
-                        Button(action: {
-                            viewModel.isEditingPassword = true
-                        }) {
+                            .photosPicker(isPresented: $showingPhotoPicker, selection: $selectedItem, matching: .images)
+                            .onChange(of: selectedItem) { newItem in
+                                Task {
+                                    if let data = try? await newItem?.loadTransferable(type: Data.self),
+                                       let image = UIImage(data: data) {
+                                        await MainActor.run {
+                                            viewModel.profileImage = image
+                                            viewModel.uploadProfileImage(image) { _ in }
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            // Full Name section
+                            if viewModel.isEditingName {
+                                HStack {
+                                    TextField("Full Name", text: $viewModel.newFullName)
+                                        .font(.headline)
+                                        .autocapitalization(.words)
+                                        .disableAutocorrection(true)
+                                    
+                                    Spacer()
+                                    
+                                    HStack(spacing: 10) {
+                                        Button(action: {
+                                            viewModel.cancelNameEdit()
+                                        }) {
+                                            Image(systemName: "xmark.circle.fill")
+                                                .foregroundColor(.red)
+                                                .frame(width: 44, height: 44) // Larger touch target
+                                        }
+                                        
+                                        Button(action: {
+                                            viewModel.updateUserName { _ in }
+                                        }) {
+                                            Image(systemName: "checkmark.circle.fill")
+                                                .foregroundColor(.green)
+                                                .frame(width: 44, height: 44) // Larger touch target
+                                        }
+                                    }
+                                }
+                            } else {
+                                HStack {
+                                    // Name display - just text
+                                    Text(viewModel.userFullName)
+                                        .font(.headline)
+                                        .fontWeight(.bold)
+                                    
+                                    Spacer()
+                                    
+                                    // ONLY pencil icon has action
+                                    Button(action: {
+                                        viewModel.isEditingName = true
+                                        viewModel.newFullName = viewModel.userFullName
+                                    }) {
+                                        Image(systemName: "pencil.circle")
+                                            .foregroundColor(.blue)
+                                            .frame(width: 44, height: 44)
+                                    }
+                                }
+                                .background(Color.clear)
+                            }
+                            
+                            // Email - Not interactive, just display
                             HStack {
-                                Image(systemName: "lock.fill")
-                                    .foregroundColor(.blue)
-                                Text("Change Password")
+                                Text(viewModel.userEmail)
+                                    .font(.subheadline)
+                                    .foregroundColor(.gray)
                             }
                         }
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(Color(UIColor.systemBackground))
+                        .cornerRadius(10)
+                        .padding(.horizontal)
                     }
                     
-                    // Privacy Settings
-                    NavigationLink(destination: PrivacySettingsView()) {
-                        HStack {
-                            Image(systemName: "hand.raised.fill")
-                                .foregroundColor(.blue)
-                            Text("Privacy Settings")
-                        }
-                    }
-                    
-                    // Notification Settings
-                    NavigationLink(destination: NotificationSettingsView()) {
-                        HStack {
-                            Image(systemName: "bell.fill")
-                                .foregroundColor(.blue)
-                            Text("Notification Settings")
-                        }
-                    }
-                }
-                
-                // Application info section
-                Section(header: Text("App Information")) {
-                    HStack {
-                        Image(systemName: "info.circle.fill")
-                            .foregroundColor(.blue)
-                        Text("About Zenlyne")
-                        Spacer()
-                        Text("Version 1.0.0")
+                    // Account settings section
+                    VStack(alignment: .leading) {
+                        Text("Account Settings")
+                            .font(.headline)
                             .foregroundColor(.gray)
-                            .font(.caption)
+                            .padding(.horizontal)
+                            .padding(.top, 20)
+                            .padding(.bottom, 5)
+                        
+                        VStack(spacing: 0) {
+                            // Change Password
+                            if viewModel.isEditingPassword {
+                                VStack(spacing: 15) {
+                                    SecureField("Current Password", text: $viewModel.currentPassword)
+                                        .textContentType(.password)
+                                        .padding(.vertical, 8)
+                                    
+                                    SecureField("New Password", text: $viewModel.newPassword)
+                                        .textContentType(.newPassword)
+                                        .padding(.vertical, 8)
+                                    
+                                    SecureField("Confirm New Password", text: $viewModel.confirmPassword)
+                                        .textContentType(.newPassword)
+                                        .padding(.vertical, 8)
+                                    
+                                    HStack {
+                                        Spacer()
+                                        
+                                        Button(action: {
+                                            viewModel.cancelPasswordEdit()
+                                        }) {
+                                            Text("Cancel")
+                                                .foregroundColor(.red)
+                                        }
+                                        .padding(.trailing, 10)
+                                        
+                                        Button(action: {
+                                            viewModel.updatePassword { success in
+                                                if success {
+                                                    alertTitle = "Success"
+                                                    alertMessage = "Password updated successfully."
+                                                    showAlert = true
+                                                }
+                                            }
+                                        }) {
+                                            Text("Update Password")
+                                                .foregroundColor(.blue)
+                                        }
+                                        .disabled(viewModel.currentPassword.isEmpty ||
+                                                  viewModel.newPassword.isEmpty ||
+                                                  viewModel.confirmPassword.isEmpty)
+                                    }
+                                }
+                                .padding()
+                                .background(Color(UIColor.systemBackground))
+                            } else {
+                                Button(action: {
+                                    viewModel.isEditingPassword = true
+                                }) {
+                                    HStack {
+                                        Image(systemName: "lock.fill")
+                                            .foregroundColor(.blue)
+                                        Text("Change Password")
+                                        Spacer()
+                                    }
+                                    .padding()
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(PlainButtonStyle())
+                            }
+                            
+                            Divider()
+                            
+                            // Privacy Settings
+                            NavigationLink(destination: PrivacySettingsView()) {
+                                HStack {
+                                    Image(systemName: "hand.raised.fill")
+                                        .foregroundColor(.blue)
+                                    Text("Privacy Settings")
+                                    Spacer()
+                                }
+                                .padding()
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                            
+                            Divider()
+                            
+                            // Notification Settings
+                            NavigationLink(destination: NotificationSettingsView()) {
+                                HStack {
+                                    Image(systemName: "bell.fill")
+                                        .foregroundColor(.blue)
+                                    Text("Notification Settings")
+                                    Spacer()
+                                }
+                                .padding()
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                        }
+                        .background(Color(UIColor.systemBackground))
+                        .cornerRadius(10)
+                        .padding(.horizontal)
                     }
                     
-                    NavigationLink(destination: HelpSupportView()) {
-                        HStack {
-                            Image(systemName: "questionmark.circle.fill")
-                                .foregroundColor(.blue)
-                            Text("Help & Support")
+                    // Application info section
+                    VStack(alignment: .leading) {
+                        Text("App Information")
+                            .font(.headline)
+                            .foregroundColor(.gray)
+                            .padding(.horizontal)
+                            .padding(.top, 20)
+                            .padding(.bottom, 5)
+                        
+                        VStack(spacing: 0) {
+                            HStack {
+                                Image(systemName: "info.circle.fill")
+                                    .foregroundColor(.blue)
+                                Text("About Zenlyne")
+                                Spacer()
+                                Text("Version 1.0.0")
+                                    .foregroundColor(.gray)
+                                    .font(.caption)
+                            }
+                            .padding()
+                            
+                            Divider()
+                            
+                            NavigationLink(destination: HelpSupportView()) {
+                                HStack {
+                                    Image(systemName: "questionmark.circle.fill")
+                                        .foregroundColor(.blue)
+                                    Text("Help & Support")
+                                    Spacer()
+                                }
+                                .padding()
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                            
+                            Divider()
+                            
+                            Link(destination: URL(string: "https://zenlyne.app/terms")!) {
+                                HStack {
+                                    Image(systemName: "doc.text.fill")
+                                        .foregroundColor(.blue)
+                                    Text("Terms of Service")
+                                    Spacer()
+                                    Image(systemName: "arrow.up.forward.app")
+                                        .foregroundColor(.gray)
+                                }
+                                .padding()
+                            }
+                            
+                            Divider()
+                            
+                            Link(destination: URL(string: "https://zenlyne.app/privacy")!) {
+                                HStack {
+                                    Image(systemName: "shield.fill")
+                                        .foregroundColor(.blue)
+                                    Text("Privacy Policy")
+                                    Spacer()
+                                    Image(systemName: "arrow.up.forward.app")
+                                        .foregroundColor(.gray)
+                                }
+                                .padding()
+                            }
                         }
+                        .background(Color(UIColor.systemBackground))
+                        .cornerRadius(10)
+                        .padding(.horizontal)
                     }
                     
-                    Link(destination: URL(string: "https://zenlyne.app/terms")!) {
-                        HStack {
-                            Image(systemName: "doc.text.fill")
-                                .foregroundColor(.blue)
-                            Text("Terms of Service")
-                            Spacer()
-                            Image(systemName: "arrow.up.forward.app")
-                                .foregroundColor(.gray)
+                    // Account actions section
+                    VStack(alignment: .leading) {
+                        Text("Account Actions")
+                            .font(.headline)
+                            .foregroundColor(.gray)
+                            .padding(.horizontal)
+                            .padding(.top, 20)
+                            .padding(.bottom, 5)
+                        
+                        VStack(spacing: 0) {
+                            Button(action: {
+                                authViewModel.signOut()
+                            }) {
+                                HStack {
+                                    Image(systemName: "arrow.left.circle.fill")
+                                        .foregroundColor(.red)
+                                    Text("Sign Out")
+                                        .foregroundColor(.red)
+                                    Spacer()
+                                }
+                                .padding()
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(PlainButtonStyle())
+                            
+                            Divider()
+                            
+                            Button(action: {
+                                showDeleteConfirmation = true
+                            }) {
+                                HStack {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .foregroundColor(.red)
+                                    Text("Delete Account")
+                                        .foregroundColor(.red)
+                                    Spacer()
+                                }
+                                .padding()
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(PlainButtonStyle())
                         }
-                    }
-                    
-                    Link(destination: URL(string: "https://zenlyne.app/privacy")!) {
-                        HStack {
-                            Image(systemName: "shield.fill")
-                                .foregroundColor(.blue)
-                            Text("Privacy Policy")
-                            Spacer()
-                            Image(systemName: "arrow.up.forward.app")
-                                .foregroundColor(.gray)
-                        }
-                    }
-                }
-                
-                // Account actions section
-                Section {
-                    Button(action: {
-                        authViewModel.signOut()
-                    }) {
-                        HStack {
-                            Image(systemName: "arrow.left.circle.fill")
-                                .foregroundColor(.red)
-                            Text("Sign Out")
-                                .foregroundColor(.red)
-                        }
-                    }
-                    
-                    Button(action: {
-                        showDeleteConfirmation = true
-                    }) {
-                        HStack {
-                            Image(systemName: "xmark.circle.fill")
-                                .foregroundColor(.red)
-                            Text("Delete Account")
-                                .foregroundColor(.red)
-                        }
+                        .background(Color(UIColor.systemBackground))
+                        .cornerRadius(10)
+                        .padding(.horizontal)
                     }
                 }
             }
             .navigationTitle("Profile")
             .navigationBarTitleDisplayMode(.inline)
+            .background(Color(UIColor.systemGroupedBackground))
             .alert(isPresented: $showAlert) {
                 Alert(
                     title: Text(alertTitle),
