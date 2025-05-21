@@ -34,6 +34,8 @@ class LocationViewModel: NSObject, ObservableObject {
     private var locationObserversActive = false
     private var onlineStatusObserversActive = false
     
+    private var clusterState = ClusterState()
+    
     // Initialize with default camera position at Ho Chi Minh City
     init(locationService: LocationServiceProtocol = LocationService(),
          firebaseService: FirebaseServiceProtocol = FirebaseService()) {
@@ -361,5 +363,110 @@ extension LocationViewModel: LocationServiceDelegate {
         if status == .authorizedWhenInUse || status == .authorizedAlways {
             locationService.startUpdatingLocation()
         }
+    }
+}
+
+extension LocationViewModel {
+    // Track expanded cluster IDs
+    private struct ClusterState {
+        var expandedClusterIds: Set<String> = []
+        var currentZoomLevel: Double = 14.0
+        var autoExpandThreshold: Double = 16.0
+    }
+    
+    // Update current zoom level
+    func updateMapZoomLevel(_ zoomLevel: Double) {
+        clusterState.currentZoomLevel = zoomLevel
+        
+        // Auto-expand clusters at high zoom levels
+        if zoomLevel >= clusterState.autoExpandThreshold {
+            expandAllClustersInView()
+        } else if zoomLevel < clusterState.autoExpandThreshold - 1.0 {
+            // Collapse clusters when zoomed out
+            collapseAllClusters()
+        }
+    }
+    
+    // Toggle a specific cluster's expansion state
+    func toggleClusterExpansion(clusterId: String) -> Bool {
+        if clusterState.expandedClusterIds.contains(clusterId) {
+            clusterState.expandedClusterIds.remove(clusterId)
+            return false // Now collapsed
+        } else {
+            clusterState.expandedClusterIds.insert(clusterId)
+            return true // Now expanded
+        }
+    }
+    
+    // Check if a cluster is expanded
+    func isClusterExpanded(clusterId: String) -> Bool {
+        return clusterState.expandedClusterIds.contains(clusterId)
+    }
+    
+    // Expand all clusters currently in view
+    private func expandAllClustersInView() {
+        // For now, we'll simply flag all clusters as expanded
+        // In a real implementation, you would only expand clusters visible in the current camera view
+        
+        // Process current friend locations to identify clusters
+        let friendLocationGetter = FriendLocationGrouper()
+        friendLocationGetter.updateZoomLevel(clusterState.currentZoomLevel)
+        
+        let locationGroups = friendLocationGetter.groupFriendLocations(friendLocations)
+        
+        // Mark all multi-friend clusters as expanded
+        for group in locationGroups {
+            if group.type == .cluster && group.count >= 2 {
+                let clusterId = group.friendIds.sorted().joined(separator: "_")
+                clusterState.expandedClusterIds.insert(clusterId)
+            }
+        }
+        
+        // Notify that clusters have changed to trigger update
+        self.objectWillChange.send()
+    }
+    
+    // Collapse all currently expanded clusters
+    private func collapseAllClusters() {
+        if !clusterState.expandedClusterIds.isEmpty {
+            clusterState.expandedClusterIds.removeAll()
+            
+            // Notify that clusters have changed to trigger update
+            self.objectWillChange.send()
+        }
+    }
+    
+    // Focus on a specific cluster
+    func focusOnCluster(clusterId: String, expanded: Bool = true) {
+        // Find the relevant group for this cluster ID
+        let friendLocationGetter = FriendLocationGrouper()
+        let locationGroups = friendLocationGetter.groupFriendLocations(friendLocations)
+        
+        // Find the cluster's center point
+        if let group = locationGroups.first(where: {
+            $0.type == .cluster &&
+            $0.friendIds.sorted().joined(separator: "_") == clusterId
+        }) {
+            // Set expanded state if requested
+            if expanded {
+                clusterState.expandedClusterIds.insert(clusterId)
+            }
+            
+            // Focus camera on the cluster
+            cameraOptions = CameraOptions(
+                center: group.centerCoordinate,
+                zoom: 15.5, // Higher zoom to better see the expanded cluster
+                bearing: 0,
+                pitch: 0
+            )
+            
+            // Notify changes
+            self.objectWillChange.send()
+        }
+    }
+    
+    // Get all currently expanded cluster IDs
+    func getExpandedClusterIds() -> Set<String> {
+        return clusterState.expandedClusterIds
     }
 }

@@ -39,6 +39,12 @@ struct MapViewRepresentable: UIViewRepresentable {
             // Setup point annotation manager for markers
             context.coordinator.setupAnnotations(for: mapView)
         }
+        
+        // Add camera change listener to track zoom level
+        mapView.mapboxMap.onEvery(event: .cameraChanged) { event in
+            let newZoom = mapView.cameraState.zoom
+            context.coordinator.handleZoomLevelChanged(mapView: mapView, newZoomLevel: newZoom)
+        }
                 
         return mapView
     }
@@ -74,17 +80,26 @@ struct MapViewRepresentable: UIViewRepresentable {
         private var viewModel: LocationViewModel
         private var userAnnotationManager: PointAnnotationManager?
         private var friendAnnotationManager: PointAnnotationManager?
+        private var expandedClusterAnnotationManager: PointAnnotationManager?
         private var pulseAnnotationManager: CircleAnnotationManager?
         private var friendIdByAnnotationId: [String: String] = [:]
         private var pulseTimers: [String: Timer] = [:]
         private let locationGrouper = FriendLocationGrouper()
         private var clusterIdByAnnotationId: [String: [String]] = [:]
+        private var expandedClusterAnnotations: [String: [PointAnnotation]] = [:]
+        private var markerAnimationManager = MarkerAnimationManager()
+        private var clusterAnimationManager = ClusterAnimationManager()
+        private var currentMapZoomLevel: Double = 14.0
+        
+        // Keep track of current location groups for reference
+        private var currentLocationGroups: [LocationGroup] = []
         
         init(viewModel: LocationViewModel) {
             self.viewModel = viewModel
             super.init()
         }
         
+        // MARK: - Map Events Handling
         
         @objc func handleMapTap(_ gesture: UITapGestureRecognizer) {
             // When the user taps on the map (not on a marker),
@@ -92,58 +107,98 @@ struct MapViewRepresentable: UIViewRepresentable {
             NotificationCenter.default.post(name: NSNotification.Name("MapTapped"), object: nil)
         }
         
-        // Simplified pulsing effect using regular annotations instead of layers
-        private func addPulseEffectLayer(for mapView: MapView, at coordinate: CLLocationCoordinate2D, color: UIColor, isUser: Bool) {
-            // Use the stored pulse annotation manager or create a new one
-            let pulseAnnotationManager = self.pulseAnnotationManager ?? mapView.annotations.makeCircleAnnotationManager()
-            self.pulseAnnotationManager = pulseAnnotationManager
-            
-            // Create a pulsing animation using scaling circle annotations
-            let pulseLayerId = isUser ? "user-pulse" : "friend-pulse-\(UUID().uuidString)"
-            
-            // Create initial small circle
-            var circle = CircleAnnotation(centerCoordinate: coordinate)
-            circle.circleColor = StyleColor(color.withAlphaComponent(0.3))
-            // Fix: Use the correct expression type for Mapbox
-            circle.circleRadius = Double(20)
-            circle.circleOpacity = Double(0.8)
-            
-            pulseAnnotationManager.annotations = [circle]
-            
-            // Create a timer to animate the pulsing effect
-            let timer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
-                guard let annotations = pulseAnnotationManager.annotations as? [CircleAnnotation],
-                      var firstCircle = annotations.first else { return }
+        func handleZoomLevelChanged(mapView: MapView, newZoomLevel: Double) {
+            // Only react if the zoom level has changed significantly
+            if abs(newZoomLevel - currentMapZoomLevel) > 0.5 {
+                currentMapZoomLevel = newZoomLevel
+                locationGrouper.updateZoomLevel(newZoomLevel)
                 
-                // Extract current radius and opacity values
-                let currentRadius = (firstCircle.circleRadius ?? 20) as Double
-                let currentOpacity = (firstCircle.circleOpacity ?? 0.8) as Double
+                // Auto-expand clusters at high zoom levels
+                let shouldAutoExpandClusters = newZoomLevel >= 16.0
                 
-                // Calculate new values
-                let newRadius: Double
-                let newOpacity: Double
-                
-                if currentRadius < 50 {
-                    newRadius = currentRadius + 0.5
-                    newOpacity = max(0.1, currentOpacity - 0.01)
-                } else {
-                    newRadius = 20
-                    newOpacity = 0.8
+                if shouldAutoExpandClusters {
+                    // Zoom is high enough to auto-expand all visible clusters
+                    autoExpandClustersForZoomLevel(mapView: mapView)
+                } else if newZoomLevel < 15.0 {
+                    // Zoom is low enough to collapse all clusters
+                    collapseAllClusters(mapView: mapView)
                 }
                 
-                // Create a new circle with updated properties
-                var updatedCircle = CircleAnnotation(centerCoordinate: firstCircle.point.coordinates)
-                updatedCircle.circleColor = firstCircle.circleColor
-                updatedCircle.circleRadius = newRadius
-                updatedCircle.circleOpacity = newOpacity
-                
-                pulseAnnotationManager.annotations = [updatedCircle]
+                // Re-process friend annotations with new zoom level
+                updateFriendAnnotations(
+                    for: mapView,
+                    friendLocations: viewModel.friendLocations,
+                    friends: viewModel.friends
+                )
             }
-            
-            // Store the timer to prevent it from being deallocated
-            pulseTimers[pulseLayerId] = timer
         }
         
+        // MARK: - Cluster Expansion Management
+        
+        private func autoExpandClustersForZoomLevel(mapView: MapView) {
+            var expanded = false
+            
+            // Find all clusters and mark them as expanded
+            for group in currentLocationGroups {
+                if group.type == .cluster && group.count >= 2 {
+                    let clusterId = group.friendIds.sorted().joined(separator: "_")
+                    
+                    // Only expand if not already expanded
+                    if !locationGrouper.isClusterExpanded(clusterId: clusterId) {
+                        _ = locationGrouper.toggleClusterExpansion(clusterId: clusterId)
+                        expanded = true
+                    }
+                }
+            }
+            
+            // Update annotations if any clusters were newly expanded
+            if expanded {
+                updateFriendAnnotations(
+                    for: mapView,
+                    friendLocations: viewModel.friendLocations,
+                    friends: viewModel.friends
+                )
+            }
+        }
+        
+        private func collapseAllClusters(mapView: MapView) {
+            // Reset all expanded clusters
+            locationGrouper.expandedClusterIds = Set<String>()
+            
+            // Clear any expanded cluster annotations
+            if let expandedManager = expandedClusterAnnotationManager {
+                expandedManager.annotations = []
+            }
+            expandedClusterAnnotations = [:]
+            
+            // Re-process friend annotations with collapsed clusters
+            updateFriendAnnotations(
+                for: mapView,
+                friendLocations: viewModel.friendLocations,
+                friends: viewModel.friends
+            )
+        }
+        
+        // MARK: - Pulsing Effect
+        
+        // Simplified pulsing effect using regular annotations instead of layers
+        private func addPulseEffectLayer(for mapView: MapView, at coordinate: CLLocationCoordinate2D, color: UIColor, isUser: Bool) {
+            // Disable pulse effect - removing bloom effect as requested
+            
+            // Note: We're keeping this method but making it empty to avoid breaking existing calls
+            // Any calls to this method will now have no effect
+        }
+        
+        
+        // Helper function to update pulse effect position
+        private func updatePulseEffect(for mapView: MapView, at coordinate: CLLocationCoordinate2D, isUser: Bool) {
+            // Disable pulse effect - removing bloom effect as requested
+            
+            // Note: We're keeping this method but making it empty to avoid breaking existing calls
+            // Any calls to this method will now have no effect
+        }
+        
+        // MARK: - Annotation Creation
         
         func createUserMarkerImage(for mapView: MapView) {
             let size: CGFloat = 50 // Square dimensions
@@ -261,135 +316,7 @@ struct MapViewRepresentable: UIViewRepresentable {
             // Add the annotation to the manager
             annotationManager.annotations = [pointAnnotation]
             
-            // Update the pulsing effect layer position
-            updatePulseEffect(for: mapView, at: coordinate, isUser: true)
-        }
-        
-        // Helper function to update pulse effect position
-        private func updatePulseEffect(for mapView: MapView, at coordinate: CLLocationCoordinate2D, isUser: Bool) {
-            // Use the stored pulse annotation manager instead of searching for it
-            if let pulseManager = self.pulseAnnotationManager {
-                // Update the position of existing circle annotations
-                if let circles = pulseManager.annotations as? [CircleAnnotation], !circles.isEmpty {
-                    var updatedCircles: [CircleAnnotation] = []
-                    
-                    for circle in circles {
-                        // Extract current radius and opacity values
-                        let currentRadius = (circle.circleRadius ?? 20) as Double
-                        let currentOpacity = (circle.circleOpacity ?? 0.8) as Double
-                        
-                        // Create a new circle with the updated coordinate but same properties
-                        var updatedCircle = CircleAnnotation(centerCoordinate: coordinate)
-                        updatedCircle.circleColor = circle.circleColor
-                        updatedCircle.circleRadius = currentRadius
-                        updatedCircle.circleOpacity = currentOpacity
-                        
-                        updatedCircles.append(updatedCircle)
-                    }
-                    
-                    pulseManager.annotations = updatedCircles
-                } else {
-                    // Or create new pulse effect
-                    addPulseEffectLayer(for: mapView, at: coordinate, color: isUser ? .blue : .orange, isUser: isUser)
-                }
-            } else {
-                // Create new pulse effect if no manager exists
-                addPulseEffectLayer(for: mapView, at: coordinate, color: isUser ? .blue : .orange, isUser: isUser)
-            }
-        }
-        
-        func setupAnnotations(for mapView: MapView) {
-            print("DEBUG: Setting up annotations")
-            
-            // Create the annotation managers
-            userAnnotationManager = mapView.annotations.makePointAnnotationManager()
-            friendAnnotationManager = mapView.annotations.makePointAnnotationManager()
-            pulseAnnotationManager = mapView.annotations.makeCircleAnnotationManager()
-            
-            // Create the custom image for user location
-            createUserMarkerImage(for: mapView)
-            
-            // Create the custom image for friend locations
-            createFriendMarkerImage(for: mapView)
-            
-            // Add pulsing effect to user location using circle layers
-            if let userLocation = viewModel.userLocation {
-                addPulseEffectLayer(for: mapView, at: userLocation, color: UIColor.blue, isUser: true)
-            }
-            
-            // Update friend markers
-            updateFriendAnnotations(
-                for: mapView,
-                friendLocations: viewModel.friendLocations,
-                friends: viewModel.friends
-            )
-            
-            // Set up annotation tap handling through annotationInteractionDelegate
-            if let friendManager = friendAnnotationManager {
-                friendManager.delegate = self
-            }
-            
-            // Add tap gesture recognizer to handle map taps
-            let tapGesture = UITapGestureRecognizer(target: self, action: #selector(handleMapTap(_:)))
-            mapView.addGestureRecognizer(tapGesture)
-            
-            print("DEBUG: Annotations setup complete")
-        }
-        
-        func updateFriendAnnotations(for mapView: MapView, friendLocations: [String: UserLocation], friends: [User]) {
-            guard let annotationManager = friendAnnotationManager else { return }
-            
-            print("DEBUG: Updating friend annotations with \(friendLocations.count) locations and \(friends.count) friends")
-            
-            // Delete all current annotations
-            annotationManager.annotations = []
-            friendIdByAnnotationId.removeAll()
-            clusterIdByAnnotationId.removeAll()
-            
-            // Group friend locations based on proximity
-            let locationGroups = locationGrouper.groupFriendLocations(friendLocations)
-            print("DEBUG: Created \(locationGroups.count) location groups from \(friendLocations.count) friends")
-            
-            // Create annotations based on group type
-            var annotations: [PointAnnotation] = []
-            
-            for group in locationGroups {
-                switch group.type {
-                case .single:
-                    // Single friend, add regular marker
-                    if let friendId = group.friendIds.first,
-                       let friend = friends.first(where: { $0.id == friendId }) {
-                        let annotation = createFriendAnnotation(
-                            for: friend,
-                            at: group.centerCoordinate,
-                            mapView: mapView
-                        )
-                        annotations.append(annotation)
-                        
-                        // Add pulse effect for online friends
-                        if friend.isOnline {
-                            updatePulseEffect(for: mapView, at: group.centerCoordinate, isUser: false)
-                        }
-                    }
-                    
-                case .cluster:
-                    // Multiple friends, create a cluster annotation
-                    let clusterFriends = friends.filter { group.friendIds.contains($0.id) }
-                    let clusterAnnotation = createClusterAnnotation(
-                        for: group,
-                        friends: clusterFriends,
-                        mapView: mapView
-                    )
-                    annotations.append(clusterAnnotation)
-                    
-                    // Store mapping between annotation ID and all friend IDs in this cluster
-                    clusterIdByAnnotationId[clusterAnnotation.id] = group.friendIds
-                }
-            }
-            
-            // Add all annotations to manager
-            annotationManager.annotations = annotations
-            print("DEBUG: Added \(annotations.count) friend annotations to map")
+            // Note: We've removed the pulse effect as requested
         }
         
         // Create an annotation for a single friend
@@ -426,7 +353,7 @@ struct MapViewRepresentable: UIViewRepresentable {
             let anyOnline = friends.contains { $0.isOnline }
             
             // Create a unique ID for this cluster
-            let clusterUniqueId = "cluster-\(group.friendIds.joined(separator: "-"))"
+            let clusterId = group.friendIds.sorted().joined(separator: "_")
             
             // Collect friend initials for display (optional)
             let friendInitials = friends.prefix(3).map { $0.initials }
@@ -439,7 +366,7 @@ struct MapViewRepresentable: UIViewRepresentable {
             )
             
             do {
-                try mapView.mapboxMap.style.addImage(clusterImage, id: clusterUniqueId)
+                try mapView.mapboxMap.style.addImage(clusterImage, id: clusterId)
             } catch {
                 print("DEBUG: Error adding cluster marker image: \(error.localizedDescription)")
             }
@@ -447,12 +374,14 @@ struct MapViewRepresentable: UIViewRepresentable {
             // Create annotation
             var annotation = PointAnnotation(coordinate: group.centerCoordinate)
             annotation.iconAnchor = .bottom
-            annotation.iconImage = clusterUniqueId
+            annotation.iconImage = clusterId
             annotation.iconSize = 1.0
+            
+            // Store the cluster ID in the annotation's properties for later reference
+            annotation.userInfo?["clusterId"] = clusterId
             
             return annotation
         }
-
 
         // Update method to create friend marker image with online/offline status
         func createFriendMarkerImage(for mapView: MapView, friendId: String? = nil, name: String? = nil, isOnline: Bool = false, profileImageUrl: String? = nil) {
@@ -599,95 +528,345 @@ struct MapViewRepresentable: UIViewRepresentable {
             // Add the image to the style
             do {
                 try mapView.mapboxMap.style.addImage(annotationImage, id: markerId)
-                print("DEBUG: Created marker image for friend \(friendId ?? "unknown") - \(statusText)")
             } catch {
                 print("DEBUG: Error adding friend marker image: \(error.localizedDescription)")
             }
         }
-    }
-    
-    func calculateOffsetPositions(center: CLLocationCoordinate2D, count: Int, radius: Double = 10.0) -> [CLLocationCoordinate2D] {
-        guard count > 0 else { return [] }
         
-        var positions: [CLLocationCoordinate2D] = []
+        // MARK: - Friend Annotations Update
         
-        // If only one friend, return the center
-        if count == 1 {
-            positions.append(center)
-            return positions
-        }
-        
-        // For 2-3 friends, create a more pleasing pattern
-        if count == 2 {
-            // For 2 friends, place them horizontally next to each other
-            let latOffset = 0.0
-            let lonFactor = cos(center.latitude * Double.pi / 180.0)
+        func updateFriendAnnotations(for mapView: MapView, friendLocations: [String: UserLocation], friends: [User]) {
+            guard let annotationManager = friendAnnotationManager,
+                  let expandedAnnotationManager = expandedClusterAnnotationManager else { return }
             
-            // Friend 1 (left)
-            let lonOffset1 = -radius / (111111.0 * lonFactor)
-            positions.append(CLLocationCoordinate2D(
-                latitude: center.latitude,
-                longitude: center.longitude + lonOffset1
-            ))
+            // Delete all current annotations
+            annotationManager.annotations = []
+            friendIdByAnnotationId.removeAll()
+            clusterIdByAnnotationId.removeAll()
             
-            // Friend 2 (right)
-            let lonOffset2 = radius / (111111.0 * lonFactor)
-            positions.append(CLLocationCoordinate2D(
-                latitude: center.latitude,
-                longitude: center.longitude + lonOffset2
-            ))
-        } else if count == 3 {
-            // For 3 friends, place them in a triangle formation
-            let lonFactor = cos(center.latitude * Double.pi / 180.0)
+            // Group friend locations based on proximity
+            let locationGroups = locationGrouper.groupFriendLocations(friendLocations)
+            currentLocationGroups = locationGroups
             
-            // Friend 1 (top)
-            let latOffset1 = radius / 111111.0
-            positions.append(CLLocationCoordinate2D(
-                latitude: center.latitude + latOffset1,
-                longitude: center.longitude
-            ))
+            // Create annotations based on group type
+            var standardAnnotations: [PointAnnotation] = []
+            var expandedAnnotations: [PointAnnotation] = []
+            expandedClusterAnnotations = [:]
             
-            // Friend 2 (bottom left)
-            let latOffset2 = -radius / (2 * 111111.0)
-            let lonOffset2 = -radius / (111111.0 * lonFactor)
-            positions.append(CLLocationCoordinate2D(
-                latitude: center.latitude + latOffset2,
-                longitude: center.longitude + lonOffset2
-            ))
-            
-            // Friend 3 (bottom right)
-            let latOffset3 = -radius / (2 * 111111.0)
-            let lonOffset3 = radius / (111111.0 * lonFactor)
-            positions.append(CLLocationCoordinate2D(
-                latitude: center.latitude + latOffset3,
-                longitude: center.longitude + lonOffset3
-            ))
-        } else {
-            // For more than 3 friends (shouldn't happen with current logic, but just in case)
-            // Calculate positions in a circle
-            let angleStep = (2.0 * Double.pi) / Double(count)
-            
-            for i in 0..<count {
-                let angle = Double(i) * angleStep
+            for group in locationGroups {
+                // Generate relative positions for friends in cluster
+                var updatedGroup = group
+                updatedGroup.generateRelativePositions(radius: 20.0)
                 
-                // Convert meters to coordinate space
-                // ~111,111 meters per degree of latitude
-                let latOffset = (radius * sin(angle)) / 111111.0
+                // Get unique ID for this group
+                let clusterId = group.type == .cluster
+                    ? group.friendIds.sorted().joined(separator: "_")
+                    : ""
                 
-                // Longitude degrees vary based on latitude
-                let lonFactor = cos(center.latitude * Double.pi / 180.0)
-                let lonOffset = (radius * cos(angle)) / (111111.0 * lonFactor)
+                // Check if this is a cluster and if it's expanded
+                let isClusterExpanded = group.type == .cluster && locationGrouper.isClusterExpanded(clusterId: clusterId)
                 
-                let position = CLLocationCoordinate2D(
-                    latitude: center.latitude + latOffset,
-                    longitude: center.longitude + lonOffset
-                )
-                
-                positions.append(position)
+                switch group.type {
+                case .single:
+                    // Single friend, add regular marker
+                    if let friendId = group.friendIds.first,
+                       let friend = friends.first(where: { $0.id == friendId }) {
+                        let annotation = createFriendAnnotation(
+                            for: friend,
+                            at: group.centerCoordinate,
+                            mapView: mapView
+                        )
+                        standardAnnotations.append(annotation)
+                    }
+                    
+                case .cluster:
+                    if isClusterExpanded {
+                        // Create individual annotations for each friend in the expanded cluster
+                        var clusterFriendAnnotations: [PointAnnotation] = []
+                        
+                        for friendId in group.friendIds {
+                            if let friend = friends.first(where: { $0.id == friendId }),
+                               let position = updatedGroup.relativePositions[friendId] {
+                                
+                                let annotation = createFriendAnnotation(
+                                    for: friend,
+                                    at: position,
+                                    mapView: mapView
+                                )
+                                
+                                // Add to the expanded annotations
+                                expandedAnnotations.append(annotation)
+                                clusterFriendAnnotations.append(annotation)
+                                
+                                // Store friend ID mapping
+                                friendIdByAnnotationId[annotation.id] = friendId
+                            }
+                        }
+                        
+                        // Store the expanded annotations for this cluster
+                        expandedClusterAnnotations[clusterId] = clusterFriendAnnotations
+                        
+                    } else {
+                        // Show regular cluster marker
+                        let clusterFriends = friends.filter { group.friendIds.contains($0.id) }
+                        let clusterAnnotation = createClusterAnnotation(
+                            for: updatedGroup,
+                            friends: clusterFriends,
+                            mapView: mapView
+                        )
+                        standardAnnotations.append(clusterAnnotation)
+                        
+                        // Store mapping between annotation ID and all friend IDs in this cluster
+                        clusterIdByAnnotationId[clusterAnnotation.id] = group.friendIds
+                    }
+                }
+            }
+            
+            // Add all annotations to appropriate managers
+            annotationManager.annotations = standardAnnotations
+            expandedAnnotationManager.annotations = expandedAnnotations
+            
+            // Make sure user annotation is updated last so it stays on top
+            if let userLocation = viewModel.userLocation {
+                updateUserAnnotation(for: mapView, at: userLocation, userName: viewModel.currentUser.fullName)
             }
         }
         
-        return positions
+        // Create an annotation for the current user
+        private func createUserAnnotation(at coordinate: CLLocationCoordinate2D, userName: String, mapView: MapView) -> PointAnnotation {
+            // Create user marker image if needed
+            createUserMarkerImage(for: mapView)
+            
+            // Create annotation
+            var annotation = PointAnnotation(coordinate: coordinate)
+            annotation.iconAnchor = .bottom
+            annotation.iconImage = "user-marker-id"
+            annotation.iconSize = 1.0
+            
+            // Note: iconZOrder is not available in this version of MapboxMaps
+            // We'll use layer ordering instead
+            
+            return annotation
+        }
+        
+        // MARK: - Annotation Setup
+        
+        func setupAnnotations(for mapView: MapView) {
+            print("DEBUG: Setting up annotations")
+            
+            // Create the annotation managers
+            userAnnotationManager = mapView.annotations.makePointAnnotationManager()
+            friendAnnotationManager = mapView.annotations.makePointAnnotationManager()
+            expandedClusterAnnotationManager = mapView.annotations.makePointAnnotationManager()
+            pulseAnnotationManager = mapView.annotations.makeCircleAnnotationManager()
+            
+            // Create the custom image for user location
+            createUserMarkerImage(for: mapView)
+            
+            // Create the custom image for friend locations
+            createFriendMarkerImage(for: mapView)
+            
+            // Add pulsing effect to user location using circle layers
+            if let userLocation = viewModel.userLocation {
+                addPulseEffectLayer(for: mapView, at: userLocation, color: UIColor.blue, isUser: true)
+            }
+            
+            // Update friend markers
+            updateFriendAnnotations(
+                for: mapView,
+                friendLocations: viewModel.friendLocations,
+                friends: viewModel.friends
+            )
+            
+            // Set up annotation tap handling through annotationInteractionDelegate
+            if let friendManager = friendAnnotationManager {
+                friendManager.delegate = self
+            }
+            
+            if let expandedManager = expandedClusterAnnotationManager {
+                expandedManager.delegate = self
+            }
+            
+            // Add tap gesture recognizer to handle map taps
+            let tapGesture = UITapGestureRecognizer(target: self, action: #selector(handleMapTap(_:)))
+            mapView.addGestureRecognizer(tapGesture)
+            
+            print("DEBUG: Annotations setup complete")
+        }
+        
+        // MARK: - Cluster Animation Helpers
+        
+        private func animateClusterExpansion(
+            for clusterId: String,
+            at clusterCenter: CLLocationCoordinate2D,
+            mapView: MapView
+        ) {
+            // Find the relevant group for this cluster ID
+            guard let group = currentLocationGroups.first(where: {
+                $0.type == .cluster &&
+                $0.friendIds.sorted().joined(separator: "_") == clusterId
+            }), let expandedManager = expandedClusterAnnotationManager else {
+                return
+            }
+            
+            // Prepare to create expanded annotations for this cluster
+            let clusterFriends = viewModel.friends.filter { group.friendIds.contains($0.id) }
+            
+            var expandedAnnotations: [PointAnnotation] = []
+            
+            // Create individual friend annotations
+            for friendId in group.friendIds {
+                if let friend = clusterFriends.first(where: { $0.id == friendId }),
+                   let position = group.relativePositions[friendId] {
+                    
+                    let annotation = createFriendAnnotation(
+                        for: friend,
+                        at: position,
+                        mapView: mapView
+                    )
+                    
+                    // Add cluster info for animation tracking
+                    var annotationWithCluster = annotation
+                    annotationWithCluster.userInfo?["clusterId"] = clusterId
+                    
+                    expandedAnnotations.append(annotationWithCluster)
+                    
+                    // Store mapping for interaction
+                    friendIdByAnnotationId[annotationWithCluster.id] = friendId
+                }
+            }
+            
+            // Store expanded annotations for reference
+            expandedClusterAnnotations[clusterId] = expandedAnnotations
+            
+            // Start expansion animation
+            clusterAnimationManager.animateClusterExpansion(
+                annotationManager: expandedManager,
+                friendAnnotations: expandedAnnotations,
+                clusterCenter: clusterCenter,
+                clusterId: clusterId
+            )
+            
+            // Focus camera on the expanded cluster
+            mapView.camera.fly(
+                to: CameraOptions(
+                    center: clusterCenter,
+                    zoom: max(15.5, mapView.cameraState.zoom + 0.5),
+                    bearing: mapView.cameraState.bearing,
+                    pitch: mapView.cameraState.pitch
+                ),
+                duration: 0.5
+            )
+        }
+        
+        private func animateClusterCollapse(
+            for clusterId: String,
+            at clusterCenter: CLLocationCoordinate2D,
+            mapView: MapView,
+            completion: @escaping () -> Void
+        ) {
+            guard let expandedAnnotations = expandedClusterAnnotations[clusterId],
+                  let expandedManager = expandedClusterAnnotationManager else {
+                completion()
+                return
+            }
+            
+            // Animate the contraction
+            clusterAnimationManager.animateClusterContraction(
+                annotationManager: expandedManager,
+                friendAnnotations: expandedAnnotations,
+                clusterCenter: clusterCenter,
+                clusterId: clusterId,
+                duration: 0.3,
+                completion: completion
+            )
+        }
+        
+        // MARK: - Relative Position Calculation
+        
+        func calculateOffsetPositions(center: CLLocationCoordinate2D, count: Int, radius: Double = 10.0) -> [CLLocationCoordinate2D] {
+            guard count > 0 else { return [] }
+            
+            var positions: [CLLocationCoordinate2D] = []
+            
+            // If only one friend, return the center
+            if count == 1 {
+                positions.append(center)
+                return positions
+            }
+            
+            // For 2-3 friends, create a more pleasing pattern
+            if count == 2 {
+                // For 2 friends, place them horizontally next to each other
+                let latOffset = 0.0
+                let lonFactor = cos(center.latitude * Double.pi / 180.0)
+                
+                // Friend 1 (left)
+                let lonOffset1 = -radius / (111111.0 * lonFactor)
+                positions.append(CLLocationCoordinate2D(
+                    latitude: center.latitude,
+                    longitude: center.longitude + lonOffset1
+                ))
+                
+                // Friend 2 (right)
+                let lonOffset2 = radius / (111111.0 * lonFactor)
+                positions.append(CLLocationCoordinate2D(
+                    latitude: center.latitude,
+                    longitude: center.longitude + lonOffset2
+                ))
+            } else if count == 3 {
+                // For 3 friends, place them in a triangle formation
+                let lonFactor = cos(center.latitude * Double.pi / 180.0)
+                
+                // Friend 1 (top)
+                let latOffset1 = radius / 111111.0
+                positions.append(CLLocationCoordinate2D(
+                    latitude: center.latitude + latOffset1,
+                    longitude: center.longitude
+                ))
+                
+                // Friend 2 (bottom left)
+                let latOffset2 = -radius / (2 * 111111.0)
+                let lonOffset2 = -radius / (111111.0 * lonFactor)
+                positions.append(CLLocationCoordinate2D(
+                    latitude: center.latitude + latOffset2,
+                    longitude: center.longitude + lonOffset2
+                ))
+                
+                // Friend 3 (bottom right)
+                let latOffset3 = -radius / (2 * 111111.0)
+                let lonOffset3 = radius / (111111.0 * lonFactor)
+                positions.append(CLLocationCoordinate2D(
+                    latitude: center.latitude + latOffset3,
+                    longitude: center.longitude + lonOffset3
+                ))
+            } else {
+                // For more than 3 friends (shouldn't happen with current logic, but just in case)
+                // Calculate positions in a circle
+                let angleStep = (2.0 * Double.pi) / Double(count)
+                
+                for i in 0..<count {
+                    let angle = Double(i) * angleStep
+                    
+                    // Convert meters to coordinate space
+                    // ~111,111 meters per degree of latitude
+                    let latOffset = (radius * sin(angle)) / 111111.0
+                    
+                    // Longitude degrees vary based on latitude
+                    let lonFactor = cos(center.latitude * Double.pi / 180.0)
+                    let lonOffset = (radius * cos(angle)) / (111111.0 * lonFactor)
+                    
+                    let position = CLLocationCoordinate2D(
+                        latitude: center.latitude + latOffset,
+                        longitude: center.longitude + lonOffset
+                    )
+                    
+                    positions.append(position)
+                }
+            }
+            
+            return positions
+        }
     }
 }
 
@@ -696,20 +875,51 @@ extension MapViewRepresentable.Coordinator: AnnotationInteractionDelegate {
     func annotationManager(_ manager: AnnotationManager, didDetectTappedAnnotations annotations: [Annotation]) {
         guard let annotation = annotations.first else { return }
         
-        if let friendId = friendIdByAnnotationId[annotation.id] {
-            // Single friend annotation
-            NotificationCenter.default.post(
-                name: NSNotification.Name("FriendSelected"),
-                object: nil,
-                userInfo: ["friendId": friendId]
-            )
-        } else if let clusterFriendIds = clusterIdByAnnotationId[annotation.id] {
-            // Cluster annotation - show a selection dialog
-            NotificationCenter.default.post(
-                name: NSNotification.Name("FriendClusterSelected"),
-                object: nil,
-                userInfo: ["friendIds": clusterFriendIds]
-            )
+        if manager === friendAnnotationManager {
+            // Handle tapping on standard annotations (single friends or clusters)
+            if let friendId = friendIdByAnnotationId[annotation.id] {
+                // Single friend annotation - show friend info panel
+                NotificationCenter.default.post(
+                    name: NSNotification.Name("FriendSelected"),
+                    object: nil,
+                    userInfo: ["friendId": friendId]
+                )
+            } else if let clusterFriendIds = clusterIdByAnnotationId[annotation.id] {
+                // Get cluster ID
+                let clusterId = clusterFriendIds.sorted().joined(separator: "_")
+                print("DEBUG: Cluster tapped with \(clusterFriendIds.count) friends")
+                
+                // Toggle cluster expansion state
+                let isExpanded = locationGrouper.toggleClusterExpansion(clusterId: clusterId)
+                
+                // Find the cluster center
+                if let pointAnnotation = annotation as? PointAnnotation {
+                    let clusterCenter = pointAnnotation.point.coordinates
+                    
+                    // Post a notification to handle this in the parent view
+                    // This way we can access the mapView from there
+                    NotificationCenter.default.post(
+                        name: NSNotification.Name("ClusterToggled"),
+                        object: nil,
+                        userInfo: [
+                            "clusterId": clusterId,
+                            "isExpanded": isExpanded,
+                            "latitude": clusterCenter.latitude,
+                            "longitude": clusterCenter.longitude
+                        ]
+                    )
+                }
+            }
+        } else if manager === expandedClusterAnnotationManager {
+            // Handle tapping on annotations in an expanded cluster
+            if let friendId = friendIdByAnnotationId[annotation.id] {
+                // Show friend info panel for this specific friend
+                NotificationCenter.default.post(
+                    name: NSNotification.Name("FriendSelected"),
+                    object: nil,
+                    userInfo: ["friendId": friendId]
+                )
+            }
         }
     }
 }
