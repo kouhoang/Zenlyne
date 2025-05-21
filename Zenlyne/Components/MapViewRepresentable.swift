@@ -77,6 +77,8 @@ struct MapViewRepresentable: UIViewRepresentable {
         private var pulseAnnotationManager: CircleAnnotationManager?
         private var friendIdByAnnotationId: [String: String] = [:]
         private var pulseTimers: [String: Timer] = [:]
+        private let locationGrouper = FriendLocationGrouper()
+        private var clusterIdByAnnotationId: [String: [String]] = [:]
         
         init(viewModel: LocationViewModel) {
             self.viewModel = viewModel
@@ -141,6 +143,7 @@ struct MapViewRepresentable: UIViewRepresentable {
             // Store the timer to prevent it from being deallocated
             pulseTimers[pulseLayerId] = timer
         }
+        
         
         func createUserMarkerImage(for mapView: MapView) {
             let size: CGFloat = 50 // Square dimensions
@@ -341,42 +344,46 @@ struct MapViewRepresentable: UIViewRepresentable {
             // Delete all current annotations
             annotationManager.annotations = []
             friendIdByAnnotationId.removeAll()
+            clusterIdByAnnotationId.removeAll()
             
-            // Create new annotation for each friend
+            // Group friend locations based on proximity
+            let locationGroups = locationGrouper.groupFriendLocations(friendLocations)
+            print("DEBUG: Created \(locationGroups.count) location groups from \(friendLocations.count) friends")
+            
+            // Create annotations based on group type
             var annotations: [PointAnnotation] = []
             
-            for (friendId, location) in friendLocations {
-                // Get friend information
-                guard let friend = friends.first(where: { $0.id == friendId }) else {
-                    print("DEBUG: Friend not found for ID \(friendId)")
-                    continue
-                }
-                
-                print("DEBUG: Creating annotation for friend: \(friend.fullName) at \(location.latitude), \(location.longitude)")
-                
-                // Check online status
-                let isOnline = friend.isOnline
-                
-                // Create marker image for this friend
-                createFriendMarkerImage(for: mapView, friendId: friendId, name: friend.fullName, isOnline: isOnline, profileImageUrl: friend.profileImageUrl)
-                
-                // Create annotation
-                var annotation = PointAnnotation(coordinate: location.toCoordinate())
-                annotation.iconAnchor = .bottom
-                
-                let statusText = isOnline ? "online" : "offline"
-                let markerIconId = "friend-marker-\(friendId)-\(statusText)"
-                annotation.iconImage = markerIconId
-                annotation.iconSize = 1.0
-                
-                // Save mapping between annotation ID and friend ID
-                friendIdByAnnotationId[annotation.id] = friendId
-                
-                annotations.append(annotation)
-                
-                // Add pulse effect for online friends
-                if isOnline {
-                    updatePulseEffect(for: mapView, at: location.toCoordinate(), isUser: false)
+            for group in locationGroups {
+                switch group.type {
+                case .single:
+                    // Single friend, add regular marker
+                    if let friendId = group.friendIds.first,
+                       let friend = friends.first(where: { $0.id == friendId }) {
+                        let annotation = createFriendAnnotation(
+                            for: friend,
+                            at: group.centerCoordinate,
+                            mapView: mapView
+                        )
+                        annotations.append(annotation)
+                        
+                        // Add pulse effect for online friends
+                        if friend.isOnline {
+                            updatePulseEffect(for: mapView, at: group.centerCoordinate, isUser: false)
+                        }
+                    }
+                    
+                case .cluster:
+                    // Multiple friends, create a cluster annotation
+                    let clusterFriends = friends.filter { group.friendIds.contains($0.id) }
+                    let clusterAnnotation = createClusterAnnotation(
+                        for: group,
+                        friends: clusterFriends,
+                        mapView: mapView
+                    )
+                    annotations.append(clusterAnnotation)
+                    
+                    // Store mapping between annotation ID and all friend IDs in this cluster
+                    clusterIdByAnnotationId[clusterAnnotation.id] = group.friendIds
                 }
             }
             
@@ -384,6 +391,68 @@ struct MapViewRepresentable: UIViewRepresentable {
             annotationManager.annotations = annotations
             print("DEBUG: Added \(annotations.count) friend annotations to map")
         }
+        
+        // Create an annotation for a single friend
+        private func createFriendAnnotation(for friend: User, at coordinate: CLLocationCoordinate2D, mapView: MapView) -> PointAnnotation {
+            let isOnline = friend.isOnline
+            
+            // Create marker image for this friend
+            createFriendMarkerImage(
+                for: mapView,
+                friendId: friend.id,
+                name: friend.fullName,
+                isOnline: isOnline,
+                profileImageUrl: friend.profileImageUrl
+            )
+            
+            // Create annotation
+            var annotation = PointAnnotation(coordinate: coordinate)
+            annotation.iconAnchor = .bottom
+            
+            let statusText = isOnline ? "online" : "offline"
+            let markerIconId = "friend-marker-\(friend.id)-\(statusText)"
+            annotation.iconImage = markerIconId
+            annotation.iconSize = 1.0
+            
+            // Save mapping between annotation ID and friend ID
+            friendIdByAnnotationId[annotation.id] = friend.id
+            
+            return annotation
+        }
+
+        // Create an annotation for a cluster of friends
+        private func createClusterAnnotation(for group: LocationGroup, friends: [User], mapView: MapView) -> PointAnnotation {
+            // Determine if any friend in the cluster is online
+            let anyOnline = friends.contains { $0.isOnline }
+            
+            // Create a unique ID for this cluster
+            let clusterUniqueId = "cluster-\(group.friendIds.joined(separator: "-"))"
+            
+            // Collect friend initials for display (optional)
+            let friendInitials = friends.prefix(3).map { $0.initials }
+            
+            // Generate and add the cluster marker image to the style
+            let clusterImage = ClusterMarkerGenerator.generateClusterMarker(
+                count: group.friendIds.count,
+                friendInitials: friendInitials,
+                isOnline: anyOnline
+            )
+            
+            do {
+                try mapView.mapboxMap.style.addImage(clusterImage, id: clusterUniqueId)
+            } catch {
+                print("DEBUG: Error adding cluster marker image: \(error.localizedDescription)")
+            }
+            
+            // Create annotation
+            var annotation = PointAnnotation(coordinate: group.centerCoordinate)
+            annotation.iconAnchor = .bottom
+            annotation.iconImage = clusterUniqueId
+            annotation.iconSize = 1.0
+            
+            return annotation
+        }
+
 
         // Update method to create friend marker image with online/offline status
         func createFriendMarkerImage(for mapView: MapView, friendId: String? = nil, name: String? = nil, isOnline: Bool = false, profileImageUrl: String? = nil) {
@@ -536,21 +605,111 @@ struct MapViewRepresentable: UIViewRepresentable {
             }
         }
     }
+    
+    func calculateOffsetPositions(center: CLLocationCoordinate2D, count: Int, radius: Double = 10.0) -> [CLLocationCoordinate2D] {
+        guard count > 0 else { return [] }
+        
+        var positions: [CLLocationCoordinate2D] = []
+        
+        // If only one friend, return the center
+        if count == 1 {
+            positions.append(center)
+            return positions
+        }
+        
+        // For 2-3 friends, create a more pleasing pattern
+        if count == 2 {
+            // For 2 friends, place them horizontally next to each other
+            let latOffset = 0.0
+            let lonFactor = cos(center.latitude * Double.pi / 180.0)
+            
+            // Friend 1 (left)
+            let lonOffset1 = -radius / (111111.0 * lonFactor)
+            positions.append(CLLocationCoordinate2D(
+                latitude: center.latitude,
+                longitude: center.longitude + lonOffset1
+            ))
+            
+            // Friend 2 (right)
+            let lonOffset2 = radius / (111111.0 * lonFactor)
+            positions.append(CLLocationCoordinate2D(
+                latitude: center.latitude,
+                longitude: center.longitude + lonOffset2
+            ))
+        } else if count == 3 {
+            // For 3 friends, place them in a triangle formation
+            let lonFactor = cos(center.latitude * Double.pi / 180.0)
+            
+            // Friend 1 (top)
+            let latOffset1 = radius / 111111.0
+            positions.append(CLLocationCoordinate2D(
+                latitude: center.latitude + latOffset1,
+                longitude: center.longitude
+            ))
+            
+            // Friend 2 (bottom left)
+            let latOffset2 = -radius / (2 * 111111.0)
+            let lonOffset2 = -radius / (111111.0 * lonFactor)
+            positions.append(CLLocationCoordinate2D(
+                latitude: center.latitude + latOffset2,
+                longitude: center.longitude + lonOffset2
+            ))
+            
+            // Friend 3 (bottom right)
+            let latOffset3 = -radius / (2 * 111111.0)
+            let lonOffset3 = radius / (111111.0 * lonFactor)
+            positions.append(CLLocationCoordinate2D(
+                latitude: center.latitude + latOffset3,
+                longitude: center.longitude + lonOffset3
+            ))
+        } else {
+            // For more than 3 friends (shouldn't happen with current logic, but just in case)
+            // Calculate positions in a circle
+            let angleStep = (2.0 * Double.pi) / Double(count)
+            
+            for i in 0..<count {
+                let angle = Double(i) * angleStep
+                
+                // Convert meters to coordinate space
+                // ~111,111 meters per degree of latitude
+                let latOffset = (radius * sin(angle)) / 111111.0
+                
+                // Longitude degrees vary based on latitude
+                let lonFactor = cos(center.latitude * Double.pi / 180.0)
+                let lonOffset = (radius * cos(angle)) / (111111.0 * lonFactor)
+                
+                let position = CLLocationCoordinate2D(
+                    latitude: center.latitude + latOffset,
+                    longitude: center.longitude + lonOffset
+                )
+                
+                positions.append(position)
+            }
+        }
+        
+        return positions
+    }
 }
 
 // MARK: - AnnotationInteractionDelegate
 extension MapViewRepresentable.Coordinator: AnnotationInteractionDelegate {
     func annotationManager(_ manager: AnnotationManager, didDetectTappedAnnotations annotations: [Annotation]) {
-        guard let annotation = annotations.first,
-              let friendId = friendIdByAnnotationId[annotation.id] else {
-            return
-        }
+        guard let annotation = annotations.first else { return }
         
-        // Send notification about selecting a friend to display info
-        NotificationCenter.default.post(
-            name: NSNotification.Name("FriendSelected"),
-            object: nil,
-            userInfo: ["friendId": friendId]
-        )
+        if let friendId = friendIdByAnnotationId[annotation.id] {
+            // Single friend annotation
+            NotificationCenter.default.post(
+                name: NSNotification.Name("FriendSelected"),
+                object: nil,
+                userInfo: ["friendId": friendId]
+            )
+        } else if let clusterFriendIds = clusterIdByAnnotationId[annotation.id] {
+            // Cluster annotation - show a selection dialog
+            NotificationCenter.default.post(
+                name: NSNotification.Name("FriendClusterSelected"),
+                object: nil,
+                userInfo: ["friendIds": clusterFriendIds]
+            )
+        }
     }
 }

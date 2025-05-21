@@ -101,34 +101,34 @@ struct ChatButtonView: View {
     }
 }
 
-extension MapViewController {
-    // Method to show the conversation list
-    func showConversationList() -> some View {
-        return AnyView(
-            ConversationListView()
-        )
-    }
-    
-    // Method to show a chat with a specific friend
-    func showChatWithFriend(_ friend: User) -> some View {
-        let messagingViewModel = MessagingViewModel()
-        
-        // Pre-load the friend info to avoid delay
-        messagingViewModel.chatUsers[friend.id] = friend
-        
-        // Create chat if needed
-        guard let currentUserId = Auth.auth().currentUser?.uid else {
-            return AnyView(Text("Error: User not logged in"))
-        }
-        
-        let chatId = [currentUserId, friend.id].sorted().joined(separator: "_")
-        
-        return AnyView(
-            ChatView(
-                viewModel: messagingViewModel,
-                chatId: chatId,
-                otherUserId: friend.id
-            )
-        )
-    }
-}
+//extension MapViewController {
+//    // Method to show the conversation list
+//    func showConversationList() -> some View {
+//        return AnyView(
+//            ConversationListView()
+//        )
+//    }
+//    
+//    // Method to show a chat with a specific friend
+//    func showChatWithFriend(_ friend: User) -> some View {
+//        let messagingViewModel = MessagingViewModel()
+//        
+//        // Pre-load the friend info to avoid delay
+//        messagingViewModel.chatUsers[friend.id] = friend
+//        
+//        // Create chat if needed
+//        guard let currentUserId = Auth.auth().currentUser?.uid else {
+//            return AnyView(Text("Error: User not logged in"))
+//        }
+//        
+//        let chatId = [currentUserId, friend.id].sorted().joined(separator: "_")
+//        
+//        return AnyView(
+//            ChatView(
+//                viewModel: messagingViewModel,
+//                chatId: chatId,
+//                otherUserId: friend.id
+//            )
+//        )
+//    }
+//}
