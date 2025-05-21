@@ -18,6 +18,7 @@ struct MapViewController: View {
     @State private var showFriendsListView = false
     @State private var showFriendRequestsView = false
     @State private var showAddFriendView = false
+    @State private var showConversationList = false
     @State private var selectedFriendId: String? = nil
     @State private var pendingRequestsCount: Int = 0
     
@@ -40,46 +41,56 @@ struct MapViewController: View {
                     Spacer()
                     
                     VStack(spacing: 10) {
-                        // Profile Button
+                        // Profile Button with avatar - KEEP THE ROUNDED SQUARE
                         Button(action: {
                             showProfileView.toggle()
                         }) {
-                            Image(systemName: "person.circle.fill")
-                                .font(.system(size: 40))
-                                .foregroundColor(.blue)
-                                .background(Color.white.clipShape(Circle()))
+                            ProfileAvatarView(user: viewModel.currentUser)
+                                .frame(width: 50, height: 50)
+                                .background(Color.white)
+                                .clipShape(RoundedRectangle(cornerRadius: 12))
                                 .shadow(radius: 4)
                         }
                         
-                        // Friends List Button
+                        // Friends List Button - NO CIRCLE, JUST ICON
                         Button(action: {
                             showFriendsListView.toggle()
                         }) {
-                            Image(systemName: "person.2.fill")
-                                .font(.system(size: 40))
+                            Image("friends") // Using your asset name
+                                .resizable()
+                                .scaledToFit()
+                                .frame(width: 40, height: 40)
                                 .foregroundColor(.green)
-                                .background(Color.white.clipShape(Circle()))
-                                .shadow(radius: 4)
                         }
                         
-                        // Add Friend Button
+                        // Add Friend Button - NO CIRCLE, JUST ICON
                         Button(action: {
                             showAddFriendView.toggle()
                         }) {
-                            Image(systemName: "person.badge.plus")
-                                .font(.system(size: 40))
+                            Image("add-friend") // Using your asset name
+                                .resizable()
+                                .scaledToFit()
+                                .frame(width: 40, height: 40)
                                 .foregroundColor(.orange)
-                                .background(Color.white.clipShape(Circle()))
-                                .shadow(radius: 4)
                         }
                         
-                        // Button for message count badge - wrapped in AnyView to fix the error
-                        AnyView(
-                            MessageCountButton()
-                        )
+                        // Chat button - NO CIRCLE, JUST ICON WITH BADGE
+                        Button(action: {
+                            showConversationList = true
+                        }) {
+                            ZStack {
+                                Image("chat") // Using your asset name
+                                    .resizable()
+                                    .scaledToFit()
+                                    .frame(width: 40, height: 40)
+                                    .foregroundColor(.purple)
+                                
+                                MessageCountBadge()
+                            }
+                        }
                     }
                     .padding(.top, 70)
-                    .padding(.trailing, 0)
+                    .padding(.trailing, 8) // CHANGED FROM 0 TO 8
                 }
                 
                 Spacer()
@@ -177,7 +188,7 @@ struct MapViewController: View {
                 }
             }
         }
-        // Move the sheet modifiers to be attached to the ZStack
+        // Now using sheets instead of full screen covers for all overlays
         .sheet(isPresented: $showProfileView) {
             ProfileViewController()
                 .environmentObject(authViewModel)
@@ -192,6 +203,9 @@ struct MapViewController: View {
         .sheet(isPresented: $showAddFriendView) {
             AddFriendView()
                 .environmentObject(authViewModel)
+        }
+        .sheet(isPresented: $showConversationList) {
+            ConversationListView()
         }
         .onAppear {
             print("DEBUG: MapViewController appeared")
@@ -308,38 +322,56 @@ extension AnyTransition {
     }
 }
 
-// Message Badge Button that conforms to View
-struct MessageCountButton: View {
-    @StateObject private var viewModel = MessagingViewModel()
-    @State private var showingBadge = false
-    @State private var showConversationList = false
+// New component for showing user avatar
+struct ProfileAvatarView: View {
+    let user: User
     
     var body: some View {
-        Button(action: {
-            showConversationList = true
-        }) {
-            ZStack {
-                Image(systemName: "message.fill")
-                    .font(.system(size: 40))
-                    .foregroundColor(.purple)
-                    .background(Color.white.clipShape(Circle()))
-                    .shadow(radius: 4)
-                
-                if viewModel.totalUnreadCount > 0 {
-                    Text("\(viewModel.totalUnreadCount)")
-                        .font(.caption)
-                        .padding(5)
-                        .foregroundColor(.white)
-                        .background(Color.red)
-                        .clipShape(Circle())
-                        .offset(x: 15, y: -15)
-                        .opacity(showingBadge ? 1 : 0)
+        ZStack {
+            // Background
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.blue.opacity(0.2))
+            
+            // User profile image or initials
+            if let profileImageUrl = user.profileImageUrl,
+               let url = URL(string: profileImageUrl) {
+                AsyncImage(url: url) { image in
+                    image
+                        .resizable()
+                        .scaledToFill()
+                } placeholder: {
+                    Text(user.initials)
+                        .font(.system(size: 18, weight: .bold))
+                        .foregroundColor(.blue)
                 }
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .padding(4)
+            } else {
+                Text(user.initials)
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundColor(.blue)
             }
         }
-        .fullScreenCover(isPresented: $showConversationList) {
-            // Use the updated ConversationListView directly without a NavigationView
-            ConversationListView()
+    }
+}
+
+// Separate component for message count badge
+struct MessageCountBadge: View {
+    @StateObject private var viewModel = MessagingViewModel()
+    @State private var showingBadge = false
+    
+    var body: some View {
+        ZStack {
+            if viewModel.totalUnreadCount > 0 {
+                Text("\(viewModel.totalUnreadCount)")
+                    .font(.caption)
+                    .padding(5)
+                    .foregroundColor(.white)
+                    .background(Color.red)
+                    .clipShape(Circle())
+                    .offset(x: 15, y: -15)
+                    .opacity(showingBadge ? 1 : 0)
+            }
         }
         .onAppear {
             viewModel.updateTotalUnreadCount()
@@ -354,6 +386,67 @@ struct MessageCountButton: View {
                 viewModel.updateTotalUnreadCount()
             }
         }
+    }
+}
+
+// Chat button integration - FIXED
+struct ChatButtonView: View {
+    let friend: User
+    @State private var showChatView = false
+    
+    var body: some View {
+        Button(action: {
+            showChatView = true
+        }) {
+            VStack(spacing: 4) {
+                Image(systemName: "message.fill")
+                    .font(.system(size: 20))
+                Text("Nhắn tin")
+                    .font(.caption)
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .sheet(isPresented: $showChatView) {
+            ChatViewContainer(friend: friend)
+        }
+    }
+}
+
+// This is a separate container view to handle all the chat setup
+struct ChatViewContainer: View {
+    let friend: User
+    @StateObject private var viewModel = MessagingViewModel()
+    
+    var body: some View {
+        Group {
+            if let currentUserId = Auth.auth().currentUser?.uid {
+                ChatView(
+                    viewModel: viewModel,
+                    chatId: getChatId(currentUserId: currentUserId),
+                    otherUserId: friend.id
+                )
+                .onAppear {
+                    setupChat(currentUserId: currentUserId)
+                }
+            } else {
+                Text("Please log in to chat")
+                    .padding()
+            }
+        }
+    }
+    
+    // Helper method to get chat ID
+    private func getChatId(currentUserId: String) -> String {
+        return [currentUserId, friend.id].sorted().joined(separator: "_")
+    }
+    
+    // Helper method to set up the chat
+    private func setupChat(currentUserId: String) {
+        // Pre-load the friend info
+        viewModel.chatUsers[friend.id] = friend
+        
+        // Create chat if needed
+        FirebaseChatManager.shared.chatService.createChatIfNeeded(with: friend.id) { _ in }
     }
 }
 
@@ -376,10 +469,14 @@ struct UpdatedFriendInfoPanel: View {
         }
         
         let locationDate = Date(timeIntervalSince1970: location.timestamp)
+        return formatRelativeTime(locationDate)
+    }
+    
+    // Helper to format relative time
+    private func formatRelativeTime(_ date: Date) -> String {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .short
-        
-        return formatter.localizedString(for: locationDate, relativeTo: Date())
+        return formatter.localizedString(for: date, relativeTo: Date())
     }
     
     // Determine location freshness color
@@ -456,9 +553,9 @@ struct UpdatedFriendInfoPanel: View {
                         .foregroundColor(friend.isOnline ? .green : .gray)
                 }
                 
-                // Last active timestamp
+                // Last active timestamp - FIXED
                 if let lastSeen = friend.lastSeen {
-                    Text("Hoạt động \(lastSeen, formatter: RelativeDateTimeFormatter())")
+                    Text("Hoạt động \(formatRelativeTime(lastSeen))")
                         .font(.caption)
                         .foregroundColor(.gray)
                 }
@@ -768,7 +865,8 @@ struct EnhancedFriendClusterRow: View {
                                 .font(.system(size: 14))
                                 .foregroundColor(.green)
                         } else if let lastSeen = friend.lastSeen {
-                            Text("Last seen \(lastSeen, formatter: RelativeDateTimeFormatter())")
+                            // Fixed formatter issue
+                            Text("Last seen \(formatLastSeen(lastSeen))")
                                 .font(.system(size: 14))
                                 .foregroundColor(.gray)
                         } else {
@@ -804,6 +902,13 @@ struct EnhancedFriendClusterRow: View {
         }
         .buttonStyle(ScaleButtonStyle())
     }
+    
+    // Helper method to format last seen time
+    private func formatLastSeen(_ date: Date) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .short
+        return formatter.localizedString(for: date, relativeTo: Date())
+    }
 }
 
 // Button style for a subtle scale effect on tap
@@ -820,37 +925,6 @@ struct ScaleButtonStyle: ButtonStyle {
     }
 }
 
-extension MapViewController {
-    // Method to show the conversation list
-    func showConversationList() -> some View {
-        return AnyView(
-            ConversationListView()
-        )
-    }
-    
-    // Method to show a chat with a specific friend
-    func showChatWithFriend(_ friend: User) -> some View {
-        let messagingViewModel = MessagingViewModel()
-        
-        // Pre-load the friend info to avoid delay
-        messagingViewModel.chatUsers[friend.id] = friend
-        
-        // Create chat if needed
-        guard let currentUserId = Auth.auth().currentUser?.uid else {
-            return AnyView(Text("Error: User not logged in"))
-        }
-        
-        let chatId = [currentUserId, friend.id].sorted().joined(separator: "_")
-        
-        return AnyView(
-            ChatView(
-                viewModel: messagingViewModel,
-                chatId: chatId,
-                otherUserId: friend.id
-            )
-        )
-    }
-}
 
 #Preview {
     MapViewController()

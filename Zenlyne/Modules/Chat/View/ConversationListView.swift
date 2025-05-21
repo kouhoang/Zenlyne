@@ -3,7 +3,7 @@
 //  Zenlyne
 //
 //  Created by admin on 6/5/25.
-//
+//  Updated to better support sheet presentation
 
 import SwiftUI
 import FirebaseAuth
@@ -13,12 +13,15 @@ struct ConversationListView: View {
     @Environment(\.presentationMode) var presentationMode
     @State private var showNewMessageSheet = false
     @State private var searchText = ""
-    @State private var selectedChatId: String? = nil
+    @State private var selectedChat: Chat? = nil
+    @State private var selectedOtherUserId: String? = nil
+    @State private var showChatView = false
     
     private let firebaseService = FirebaseService()
     
     var body: some View {
-        NavigationView {
+        ZStack {
+            // Main content
             VStack(spacing: 0) {
                 // Header
                 HStack {
@@ -88,7 +91,6 @@ struct ConversationListView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             .background(Color(.systemBackground).edgesIgnoringSafeArea(.all))
-            .navigationBarHidden(true)
             .onAppear {
                 // Start real-time chat updates
                 viewModel.loadChats()
@@ -101,6 +103,21 @@ struct ConversationListView: View {
                     showNewMessageSheet = false
                     openChatWithUser(user)
                 })
+            }
+            
+            // Sheet for individual chat view
+            .sheet(isPresented: $showChatView) {
+                if let chat = selectedChat,
+                   let otherUserId = selectedOtherUserId,
+                   let otherUser = viewModel.chatUsers[otherUserId] {
+                    
+                    // Create the chat view
+                    ChatView(
+                        viewModel: viewModel,
+                        chatId: chat.id,
+                        otherUserId: otherUserId
+                    )
+                }
             }
         }
     }
@@ -139,28 +156,17 @@ struct ConversationListView: View {
     private var conversationsList: some View {
         List {
             ForEach(filteredChats) { chat in
-                ZStack {
-                    NavigationLink(
-                        destination: ChatView(
-                            viewModel: viewModel,
-                            chatId: chat.id,
-                            otherUserId: chat.getOtherParticipantId(currentUserId: Auth.auth().currentUser?.uid ?? "")
-                        ),
-                        tag: chat.id,
-                        selection: $selectedChatId
-                    ) {
-                        EmptyView()
-                    }
-                    .opacity(0.0)
-                    .buttonStyle(PlainButtonStyle())
-                    
-                    ConversationRowView(
-                        chat: chat,
-                        user: viewModel.getOtherUser(in: chat)
-                    )
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        selectedChatId = chat.id
+                ConversationRowView(
+                    chat: chat,
+                    user: viewModel.getOtherUser(in: chat)
+                )
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    if let currentUserId = Auth.auth().currentUser?.uid,
+                       let otherUserId = chat.getOtherParticipantId(currentUserId: currentUserId) {
+                        selectedChat = chat
+                        selectedOtherUserId = otherUserId
+                        showChatView = true
                     }
                 }
                 .swipeActions(edge: .trailing) {
@@ -214,17 +220,23 @@ struct ConversationListView: View {
                 // Check if chat already exists in our list
                 if let index = viewModel.chats.firstIndex(where: { $0.id == chatId }) {
                     // Chat already exists - open it
-                    selectedChatId = chatId
+                    selectedChat = viewModel.chats[index]
+                    selectedOtherUserId = user.id
+                    showChatView = true
                 } else {
-                    // Create new chat entry
+                    // Create new chat entry and open it
                     let newChat = Chat(
+                        id: chatId,
                         participants: [currentUserId, user.id],
                         lastMessage: nil,
                         unreadCount: 0
                     )
-                    viewModel.chats.insert(newChat, at: 0)
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                        selectedChatId = chatId
+                    selectedChat = newChat
+                    selectedOtherUserId = user.id
+                    
+                    // Slight delay to allow time for creation
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        showChatView = true
                     }
                 }
             }
@@ -251,7 +263,7 @@ struct ConversationListView: View {
     }
 }
 
-// Individual conversation row (keeping this part unchanged)
+// Individual conversation row
 struct ConversationRowView: View {
     let chat: Chat
     let user: User?

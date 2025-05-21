@@ -3,7 +3,7 @@
 //  Zenlyne
 //
 //  Created by admin on 6/5/25.
-//
+//  Updated to better support sheet presentation
 
 import SwiftUI
 import FirebaseAuth
@@ -26,113 +26,92 @@ struct ChatView: View {
     }
     
     var body: some View {
-        ZStack {
-            // Background
-            Color(.systemGroupedBackground).ignoresSafeArea()
+        VStack(spacing: 0) {
+            // Custom header
+            ChatHeaderView(
+                user: otherUser,
+                onDismiss: { presentationMode.wrappedValue.dismiss() },
+                onProfileTap: { showingProfile = true }
+            )
             
-            VStack(spacing: 0) {
-                if viewModel.isLoading && viewModel.messages.isEmpty {
-                    Spacer()
-                    ProgressView()
-                        .scaleEffect(1.5)
-                    Spacer()
-                } else {
-                    // Messages list
-                    ScrollViewReader { scrollView in
-                        ScrollView {
-                            LazyVStack(spacing: 8) {
-                                ForEach(viewModel.messages) { message in
-                                    MessageRow(message: message, otherUser: otherUser)
-                                        .id(message.id)
+            ZStack {
+                // Background
+                Color(.systemGroupedBackground).ignoresSafeArea()
+                
+                VStack(spacing: 0) {
+                    if viewModel.isLoading && viewModel.messages.isEmpty {
+                        Spacer()
+                        ProgressView()
+                            .scaleEffect(1.5)
+                        Spacer()
+                    } else {
+                        // Messages list
+                        ScrollViewReader { scrollView in
+                            ScrollView {
+                                LazyVStack(spacing: 8) {
+                                    ForEach(viewModel.messages) { message in
+                                        MessageRow(message: message, otherUser: otherUser)
+                                            .id(message.id)
+                                    }
+                                    
+                                    // Invisible spacer for auto-scrolling
+                                    Color.clear
+                                        .frame(height: 1)
+                                        .id("bottom")
                                 }
+                                .padding(.horizontal)
+                                .padding(.top, 8)
+                            }
+                            .onChange(of: viewModel.messages.count) { _ in
+                                withAnimation {
+                                    scrollView.scrollTo("bottom", anchor: .bottom)
+                                }
+                            }
+                            .onChange(of: scrollToBottom) { _ in
+                                withAnimation {
+                                    scrollView.scrollTo("bottom", anchor: .bottom)
+                                }
+                            }
+                            .onAppear {
+                                // Auto-scroll to bottom after a short delay to ensure view is loaded
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                                    scrollToBottom.toggle()
+                                }
+                            }
+                        }
+                        
+                        // Message input bar
+                        HStack(spacing: 8) {
+                            // Message text field
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 20)
+                                    .fill(Color(.systemBackground))
                                 
-                                // Invisible spacer for auto-scrolling
-                                Color.clear
-                                    .frame(height: 1)
-                                    .id("bottom")
+                                TextEditor(text: $viewModel.newMessageText)
+                                    .focused($isInputFocused)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 8)
+                                    .background(Color.clear)
+                                    .frame(minHeight: 40)
                             }
-                            .padding(.horizontal)
-                            .padding(.top, 8)
-                        }
-                        .onChange(of: viewModel.messages.count) { _ in
-                            withAnimation {
-                                scrollView.scrollTo("bottom", anchor: .bottom)
-                            }
-                        }
-                        .onChange(of: scrollToBottom) { _ in
-                            withAnimation {
-                                scrollView.scrollTo("bottom", anchor: .bottom)
-                            }
-                        }
-                        .onAppear {
-                            // Auto-scroll to bottom after a short delay to ensure view is loaded
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                                scrollToBottom.toggle()
-                            }
-                        }
-                    }
-                    
-                    // Message input bar
-                    HStack(spacing: 8) {
-                        // Message text field
-                        ZStack {
-                            RoundedRectangle(cornerRadius: 20)
-                                .fill(Color(.systemBackground))
+                            .frame(minHeight: 40, maxHeight: 120)
                             
-                            TextEditor(text: $viewModel.newMessageText)
-                                .focused($isInputFocused)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 8)
-                                .background(Color.clear)
-                                .frame(minHeight: 40)
+                            // Send button
+                            Button(action: sendMessage) {
+                                Circle()
+                                    .fill(Color.blue)
+                                    .frame(width: 40, height: 40)
+                                    .overlay(
+                                        Image(systemName: "arrow.up")
+                                            .font(.system(size: 18, weight: .bold))
+                                            .foregroundColor(.white)
+                                    )
+                            }
+                            .disabled(viewModel.newMessageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         }
-                        .frame(minHeight: 40, maxHeight: 120)
-                        
-                        // Send button
-                        Button(action: sendMessage) {
-                            Circle()
-                                .fill(Color.blue)
-                                .frame(width: 40, height: 40)
-                                .overlay(
-                                    Image(systemName: "arrow.up")
-                                        .font(.system(size: 18, weight: .bold))
-                                        .foregroundColor(.white)
-                                )
-                        }
-                        .disabled(viewModel.newMessageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    }
-                    .padding(.horizontal)
-                    .padding(.vertical, 8)
-                    .background(Color(.systemBackground))
-                }
-            }
-        }
-        .navigationTitle(otherUser?.fullName ?? "Chat")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .navigationBarLeading) {
-                Button(action: {
-                    presentationMode.wrappedValue.dismiss()
-                }) {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.title)
-                        .foregroundColor(.gray)
-                }
-            }
-
-            // Show friend profile
-            ToolbarItem(placement: .navigationBarTrailing) {
-                Button(action: {
-                    showingProfile = true
-                }) {
-                    HStack(spacing: 4) {
-                        Circle()
-                            .fill(otherUser?.isOnline ?? false ? Color.green : Color.gray)
-                            .frame(width: 8, height: 8)
-                        
-                        Text(otherUser?.isOnline ?? false ? "Đang hoạt động" : "Không hoạt động")
-                            .font(.caption)
-                            .foregroundColor(otherUser?.isOnline ?? false ? .green : .gray)
+                        .padding(.horizontal)
+                        .padding(.vertical, 8)
+                        .background(Color(.systemBackground))
                     }
                 }
             }
@@ -167,6 +146,106 @@ struct ChatView: View {
                 }
             }
         }
+    }
+}
+
+// Custom chat header view
+struct ChatHeaderView: View {
+    let user: User?
+    let onDismiss: () -> Void
+    let onProfileTap: () -> Void
+    
+    var body: some View {
+        HStack(spacing: 12) {
+            // Close button
+            Button(action: onDismiss) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.title2)
+                    .foregroundColor(.gray)
+            }
+            .padding(.leading, 8)
+            
+            // User avatar
+            Button(action: onProfileTap) {
+                ZStack {
+                    Circle()
+                        .fill(Color.blue.opacity(0.2))
+                        .frame(width: 36, height: 36)
+                    
+                    if let profileImage = user?.profileImageUrl {
+                        AsyncImage(url: URL(string: profileImage)) { image in
+                            image
+                                .resizable()
+                                .scaledToFill()
+                        } placeholder: {
+                            Text(user?.initials ?? "")
+                                .font(.caption)
+                                .foregroundColor(.blue)
+                        }
+                        .frame(width: 32, height: 32)
+                        .clipShape(Circle())
+                    } else {
+                        Text(user?.initials ?? "")
+                            .font(.caption)
+                            .foregroundColor(.blue)
+                    }
+                    
+                    // Online status dot
+                    if let isOnline = user?.isOnline, isOnline {
+                        Circle()
+                            .fill(Color.green)
+                            .frame(width: 10, height: 10)
+                            .overlay(
+                                Circle()
+                                    .stroke(Color.white, lineWidth: 1)
+                            )
+                            .position(x: 26, y: 26)
+                    }
+                }
+            }
+            
+            // User info
+            VStack(alignment: .leading, spacing: 2) {
+                Text(user?.fullName ?? "Chat")
+                    .font(.headline)
+                
+                if let user = user {
+                    if user.isOnline {
+                        Text("Đang hoạt động")
+                            .font(.caption)
+                            .foregroundColor(.green)
+                    } else if let lastSeen = user.lastSeen {
+                        Text("Hoạt động \(formatRelativeTime(lastSeen))")
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                    }
+                }
+            }
+            .onTapGesture {
+                onProfileTap()
+            }
+            
+            Spacer()
+            
+            // Options button
+            Button(action: {}) {
+                Image(systemName: "ellipsis")
+                    .font(.title3)
+                    .foregroundColor(.gray)
+                    .rotationEffect(.degrees(90))
+            }
+            .padding(.trailing, 12)
+        }
+        .padding(.vertical, 10)
+        .background(Color(.systemBackground))
+        .shadow(color: Color.black.opacity(0.1), radius: 1, x: 0, y: 1)
+    }
+    
+    // Helper method to format the relative time
+    private func formatRelativeTime(_ date: Date) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .short
+        return formatter.localizedString(for: date, relativeTo: Date())
     }
 }
 
@@ -343,4 +422,12 @@ struct FriendProfileView: View {
             .navigationBarHidden(true)
         }
     }
+}
+
+#Preview {
+    ChatView(
+        viewModel: MessagingViewModel(),
+        chatId: "test_chat_id",
+        otherUserId: "test_user_id"
+    )
 }
