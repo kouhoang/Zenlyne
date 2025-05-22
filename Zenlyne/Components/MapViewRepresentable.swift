@@ -201,7 +201,7 @@ struct MapViewRepresentable: UIViewRepresentable {
         // MARK: - Annotation Creation
         
         func createUserMarkerImage(for mapView: MapView) {
-            let size: CGFloat = 50 // Square dimensions
+            let size: CGFloat = 50
             let renderer = UIGraphicsImageRenderer(size: CGSize(width: size, height: size))
             
             let annotationImage = renderer.image { ctx in
@@ -249,58 +249,83 @@ struct MapViewRepresentable: UIViewRepresentable {
                 let avatarRect = CGRect(x: 8, y: 8, width: size - 16, height: size - 16)
                 let avatarPath = UIBezierPath(ovalIn: avatarRect)
                 
-                // Draw blue background for avatar
-                ctx.cgContext.setFillColor(UIColor(red: 0.0, green: 0.3, blue: 0.8, alpha: 0.5).cgColor)
-                ctx.cgContext.addPath(avatarPath.cgPath)
-                ctx.cgContext.fillPath()
+                // Clear shadow for avatar
+                ctx.cgContext.setShadow(offset: .zero, blur: 0, color: nil)
                 
-                // Get initials for avatar fallback
-                let fullName = viewModel.currentUser.fullName
-                let formatter = PersonNameComponentsFormatter()
-                var initials = ""
-                if let components = formatter.personNameComponents(from: fullName) {
-                    formatter.style = .abbreviated
-                    initials = formatter.string(from: components)
-                } else {
-                    // Fallback if formatter fails
-                    let words = fullName.split(separator: " ")
-                    if words.count > 1 {
-                        initials = String(words[0].prefix(1)) + String(words.last!.prefix(1))
-                    } else if !words.isEmpty {
-                        initials = String(words[0].prefix(1))
-                    } else {
-                        initials = "?"
+                // Try to load and draw user avatar if available
+                var drawnAvatar = false
+                
+                // FIXED: Use currentAvatarUrl instead of currentAvatarUrl
+                if let avatarUrl = viewModel.currentUser.currentAvatarUrl,
+                   let url = URL(string: avatarUrl) {
+                    
+                    // Use URLSession to fetch image synchronously for marker creation
+                    let semaphore = DispatchSemaphore(value: 0)
+                    var avatarImage: UIImage?
+                    
+                    URLSession.shared.dataTask(with: url) { data, _, _ in
+                        if let data = data {
+                            avatarImage = UIImage(data: data)
+                        }
+                        semaphore.signal()
+                    }.resume()
+                    
+                    // Wait for image load (with timeout)
+                    _ = semaphore.wait(timeout: .now() + 2.0)
+                    
+                    if let image = avatarImage {
+                        // Draw avatar image
+                        ctx.cgContext.addPath(avatarPath.cgPath)
+                        ctx.cgContext.clip()
+                        image.draw(in: avatarRect)
+                        drawnAvatar = true
                     }
                 }
                 
-                // Draw initials in center of avatar circle
-                let paragraphStyle = NSMutableParagraphStyle()
-                paragraphStyle.alignment = .center
-                
-                let attributes: [NSAttributedString.Key: Any] = [
-                    .font: UIFont.systemFont(ofSize: 18, weight: .bold),
-                    .foregroundColor: UIColor.white,
-                    .paragraphStyle: paragraphStyle
-                ]
-                
-                let attributedString = NSAttributedString(string: initials, attributes: attributes)
-                
-                // Calculate position to place text in center of avatar
-                let textRect = CGRect(x: 8, y: (size - 20) / 2, width: size - 16, height: 20)
-                attributedString.draw(in: textRect)
+                if !drawnAvatar {
+                    // Draw blue background for avatar fallback
+                    ctx.cgContext.setFillColor(UIColor(red: 0.0, green: 0.3, blue: 0.8, alpha: 0.5).cgColor)
+                    ctx.cgContext.addPath(avatarPath.cgPath)
+                    ctx.cgContext.fillPath()
+                    
+                    // Get initials for avatar fallback
+                    let initials = viewModel.currentUser.initials
+                    
+                    // Draw initials in center of avatar circle
+                    let paragraphStyle = NSMutableParagraphStyle()
+                    paragraphStyle.alignment = .center
+                    
+                    let attributes: [NSAttributedString.Key: Any] = [
+                        .font: UIFont.systemFont(ofSize: 18, weight: .bold),
+                        .foregroundColor: UIColor.white,
+                        .paragraphStyle: paragraphStyle
+                    ]
+                    
+                    let attributedString = NSAttributedString(string: initials, attributes: attributes)
+                    
+                    // Calculate position to place text in center of avatar
+                    let textRect = CGRect(x: 8, y: (size - 20) / 2, width: size - 16, height: 20)
+                    attributedString.draw(in: textRect)
+                }
             }
             
-            // Add the image to the style
+            // Add the image to the style with proper error handling
             do {
                 try mapView.mapboxMap.style.addImage(annotationImage, id: "user-marker-id")
-                print("DEBUG: Created user marker image")
+                print("DEBUG: Successfully added user marker image")
             } catch {
                 print("DEBUG: Error adding user marker image: \(error.localizedDescription)")
             }
         }
         
         func updateUserAnnotation(for mapView: MapView, at coordinate: CLLocationCoordinate2D, userName: String) {
-            guard let annotationManager = userAnnotationManager else { return }
+            guard let annotationManager = userAnnotationManager else {
+                print("DEBUG: User annotation manager is nil")
+                return
+            }
+            
+            // Recreate user marker image with latest avatar
+            createUserMarkerImage(for: mapView)
             
             // Remove existing annotations
             annotationManager.annotations = []
@@ -316,20 +341,20 @@ struct MapViewRepresentable: UIViewRepresentable {
             // Add the annotation to the manager
             annotationManager.annotations = [pointAnnotation]
             
-            // Note: We've removed the pulse effect as requested
+            print("DEBUG: Updated user annotation at \(coordinate.latitude), \(coordinate.longitude)")
         }
         
         // Create an annotation for a single friend
         private func createFriendAnnotation(for friend: User, at coordinate: CLLocationCoordinate2D, mapView: MapView) -> PointAnnotation {
             let isOnline = friend.isOnline
             
-            // Create marker image for this friend
+            // Create marker image for this friend with their avatar
             createFriendMarkerImage(
                 for: mapView,
                 friendId: friend.id,
                 name: friend.fullName,
                 isOnline: isOnline,
-                profileImageUrl: friend.profileImageUrl
+                profileImageUrl: friend.currentAvatarUrl // FIXED: Use currentAvatarUrl
             )
             
             // Create annotation
@@ -383,7 +408,7 @@ struct MapViewRepresentable: UIViewRepresentable {
             return annotation
         }
 
-        // Update method to create friend marker image with online/offline status
+        // FIXED: Update method to load friend avatars properly
         func createFriendMarkerImage(for mapView: MapView, friendId: String? = nil, name: String? = nil, isOnline: Bool = false, profileImageUrl: String? = nil) {
             let size: CGFloat = 50 // Square dimensions
             let renderer = UIGraphicsImageRenderer(size: CGSize(width: size, height: size))
@@ -475,26 +500,55 @@ struct MapViewRepresentable: UIViewRepresentable {
                 // Clear shadow for avatar
                 ctx.cgContext.setShadow(offset: .zero, blur: 0, color: nil)
                 
-                // Draw blue background for avatar
-                ctx.cgContext.setFillColor(UIColor(red: 0.0, green: 0.5, blue: 1.0, alpha: 0.5).cgColor)
-                ctx.cgContext.addPath(avatarPath.cgPath)
-                ctx.cgContext.fillPath()
+                // FIXED: Try to load friend avatar if available
+                var drawnAvatar = false
+                if let avatarUrl = profileImageUrl, let url = URL(string: avatarUrl) {
+                    
+                    // Use URLSession to fetch image synchronously for marker creation
+                    let semaphore = DispatchSemaphore(value: 0)
+                    var avatarImage: UIImage?
+                    
+                    URLSession.shared.dataTask(with: url) { data, _, _ in
+                        if let data = data {
+                            avatarImage = UIImage(data: data)
+                        }
+                        semaphore.signal()
+                    }.resume()
+                    
+                    // Wait for image load (with timeout)
+                    _ = semaphore.wait(timeout: .now() + 1.0)
+                    
+                    if let image = avatarImage {
+                        // Draw avatar image
+                        ctx.cgContext.addPath(avatarPath.cgPath)
+                        ctx.cgContext.clip()
+                        image.draw(in: avatarRect)
+                        drawnAvatar = true
+                    }
+                }
                 
-                // Draw initials in center of avatar circle
-                let paragraphStyle = NSMutableParagraphStyle()
-                paragraphStyle.alignment = .center
-                
-                let attributes: [NSAttributedString.Key: Any] = [
-                    .font: UIFont.systemFont(ofSize: 18, weight: .bold),
-                    .foregroundColor: UIColor.white,
-                    .paragraphStyle: paragraphStyle
-                ]
-                
-                let attributedString = NSAttributedString(string: initials, attributes: attributes)
-                
-                // Calculate position to place text in center of avatar
-                let textRect = CGRect(x: 8, y: (size - 20) / 2, width: size - 16, height: 20)
-                attributedString.draw(in: textRect)
+                if !drawnAvatar {
+                    // Draw blue background for avatar
+                    ctx.cgContext.setFillColor(UIColor(red: 0.0, green: 0.5, blue: 1.0, alpha: 0.5).cgColor)
+                    ctx.cgContext.addPath(avatarPath.cgPath)
+                    ctx.cgContext.fillPath()
+                    
+                    // Draw initials in center of avatar circle
+                    let paragraphStyle = NSMutableParagraphStyle()
+                    paragraphStyle.alignment = .center
+                    
+                    let attributes: [NSAttributedString.Key: Any] = [
+                        .font: UIFont.systemFont(ofSize: 18, weight: .bold),
+                        .foregroundColor: UIColor.white,
+                        .paragraphStyle: paragraphStyle
+                    ]
+                    
+                    let attributedString = NSAttributedString(string: initials, attributes: attributes)
+                    
+                    // Calculate position to place text in center of avatar
+                    let textRect = CGRect(x: 8, y: (size - 20) / 2, width: size - 16, height: 20)
+                    attributedString.draw(in: textRect)
+                }
                 
                 // Draw online/offline status dot
                 let statusDotSize: CGFloat = 10
@@ -528,8 +582,23 @@ struct MapViewRepresentable: UIViewRepresentable {
             // Add the image to the style
             do {
                 try mapView.mapboxMap.style.addImage(annotationImage, id: markerId)
+                print("DEBUG: Successfully added friend marker for \(name ?? "Unknown")")
             } catch {
                 print("DEBUG: Error adding friend marker image: \(error.localizedDescription)")
+            }
+        }
+        
+        func refreshUserMarkerWithNewAvatar(for mapView: MapView) {
+            // Recreate user marker with new avatar
+            createUserMarkerImage(for: mapView)
+            
+            // Update existing user annotation if present
+            if let userLocation = viewModel.userLocation {
+                updateUserAnnotation(
+                    for: mapView,
+                    at: userLocation,
+                    userName: viewModel.currentUser.fullName
+                )
             }
         }
         
@@ -690,6 +759,20 @@ struct MapViewRepresentable: UIViewRepresentable {
             // Add tap gesture recognizer to handle map taps
             let tapGesture = UITapGestureRecognizer(target: self, action: #selector(handleMapTap(_:)))
             mapView.addGestureRecognizer(tapGesture)
+            
+            // Listen for avatar updates
+            NotificationCenter.default.addObserver(
+                forName: NSNotification.Name("AvatarUpdated"),
+                object: nil,
+                queue: .main
+            ) { [weak self] notification in
+                if let userInfo = notification.userInfo,
+                   let userId = userInfo["userId"] as? String,
+                   userId == Auth.auth().currentUser?.uid {
+                    // Current user's avatar updated, refresh marker
+                    self?.refreshUserMarkerWithNewAvatar(for: mapView)
+                }
+            }
             
             print("DEBUG: Annotations setup complete")
         }

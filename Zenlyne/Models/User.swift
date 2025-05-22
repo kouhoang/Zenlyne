@@ -14,12 +14,18 @@ struct User: Identifiable, Codable {
     let fullName: String
     let email: String
     var profileImageUrl: String?
+    var avatarUrl: String? // New field for Cloudinary URLs
     var friendIds: [String] = []
     var friendRequests: [String] = []
     var isOnline: Bool = false
     var lastLocation: UserLocation?
     var lastSeen: Date?
     var fcmToken: String?
+    
+    // Computed property to get the current avatar URL
+    var currentAvatarUrl: String? {
+        return avatarUrl ?? profileImageUrl
+    }
     
     // Calculate how long a user has been online (in minutes)
     var timeAgoDisplay: String? {

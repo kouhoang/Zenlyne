@@ -15,9 +15,9 @@ struct LocationButton: View {
         Button(action: action) {
             Image(systemName: isTracking ? "location.fill" : "location")
                 .font(.system(size: 20))
-                .foregroundColor(isTracking ? .blue : .black)
-                .padding()
-                .background(Color.white)
+                .foregroundColor(.white)
+                .frame(width: 50, height: 50)
+                .background(isTracking ? Color.blue : Color.gray)
                 .clipShape(Circle())
                 .shadow(radius: 4)
         }

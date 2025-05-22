@@ -41,18 +41,18 @@ struct MapViewController: View {
                     Spacer()
                     
                     VStack(spacing: 10) {
-                        // Profile Button with avatar - KEEP THE ROUNDED SQUARE
+                        // FIXED: Profile Button with safe avatar handling
                         Button(action: {
                             showProfileView.toggle()
                         }) {
-                            ProfileAvatarView(user: viewModel.currentUser)
+                            SafeProfileAvatarView(user: viewModel.currentUser)
                                 .frame(width: 50, height: 50)
                                 .background(Color.white)
                                 .clipShape(RoundedRectangle(cornerRadius: 12))
                                 .shadow(radius: 4)
                         }
                         
-                        // Friends List Button - NO CIRCLE, JUST ICON
+                        // Friends List Button
                         Button(action: {
                             showFriendsListView.toggle()
                         }) {
@@ -63,23 +63,23 @@ struct MapViewController: View {
                                 .foregroundColor(.green)
                         }
                         
-                        // Add Friend Button - NO CIRCLE, JUST ICON
+                        // Add Friend Button
                         Button(action: {
                             showAddFriendView.toggle()
                         }) {
-                            Image("add-friend") // Using your asset name
+                            Image("add-friend")
                                 .resizable()
                                 .scaledToFit()
                                 .frame(width: 40, height: 40)
                                 .foregroundColor(.orange)
                         }
                         
-                        // Chat button - NO CIRCLE, JUST ICON WITH BADGE
+                        // Chat button
                         Button(action: {
                             showConversationList = true
                         }) {
                             ZStack {
-                                Image("chat") // Using your asset name
+                                Image("chat")
                                     .resizable()
                                     .scaledToFit()
                                     .frame(width: 40, height: 40)
@@ -90,7 +90,7 @@ struct MapViewController: View {
                         }
                     }
                     .padding(.top, 70)
-                    .padding(.trailing, 8) // CHANGED FROM 0 TO 8
+                    .padding(.trailing, 8)
                 }
                 
                 Spacer()
@@ -210,95 +210,146 @@ struct MapViewController: View {
         .onAppear {
             print("DEBUG: MapViewController appeared")
             
-            // Update currentUser from AuthViewModel
-            if let user = authViewModel.currentUser {
-                print("DEBUG: Current user set: \(user.fullName)")
-                viewModel.currentUser = user
-            } else {
-                print("DEBUG: No current user from AuthViewModel")
-            }
+            // FIXED: Safely update currentUser from AuthViewModel
+            setupCurrentUser()
             
             // Start tracking location when app appears
             viewModel.startTrackingLocation()
             
             // Make sure they load their friends and location
-            if let currentUserId = Auth.auth().currentUser?.uid {
-                print("DEBUG: Loading friends for current user: \(currentUserId)")
-                let friendViewModel = FriendRequestViewModel()
-                friendViewModel.fetchFriends(forUserId: currentUserId) { friends in
-                    print("DEBUG: Loaded \(friends.count) friends from Firebase")
-                    DispatchQueue.main.async {
-                        self.viewModel.friends = friends
-                        
-                        if !friends.isEmpty {
-                            let friendIds = friends.map { $0.id }
-                            print("DEBUG: Starting to observe \(friendIds.count) friends")
-                            self.viewModel.startObservingFriendLocations(friendIds: friendIds)
-                            self.viewModel.startObservingFriendOnlineStatus(friendIds: friendIds)
-                        }
-                    }
-                }
-            } else {
-                print("DEBUG: No current user ID available")
-            }
+            loadFriendsAndStartObserving()
             
-            // Set up a listener to select friends on the map
-            NotificationCenter.default.addObserver(
-                forName: NSNotification.Name("FriendSelected"),
-                object: nil,
-                queue: .main
-            ) { notification in
-                if let friendId = notification.userInfo?["friendId"] as? String {
-                    print("DEBUG: Friend selected: \(friendId)")
-                    self.selectedFriendId = friendId
-                    
-                    // Make sure the location is focused on the selected friend
-                    self.viewModel.focusOnFriendLocation(friendId: friendId)
-                }
-            }
-            
-            // Set up a listener for friend cluster selections
-            NotificationCenter.default.addObserver(
-                forName: NSNotification.Name("FriendClusterSelected"),
-                object: nil,
-                queue: .main
-            ) { notification in
-                if let friendIds = notification.userInfo?["friendIds"] as? [String] {
-                    print("DEBUG: Friend cluster selected with \(friendIds.count) friends")
-                    
-                    // Reset any previous panel state
-                    self.clusterPanelOffset = .zero
-                    
-                    // Update the selected cluster data
-                    self.selectedClusterFriendIds = friendIds
-                    
-                    // Show the cluster selection panel with animation
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                        self.showClusterSelection = true
-                    }
-                    
-                    // Focus the camera on the cluster
-                    if let firstFriendId = friendIds.first {
-                        self.viewModel.focusOnFriendLocation(friendId: firstFriendId)
-                    }
-                }
-            }
-            
-            // Listener for closing the info panel when tapping on the map
-            NotificationCenter.default.addObserver(
-                forName: NSNotification.Name("MapTapped"),
-                object: nil,
-                queue: .main
-            ) { _ in
-                // Close panels with animation
-                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                    self.selectedFriendId = nil
-                    self.showClusterSelection = false
-                }
-            }
+            // Set up notification listeners
+            setupNotificationListeners()
             
             // Check the number of pending friend requests
             checkPendingFriendRequests()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("AvatarUpdated"))) { notification in
+            // FIXED: Handle avatar updates safely
+            handleAvatarUpdate(notification)
+        }
+    }
+    
+    // MARK: - FIXED Helper Methods
+    
+    private func setupCurrentUser() {
+        if let user = authViewModel.currentUser {
+            print("DEBUG: Current user set: \(user.fullName)")
+            viewModel.currentUser = user
+        } else if let currentUserId = Auth.auth().currentUser?.uid,
+                  let email = Auth.auth().currentUser?.email {
+            // Create a temporary user if authViewModel.currentUser is nil
+            print("DEBUG: Creating temporary user from Auth")
+            let tempUser = User(
+                id: currentUserId,
+                fullName: Auth.auth().currentUser?.displayName ?? "User",
+                email: email
+            )
+            viewModel.currentUser = tempUser
+        } else {
+            print("DEBUG: No current user available")
+        }
+    }
+    
+    private func loadFriendsAndStartObserving() {
+        if let currentUserId = Auth.auth().currentUser?.uid {
+            print("DEBUG: Loading friends for current user: \(currentUserId)")
+            let friendViewModel = FriendRequestViewModel()
+            friendViewModel.fetchFriends(forUserId: currentUserId) { friends in
+                print("DEBUG: Loaded \(friends.count) friends from Firebase")
+                DispatchQueue.main.async {
+                    self.viewModel.friends = friends
+                    
+                    if !friends.isEmpty {
+                        let friendIds = friends.map { $0.id }
+                        print("DEBUG: Starting to observe \(friendIds.count) friends")
+                        self.viewModel.startObservingFriendLocations(friendIds: friendIds)
+                        self.viewModel.startObservingFriendOnlineStatus(friendIds: friendIds)
+                    }
+                }
+            }
+        } else {
+            print("DEBUG: No current user ID available")
+        }
+    }
+    
+    private func setupNotificationListeners() {
+        // Set up a listener to select friends on the map
+        NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("FriendSelected"),
+            object: nil,
+            queue: .main
+        ) { notification in
+            if let friendId = notification.userInfo?["friendId"] as? String {
+                print("DEBUG: Friend selected: \(friendId)")
+                self.selectedFriendId = friendId
+                
+                // Make sure the location is focused on the selected friend
+                self.viewModel.focusOnFriendLocation(friendId: friendId)
+            }
+        }
+        
+        // Set up a listener for friend cluster selections
+        NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("FriendClusterSelected"),
+            object: nil,
+            queue: .main
+        ) { notification in
+            if let friendIds = notification.userInfo?["friendIds"] as? [String] {
+                print("DEBUG: Friend cluster selected with \(friendIds.count) friends")
+                
+                // Reset any previous panel state
+                self.clusterPanelOffset = .zero
+                
+                // Update the selected cluster data
+                self.selectedClusterFriendIds = friendIds
+                
+                // Show the cluster selection panel with animation
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                    self.showClusterSelection = true
+                }
+                
+                // Focus the camera on the cluster
+                if let firstFriendId = friendIds.first {
+                    self.viewModel.focusOnFriendLocation(friendId: firstFriendId)
+                }
+            }
+        }
+        
+        // Listener for closing the info panel when tapping on the map
+        NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("MapTapped"),
+            object: nil,
+            queue: .main
+        ) { _ in
+            // Close panels with animation
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                self.selectedFriendId = nil
+                self.showClusterSelection = false
+            }
+        }
+    }
+    
+    private func handleAvatarUpdate(_ notification: Notification) {
+        guard let userInfo = notification.userInfo,
+              let userId = userInfo["userId"] as? String,
+              let avatarUrl = userInfo["avatarUrl"] as? String else {
+            return
+        }
+        
+        // Update current user's avatar if it's them
+        if userId == Auth.auth().currentUser?.uid {
+            print("DEBUG: Updating current user avatar: \(avatarUrl)")
+            viewModel.currentUser.avatarUrl = avatarUrl
+            viewModel.currentUser.profileImageUrl = avatarUrl
+        }
+        
+        // Update friend's avatar if it's one of them
+        if let friendIndex = viewModel.friends.firstIndex(where: { $0.id == userId }) {
+            print("DEBUG: Updating friend avatar for \(viewModel.friends[friendIndex].fullName): \(avatarUrl)")
+            viewModel.friends[friendIndex].avatarUrl = avatarUrl
+            viewModel.friends[friendIndex].profileImageUrl = avatarUrl
         }
     }
     
@@ -322,8 +373,8 @@ extension AnyTransition {
     }
 }
 
-// New component for showing user avatar
-struct ProfileAvatarView: View {
+// FIXED: Safe component for showing user avatar
+struct SafeProfileAvatarView: View {
     let user: User
     
     var body: some View {
@@ -332,21 +383,30 @@ struct ProfileAvatarView: View {
             RoundedRectangle(cornerRadius: 12)
                 .fill(Color.blue.opacity(0.2))
             
-            // User profile image or initials
-            if let profileImageUrl = user.profileImageUrl,
+            // User profile image or initials - SAFE handling
+            if let profileImageUrl = user.currentAvatarUrl,
                let url = URL(string: profileImageUrl) {
-                AsyncImage(url: url) { image in
-                    image
-                        .resizable()
-                        .scaledToFill()
-                } placeholder: {
-                    Text(user.initials)
-                        .font(.system(size: 18, weight: .bold))
-                        .foregroundColor(.blue)
+                AsyncImage(url: url) { phase in
+                    switch phase {
+                    case .success(let image):
+                        image
+                            .resizable()
+                            .scaledToFill()
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                            .padding(4)
+                    case .failure(_), .empty:
+                        // Fallback to initials
+                        Text(user.initials)
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundColor(.blue)
+                    @unknown default:
+                        Text(user.initials)
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundColor(.blue)
+                    }
                 }
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-                .padding(4)
             } else {
+                // No avatar URL, show initials
                 Text(user.initials)
                     .font(.system(size: 18, weight: .bold))
                     .foregroundColor(.blue)
@@ -518,7 +578,7 @@ struct UpdatedFriendInfoPanel: View {
                         .fill(Color.blue.opacity(0.2))
                         .frame(width: 60, height: 60)
                     
-                    if let profileImage = friend.profileImageUrl {
+                    if let profileImage = friend.currentAvatarUrl {
                         AsyncImage(url: URL(string: profileImage)) { image in
                             image
                                 .resizable()
@@ -809,7 +869,7 @@ struct EnhancedFriendClusterRow: View {
                 // Avatar with status indicator
                 ZStack(alignment: .bottomTrailing) {
                     // Avatar circle
-                    if let profileImageUrl = friend.profileImageUrl,
+                    if let profileImageUrl = friend.currentAvatarUrl,
                        let url = URL(string: profileImageUrl) {
                         AsyncImage(url: url) { image in
                             image
@@ -896,7 +956,7 @@ struct EnhancedFriendClusterRow: View {
             .background(
                 RoundedRectangle(cornerRadius: 12)
                     .fill(Color.white)
-                    .opacity(0.01) // Almost invisible but makes the whole row tappable
+                    .opacity(0.01)
             )
             .contentShape(Rectangle())
         }
@@ -924,7 +984,6 @@ struct ScaleButtonStyle: ButtonStyle {
             )
     }
 }
-
 
 #Preview {
     MapViewController()

@@ -5,8 +5,6 @@
 //  Created by admin on 14/3/25.
 //
 
-// Handle querying and updating data on Firebase
-
 import Foundation
 import FirebaseDatabase
 import FirebaseFirestore
@@ -323,20 +321,6 @@ class FirebaseService: FirebaseServiceProtocol {
                     }
                 }
             }
-            
-            //            group.notify(queue: .main) {
-            //                print("DEBUG: Finished loading \(friends.count) friends")
-            //                completion(friends)
-            //
-            //                if !friends.isEmpty {
-            //                    let friendIds = friends.map { $0.id }
-            //                    self.startObservingFriendLocations(userIds: friendIds) { locations in
-            //                        for (friendId, location) in locations {
-            //                            print("DEBUG: Friend \(friendId) location updated: \(location.latitude), \(location.longitude)")
-            //                        }
-            //                    }
-            //                }
-            //            }
         }
     }
     
@@ -547,6 +531,109 @@ class FirebaseService: FirebaseServiceProtocol {
             } else {
                 print("DEBUG: Test location save SUCCESSFUL")
             }
+        }
+    }
+    
+    func updateUserAvatar(userId: String, avatarUrl: String, completion: @escaping (Bool) -> Void) {
+        let userRef = firestore.collection("users").document(userId)
+        
+        userRef.updateData([
+            "avatarUrl": avatarUrl,
+            "profileImageUrl": avatarUrl, // Keep for backward compatibility
+            "updatedAt": FieldValue.serverTimestamp()
+        ]) { error in
+            if let error = error {
+                print("DEBUG: Error updating avatar: \(error.localizedDescription)")
+                completion(false)
+                return
+            }
+            
+            print("DEBUG: Avatar updated successfully for user \(userId)")
+            
+            // Post notification to update UI across the app
+            NotificationCenter.default.post(
+                name: NSNotification.Name("AvatarUpdated"),
+                object: nil,
+                userInfo: [
+                    "userId": userId,
+                    "avatarUrl": avatarUrl
+                ]
+            )
+            
+            completion(true)
+        }
+    }
+    
+    // Get user's current avatar URL
+    func getUserAvatar(userId: String, completion: @escaping (String?) -> Void) {
+        let userRef = firestore.collection("users").document(userId)
+        
+        userRef.getDocument { snapshot, error in
+            if let error = error {
+                print("DEBUG: Error fetching user avatar: \(error.localizedDescription)")
+                completion(nil)
+                return
+            }
+            
+            guard let document = snapshot, document.exists,
+                  let data = document.data() else {
+                completion(nil)
+                return
+            }
+            
+            // Try avatarUrl first, then fallback to profileImageUrl
+            let avatarUrl = data["avatarUrl"] as? String ?? data["profileImageUrl"] as? String
+            completion(avatarUrl)
+        }
+    }
+    
+    // Observe avatar changes for a user
+    func observeUserAvatar(userId: String, completion: @escaping (String?) -> Void) -> ListenerRegistration {
+        let userRef = firestore.collection("users").document(userId)
+        
+        return userRef.addSnapshotListener { snapshot, error in
+            if let error = error {
+                print("DEBUG: Error observing user avatar: \(error.localizedDescription)")
+                completion(nil)
+                return
+            }
+            
+            guard let document = snapshot, document.exists,
+                  let data = document.data() else {
+                completion(nil)
+                return
+            }
+            
+            // Try avatarUrl first, then fallback to profileImageUrl
+            let avatarUrl = data["avatarUrl"] as? String ?? data["profileImageUrl"] as? String
+            completion(avatarUrl)
+        }
+    }
+    
+    // Batch update multiple users' avatar information (for friends list)
+    func batchUpdateFriendsAvatars(friendIds: [String], completion: @escaping ([String: String]) -> Void) {
+        guard !friendIds.isEmpty else {
+            completion([:])
+            return
+        }
+        
+        let batch = firestore.batch()
+        var avatarUrls: [String: String] = [:]
+        let group = DispatchGroup()
+        
+        for friendId in friendIds {
+            group.enter()
+            
+            getUserAvatar(userId: friendId) { avatarUrl in
+                if let avatarUrl = avatarUrl {
+                    avatarUrls[friendId] = avatarUrl
+                }
+                group.leave()
+            }
+        }
+        
+        group.notify(queue: .main) {
+            completion(avatarUrls)
         }
     }
 }

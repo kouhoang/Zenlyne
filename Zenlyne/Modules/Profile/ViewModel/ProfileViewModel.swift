@@ -63,8 +63,9 @@ class ProfileViewModel: ObservableObject {
                     self.userFullName = data["fullName"] as? String ?? ""
                     self.newFullName = self.userFullName
                     
-                    // Load profile image if available
-                    if let profileImageUrl = data["profileImageUrl"] as? String, let url = URL(string: profileImageUrl) {
+                    // FIXED: Load profile image with priority for avatarUrl
+                    let avatarUrl = data["avatarUrl"] as? String ?? data["profileImageUrl"] as? String
+                    if let avatarUrl = avatarUrl, let url = URL(string: avatarUrl) {
                         self.loadProfileImage(from: url)
                     }
                 }
@@ -87,71 +88,66 @@ class ProfileViewModel: ObservableObject {
         }.resume()
     }
     
+    // FIXED: Updated upload method with better error handling and notifications
     func uploadProfileImage(_ image: UIImage, completion: @escaping (Bool) -> Void) {
         guard let currentUser = Auth.auth().currentUser else {
+            DispatchQueue.main.async {
+                self.errorMessage = "No authenticated user"
+            }
             completion(false)
             return
         }
         
-        isLoading = true
-        guard let imageData = image.jpegData(compressionQuality: 0.5) else {
-            isLoading = false
-            errorMessage = "Failed to process image"
-            completion(false)
-            return
+        DispatchQueue.main.async {
+            self.isLoading = true
+            self.errorMessage = ""
         }
         
-        let filename = "\(currentUser.uid).jpg"
-        let storageRef = Storage.storage().reference().child("profile_images").child(filename)
-        
-        storageRef.putData(imageData, metadata: nil) { [weak self] metadata, error in
+        // Upload to Cloudinary
+        CloudinaryService.shared.uploadImage(image) { [weak self] result in
             guard let self = self else { return }
             
-            if let error = error {
-                DispatchQueue.main.async {
-                    self.isLoading = false
-                    self.errorMessage = "Upload failed: \(error.localizedDescription)"
-                }
-                completion(false)
-                return
-            }
-            
-            storageRef.downloadURL { [weak self] url, error in
-                guard let self = self else { return }
-                
-                DispatchQueue.main.async {
-                    self.isLoading = false
-                }
-                
-                if let error = error {
-                    DispatchQueue.main.async {
-                        self.errorMessage = "Failed to get image URL: \(error.localizedDescription)"
-                    }
-                    completion(false)
-                    return
-                }
-                
-                guard let imageUrl = url?.absoluteString else {
-                    DispatchQueue.main.async {
-                        self.errorMessage = "Invalid image URL"
-                    }
-                    completion(false)
-                    return
-                }
+            switch result {
+            case .success(let imageUrl):
+                print("DEBUG: Successfully uploaded image to Cloudinary: \(imageUrl)")
                 
                 // Update user profile in Firestore
                 self.updateUserProfileImage(imageUrl: imageUrl) { success in
-                    if success {
-                        DispatchQueue.main.async {
-                            self.successMessage = "Profile picture updated"
+                    DispatchQueue.main.async {
+                        self.isLoading = false
+                        
+                        if success {
+                            self.successMessage = "Avatar được cập nhật thành công"
+                            
+                            // FIXED: Post notification with proper data
+                            NotificationCenter.default.post(
+                                name: NSNotification.Name("AvatarUpdated"),
+                                object: nil,
+                                userInfo: [
+                                    "userId": currentUser.uid,
+                                    "avatarUrl": imageUrl
+                                ]
+                            )
+                            
+                            print("DEBUG: Posted avatar update notification for user: \(currentUser.uid)")
+                        } else {
+                            self.errorMessage = "Không thể cập nhật avatar trong database"
                         }
                     }
                     completion(success)
                 }
+                
+            case .failure(let error):
+                DispatchQueue.main.async {
+                    self.isLoading = false
+                    self.errorMessage = "Tải ảnh lên thất bại: \(error.localizedDescription)"
+                }
+                completion(false)
             }
         }
     }
     
+    // FIXED: Updated database update method
     func updateUserProfileImage(imageUrl: String, completion: @escaping (Bool) -> Void) {
         guard let currentUser = Auth.auth().currentUser else {
             completion(false)
@@ -159,10 +155,19 @@ class ProfileViewModel: ObservableObject {
         }
         
         let userRef = db.collection("users").document(currentUser.uid)
-        userRef.updateData(["profileImageUrl": imageUrl]) { [weak self] error in
+        
+        // FIXED: Update both avatarUrl and profileImageUrl for backward compatibility
+        let updateData: [String: Any] = [
+            "avatarUrl": imageUrl,
+            "profileImageUrl": imageUrl, // Keep for backward compatibility
+            "updatedAt": FieldValue.serverTimestamp()
+        ]
+        
+        userRef.updateData(updateData) { [weak self] error in
             guard let self = self else { return }
             
             if let error = error {
+                print("DEBUG: Error updating profile image in Firestore: \(error.localizedDescription)")
                 DispatchQueue.main.async {
                     self.errorMessage = "Failed to update profile: \(error.localizedDescription)"
                 }
@@ -170,6 +175,7 @@ class ProfileViewModel: ObservableObject {
                 return
             }
             
+            print("DEBUG: Successfully updated profile image in Firestore")
             completion(true)
         }
     }

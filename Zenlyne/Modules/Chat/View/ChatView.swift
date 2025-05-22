@@ -297,45 +297,45 @@ struct MessageRow: View {
     }
 }
 
-struct AvatarView: View {
-    let user: User?
-    
-    var body: some View {
-        ZStack {
-            Circle()
-                .fill(Color.blue.opacity(0.2))
-            
-            if let profileImage = user?.profileImageUrl {
-                AsyncImage(url: URL(string: profileImage)) { image in
-                    image
-                        .resizable()
-                        .scaledToFill()
-                } placeholder: {
-                    Text(user?.initials ?? "?")
-                        .font(.caption)
-                        .foregroundColor(.blue)
-                }
-                .clipShape(Circle())
-            } else {
-                Text(user?.initials ?? "?")
-                    .font(.caption)
-                    .foregroundColor(.blue)
-            }
-            
-            // Online status indicator
-            if let isOnline = user?.isOnline, isOnline {
-                Circle()
-                    .fill(Color.green)
-                    .frame(width: 8, height: 8)
-                    .overlay(
-                        Circle()
-                            .stroke(Color.white, lineWidth: 1)
-                    )
-                    .position(x: 22, y: 22)
-            }
-        }
-    }
-}
+//struct AvatarView: View {
+//    let user: User?
+//    
+//    var body: some View {
+//        ZStack {
+//            Circle()
+//                .fill(Color.blue.opacity(0.2))
+//            
+//            if let profileImage = user?.profileImageUrl {
+//                AsyncImage(url: URL(string: profileImage)) { image in
+//                    image
+//                        .resizable()
+//                        .scaledToFill()
+//                } placeholder: {
+//                    Text(user?.initials ?? "?")
+//                        .font(.caption)
+//                        .foregroundColor(.blue)
+//                }
+//                .clipShape(Circle())
+//            } else {
+//                Text(user?.initials ?? "?")
+//                    .font(.caption)
+//                    .foregroundColor(.blue)
+//            }
+//            
+//            // Online status indicator
+//            if let isOnline = user?.isOnline, isOnline {
+//                Circle()
+//                    .fill(Color.green)
+//                    .frame(width: 8, height: 8)
+//                    .overlay(
+//                        Circle()
+//                            .stroke(Color.white, lineWidth: 1)
+//                    )
+//                    .position(x: 22, y: 22)
+//            }
+//        }
+//    }
+//}
 
 struct FriendProfileView: View {
     let user: User
