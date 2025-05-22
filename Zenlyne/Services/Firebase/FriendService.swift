@@ -112,16 +112,17 @@ extension FirebaseService {
     func getPendingFriendRequestsCount(for userId: String, completion: @escaping (Int) -> Void) {
         let db = Firestore.firestore()
         
-        db.collection("friend_requests")
-            .whereField("recipientId", isEqualTo: userId)
+        db.collection("friendRequests")
+            .whereField("receiverId", isEqualTo: userId)
             .whereField("status", isEqualTo: "pending")
             .getDocuments { snapshot, error in
-                guard let documents = snapshot?.documents else {
+                if let error = error {
+                    print("DEBUG: Error getting pending requests: \(error.localizedDescription)")
                     completion(0)
                     return
                 }
                 
-                completion(documents.count)
+                completion(snapshot?.documents.count ?? 0)
             }
     }
     
@@ -236,26 +237,27 @@ extension FirebaseService {
     // Delete friend
     func removeFriend(currentUserId: String, friendId: String, completion: @escaping (Bool) -> Void) {
         let db = Firestore.firestore()
-        let currentUserRef = db.collection("users").document(currentUserId)
-        let friendRef = db.collection("users").document(friendId)
         
-        db.runTransaction { (transaction, errorPointer) -> Any? in
-            // Remove friends from the current user's list
-            transaction.updateData([
-                "friendIds": FieldValue.arrayRemove([friendId])
-            ], forDocument: currentUserRef)
-            
-            // Remove the current user from your friends list
-            transaction.updateData([
-                "friendIds": FieldValue.arrayRemove([currentUserId])
-            ], forDocument: friendRef)
-            
-            return nil
-        } completion: { (_, error) in
+        // Remove friend from current user's friendIds
+        db.collection("users").document(currentUserId).updateData([
+            "friendIds": FieldValue.arrayRemove([friendId])
+        ]) { error in
             if let error = error {
-                print("Lỗi khi xóa bạn bè: \(error.localizedDescription)")
+                print("DEBUG: Error removing friend from current user: \(error.localizedDescription)")
                 completion(false)
-            } else {
+                return
+            }
+            
+            // Remove current user from friend's friendIds
+            db.collection("users").document(friendId).updateData([
+                "friendIds": FieldValue.arrayRemove([currentUserId])
+            ]) { error in
+                if let error = error {
+                    print("DEBUG: Error removing current user from friend: \(error.localizedDescription)")
+                    completion(false)
+                    return
+                }
+                
                 completion(true)
             }
         }

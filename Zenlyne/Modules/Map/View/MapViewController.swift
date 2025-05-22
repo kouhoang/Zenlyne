@@ -29,11 +29,15 @@ struct MapViewController: View {
     @State private var clusterPanelOffset: CGSize = .zero
     @State private var clusterPanelHeight: CGFloat = 400  // Default height, will be adjusted dynamically
     
+    // FIXED: Add state to force map refresh
+    @State private var mapRefreshTrigger = false
+    
     var body: some View {
         ZStack {
-            // Base Map View
+            // Base Map View - FIXED: Add refresh trigger
             MapViewRepresentable(viewModel: viewModel)
                 .ignoresSafeArea()
+                .id(mapRefreshTrigger) // Force refresh when trigger changes
             
             // Overlay Views
             VStack {
@@ -237,6 +241,9 @@ struct MapViewController: View {
         if let user = authViewModel.currentUser {
             print("DEBUG: Current user set: \(user.fullName)")
             viewModel.currentUser = user
+            
+            // FIXED: Load current user's avatar from database
+            loadCurrentUserAvatar()
         } else if let currentUserId = Auth.auth().currentUser?.uid,
                   let email = Auth.auth().currentUser?.email {
             // Create a temporary user if authViewModel.currentUser is nil
@@ -247,9 +254,39 @@ struct MapViewController: View {
                 email: email
             )
             viewModel.currentUser = tempUser
+            
+            // FIXED: Load avatar for temp user too
+            loadCurrentUserAvatar()
         } else {
             print("DEBUG: No current user available")
         }
+    }
+    
+    // FIXED: Add method to load current user avatar
+    private func loadCurrentUserAvatar() {
+        guard let currentUserId = Auth.auth().currentUser?.uid else { return }
+        
+        let firebaseService = FirebaseService()
+        firebaseService.getUserAvatar(userId: currentUserId) { avatarUrl in
+            DispatchQueue.main.async {
+                if let avatarUrl = avatarUrl {
+                    print("DEBUG: Loaded current user avatar: \(avatarUrl)")
+                    self.viewModel.currentUser.avatarUrl = avatarUrl
+                    self.viewModel.currentUser.profileImageUrl = avatarUrl
+                    
+                    // Force refresh of map markers
+                    self.refreshMapMarkers()
+                } else {
+                    print("DEBUG: No avatar found for current user")
+                }
+            }
+        }
+    }
+    
+    // FIXED: Add method to refresh map markers when avatar changes
+    private func refreshMapMarkers() {
+        // Trigger a refresh of the map view to update markers
+        mapRefreshTrigger.toggle()
     }
     
     private func loadFriendsAndStartObserving() {
@@ -287,6 +324,25 @@ struct MapViewController: View {
                 
                 // Make sure the location is focused on the selected friend
                 self.viewModel.focusOnFriendLocation(friendId: friendId)
+            }
+        }
+        
+        // FIXED: Listen for when user avatar is loaded from database
+        NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("UserAvatarLoaded"),
+            object: nil,
+            queue: .main
+        ) { notification in
+            if let userInfo = notification.userInfo,
+               let userId = userInfo["userId"] as? String,
+               let avatarUrl = userInfo["avatarUrl"] as? String,
+               userId == Auth.auth().currentUser?.uid {
+                print("DEBUG: User avatar loaded from database: \(avatarUrl)")
+                self.viewModel.currentUser.avatarUrl = avatarUrl
+                self.viewModel.currentUser.profileImageUrl = avatarUrl
+                
+                // Force refresh map markers
+                self.refreshMapMarkers()
             }
         }
         
@@ -824,7 +880,6 @@ struct EnhancedFriendClusterSelectionView: View {
                 
                 // Navigate button
                 Button(action: {
-                    // This would navigate to this location
                     print("Navigate tapped")
                 }) {
                     HStack(spacing: 8) {

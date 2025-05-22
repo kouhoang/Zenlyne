@@ -206,20 +206,9 @@ struct MapViewRepresentable: UIViewRepresentable {
             
             let annotationImage = renderer.image { ctx in
                 let rectangle = CGRect(x: 0, y: 0, width: size, height: size)
-                
-                // Create gradient background
-                let colors = [
-                    UIColor(red: 0.2, green: 0.6, blue: 1.0, alpha: 0.9).cgColor,
-                    UIColor(red: 0.0, green: 0.4, blue: 0.9, alpha: 0.9).cgColor
-                ]
-                let gradient = CGGradient(
-                    colorsSpace: CGColorSpaceCreateDeviceRGB(),
-                    colors: colors as CFArray,
-                    locations: [0.0, 1.0]
-                )!
-                
-                // Apply rounded corners
                 let cornerRadius: CGFloat = 14
+                
+                // Apply rounded corners for clipping
                 let bezierPath = UIBezierPath(
                     roundedRect: rectangle,
                     cornerRadius: cornerRadius
@@ -227,35 +216,9 @@ struct MapViewRepresentable: UIViewRepresentable {
                 ctx.cgContext.addPath(bezierPath.cgPath)
                 ctx.cgContext.clip()
                 
-                // Draw gradient
-                ctx.cgContext.drawLinearGradient(
-                    gradient,
-                    start: CGPoint(x: 0, y: 0),
-                    end: CGPoint(x: size, y: size),
-                    options: []
-                )
-                
-                // Draw glowing border
-                let borderPath = UIBezierPath(
-                    roundedRect: rectangle.insetBy(dx: 2, dy: 2),
-                    cornerRadius: cornerRadius - 2
-                )
-                ctx.cgContext.setStrokeColor(UIColor.white.cgColor)
-                ctx.cgContext.setLineWidth(2.5)
-                ctx.cgContext.addPath(borderPath.cgPath)
-                ctx.cgContext.strokePath()
-                
-                // Create circle within marker for avatar/initials
-                let avatarRect = CGRect(x: 8, y: 8, width: size - 16, height: size - 16)
-                let avatarPath = UIBezierPath(ovalIn: avatarRect)
-                
-                // Clear shadow for avatar
-                ctx.cgContext.setShadow(offset: .zero, blur: 0, color: nil)
-                
                 // Try to load and draw user avatar if available
                 var drawnAvatar = false
                 
-                // FIXED: Use currentAvatarUrl instead of currentAvatarUrl
                 if let avatarUrl = viewModel.currentUser.currentAvatarUrl,
                    let url = URL(string: avatarUrl) {
                     
@@ -274,39 +237,64 @@ struct MapViewRepresentable: UIViewRepresentable {
                     _ = semaphore.wait(timeout: .now() + 2.0)
                     
                     if let image = avatarImage {
-                        // Draw avatar image
-                        ctx.cgContext.addPath(avatarPath.cgPath)
-                        ctx.cgContext.clip()
-                        image.draw(in: avatarRect)
+                        // Draw avatar image filling the entire rounded rectangle
+                        image.draw(in: rectangle)
                         drawnAvatar = true
                     }
                 }
                 
                 if !drawnAvatar {
-                    // Draw blue background for avatar fallback
-                    ctx.cgContext.setFillColor(UIColor(red: 0.0, green: 0.3, blue: 0.8, alpha: 0.5).cgColor)
-                    ctx.cgContext.addPath(avatarPath.cgPath)
-                    ctx.cgContext.fillPath()
+                    // Create gradient background as fallback
+                    let colors = [
+                        UIColor(red: 0.2, green: 0.6, blue: 1.0, alpha: 0.9).cgColor,
+                        UIColor(red: 0.0, green: 0.4, blue: 0.9, alpha: 0.9).cgColor
+                    ]
+                    let gradient = CGGradient(
+                        colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                        colors: colors as CFArray,
+                        locations: [0.0, 1.0]
+                    )!
+                    
+                    // Draw gradient background
+                    ctx.cgContext.drawLinearGradient(
+                        gradient,
+                        start: CGPoint(x: 0, y: 0),
+                        end: CGPoint(x: size, y: size),
+                        options: []
+                    )
                     
                     // Get initials for avatar fallback
                     let initials = viewModel.currentUser.initials
                     
-                    // Draw initials in center of avatar circle
+                    // Draw initials in center
                     let paragraphStyle = NSMutableParagraphStyle()
                     paragraphStyle.alignment = .center
                     
                     let attributes: [NSAttributedString.Key: Any] = [
-                        .font: UIFont.systemFont(ofSize: 18, weight: .bold),
+                        .font: UIFont.systemFont(ofSize: 20, weight: .bold),
                         .foregroundColor: UIColor.white,
                         .paragraphStyle: paragraphStyle
                     ]
                     
                     let attributedString = NSAttributedString(string: initials, attributes: attributes)
                     
-                    // Calculate position to place text in center of avatar
-                    let textRect = CGRect(x: 8, y: (size - 20) / 2, width: size - 16, height: 20)
+                    // Calculate position to place text in center
+                    let textRect = CGRect(x: 0, y: (size - 24) / 2, width: size, height: 24)
                     attributedString.draw(in: textRect)
                 }
+                
+                // Reset clipping path for border
+                ctx.cgContext.resetClip()
+                
+                // Draw glowing border around the rounded rectangle
+                let borderPath = UIBezierPath(
+                    roundedRect: rectangle.insetBy(dx: 1.5, dy: 1.5),
+                    cornerRadius: cornerRadius - 1.5
+                )
+                ctx.cgContext.setStrokeColor(UIColor.white.cgColor)
+                ctx.cgContext.setLineWidth(3.0)
+                ctx.cgContext.addPath(borderPath.cgPath)
+                ctx.cgContext.strokePath()
             }
             
             // Add the image to the style with proper error handling
@@ -415,90 +403,15 @@ struct MapViewRepresentable: UIViewRepresentable {
             
             let annotationImage = renderer.image { ctx in
                 let rectangle = CGRect(x: 0, y: 0, width: size, height: size)
-                
-                // Define corner radius
                 let cornerRadius: CGFloat = 12
                 
-                // Create gradient background - different colors for online/offline
-                let colors: [CGColor]
-                if isOnline {
-                    // Orange color for online friends
-                    colors = [
-                        UIColor(red: 1.0, green: 0.5, blue: 0.0, alpha: 0.9).cgColor,
-                        UIColor(red: 0.8, green: 0.3, blue: 0.0, alpha: 0.9).cgColor
-                    ]
-                } else {
-                    // Gray color for offline friends
-                    colors = [
-                        UIColor(red: 0.5, green: 0.5, blue: 0.5, alpha: 0.9).cgColor,
-                        UIColor(red: 0.3, green: 0.3, blue: 0.3, alpha: 0.9).cgColor
-                    ]
-                }
-                
-                let gradient = CGGradient(
-                    colorsSpace: CGColorSpaceCreateDeviceRGB(),
-                    colors: colors as CFArray,
-                    locations: [0.0, 1.0]
-                )!
-                
-                // Apply rounded corners
+                // Apply rounded corners for clipping
                 let bezierPath = UIBezierPath(
                     roundedRect: rectangle,
                     cornerRadius: cornerRadius
                 )
                 ctx.cgContext.addPath(bezierPath.cgPath)
                 ctx.cgContext.clip()
-                
-                // Draw gradient
-                ctx.cgContext.drawLinearGradient(
-                    gradient,
-                    start: CGPoint(x: 0, y: 0),
-                    end: CGPoint(x: size, y: size),
-                    options: []
-                )
-                
-                // Draw glowing border
-                let borderPath = UIBezierPath(
-                    roundedRect: rectangle.insetBy(dx: 2, dy: 2),
-                    cornerRadius: cornerRadius - 2
-                )
-                ctx.cgContext.setStrokeColor(UIColor.white.cgColor)
-                ctx.cgContext.setLineWidth(2.5)
-                ctx.cgContext.addPath(borderPath.cgPath)
-                ctx.cgContext.strokePath()
-                
-                // Add subtle inner shadow
-                ctx.cgContext.setShadow(
-                    offset: CGSize(width: 0, height: 1),
-                    blur: 3,
-                    color: UIColor.black.withAlphaComponent(0.2).cgColor
-                )
-                
-                // Get initials from name for avatar fallback
-                let fullName = name ?? "Friend"
-                let formatter = PersonNameComponentsFormatter()
-                var initials = ""
-                if let components = formatter.personNameComponents(from: fullName) {
-                    formatter.style = .abbreviated
-                    initials = formatter.string(from: components)
-                } else {
-                    // Fallback if formatter fails
-                    let words = fullName.split(separator: " ")
-                    if words.count > 1 {
-                        initials = String(words[0].prefix(1)) + String(words.last!.prefix(1))
-                    } else if !words.isEmpty {
-                        initials = String(words[0].prefix(1))
-                    } else {
-                        initials = "?"
-                    }
-                }
-                
-                // Create circle within marker for avatar/initials
-                let avatarRect = CGRect(x: 8, y: 8, width: size - 16, height: size - 16)
-                let avatarPath = UIBezierPath(ovalIn: avatarRect)
-                
-                // Clear shadow for avatar
-                ctx.cgContext.setShadow(offset: .zero, blur: 0, color: nil)
                 
                 // FIXED: Try to load friend avatar if available
                 var drawnAvatar = false
@@ -519,41 +432,96 @@ struct MapViewRepresentable: UIViewRepresentable {
                     _ = semaphore.wait(timeout: .now() + 1.0)
                     
                     if let image = avatarImage {
-                        // Draw avatar image
-                        ctx.cgContext.addPath(avatarPath.cgPath)
-                        ctx.cgContext.clip()
-                        image.draw(in: avatarRect)
+                        // Draw avatar image filling the entire rounded rectangle
+                        image.draw(in: rectangle)
                         drawnAvatar = true
                     }
                 }
                 
                 if !drawnAvatar {
-                    // Draw blue background for avatar
-                    ctx.cgContext.setFillColor(UIColor(red: 0.0, green: 0.5, blue: 1.0, alpha: 0.5).cgColor)
-                    ctx.cgContext.addPath(avatarPath.cgPath)
-                    ctx.cgContext.fillPath()
+                    // Create gradient background - different colors for online/offline
+                    let colors: [CGColor]
+                    if isOnline {
+                        // Orange color for online friends
+                        colors = [
+                            UIColor(red: 1.0, green: 0.5, blue: 0.0, alpha: 0.9).cgColor,
+                            UIColor(red: 0.8, green: 0.3, blue: 0.0, alpha: 0.9).cgColor
+                        ]
+                    } else {
+                        // Gray color for offline friends
+                        colors = [
+                            UIColor(red: 0.5, green: 0.5, blue: 0.5, alpha: 0.9).cgColor,
+                            UIColor(red: 0.3, green: 0.3, blue: 0.3, alpha: 0.9).cgColor
+                        ]
+                    }
                     
-                    // Draw initials in center of avatar circle
+                    let gradient = CGGradient(
+                        colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                        colors: colors as CFArray,
+                        locations: [0.0, 1.0]
+                    )!
+                    
+                    // Draw gradient background
+                    ctx.cgContext.drawLinearGradient(
+                        gradient,
+                        start: CGPoint(x: 0, y: 0),
+                        end: CGPoint(x: size, y: size),
+                        options: []
+                    )
+                    
+                    // Get initials from name for avatar fallback
+                    let fullName = name ?? "Friend"
+                    let formatter = PersonNameComponentsFormatter()
+                    var initials = ""
+                    if let components = formatter.personNameComponents(from: fullName) {
+                        formatter.style = .abbreviated
+                        initials = formatter.string(from: components)
+                    } else {
+                        // Fallback if formatter fails
+                        let words = fullName.split(separator: " ")
+                        if words.count > 1 {
+                            initials = String(words[0].prefix(1)) + String(words.last!.prefix(1))
+                        } else if !words.isEmpty {
+                            initials = String(words[0].prefix(1))
+                        } else {
+                            initials = "?"
+                        }
+                    }
+                    
+                    // Draw initials in center
                     let paragraphStyle = NSMutableParagraphStyle()
                     paragraphStyle.alignment = .center
                     
                     let attributes: [NSAttributedString.Key: Any] = [
-                        .font: UIFont.systemFont(ofSize: 18, weight: .bold),
+                        .font: UIFont.systemFont(ofSize: 20, weight: .bold),
                         .foregroundColor: UIColor.white,
                         .paragraphStyle: paragraphStyle
                     ]
                     
                     let attributedString = NSAttributedString(string: initials, attributes: attributes)
                     
-                    // Calculate position to place text in center of avatar
-                    let textRect = CGRect(x: 8, y: (size - 20) / 2, width: size - 16, height: 20)
+                    // Calculate position to place text in center
+                    let textRect = CGRect(x: 0, y: (size - 24) / 2, width: size, height: 24)
                     attributedString.draw(in: textRect)
                 }
                 
+                // Reset clipping path for border and status dot
+                ctx.cgContext.resetClip()
+                
+                // Draw glowing border around the rounded rectangle
+                let borderPath = UIBezierPath(
+                    roundedRect: rectangle.insetBy(dx: 1.5, dy: 1.5),
+                    cornerRadius: cornerRadius - 1.5
+                )
+                ctx.cgContext.setStrokeColor(UIColor.white.cgColor)
+                ctx.cgContext.setLineWidth(3.0)
+                ctx.cgContext.addPath(borderPath.cgPath)
+                ctx.cgContext.strokePath()
+                
                 // Draw online/offline status dot
-                let statusDotSize: CGFloat = 10
-                let statusDotX = size - statusDotSize - 5
-                let statusDotY = 5 + statusDotSize/2
+                let statusDotSize: CGFloat = 12
+                let statusDotX = size - statusDotSize - 2
+                let statusDotY = 2 + statusDotSize/2
                 
                 let statusColor = isOnline ? UIColor.green : UIColor.red
                 ctx.cgContext.setFillColor(statusColor.cgColor)
@@ -566,7 +534,7 @@ struct MapViewRepresentable: UIViewRepresentable {
                 
                 // Add white border to status dot
                 ctx.cgContext.setStrokeColor(UIColor.white.cgColor)
-                ctx.cgContext.setLineWidth(1.0)
+                ctx.cgContext.setLineWidth(2.0)
                 ctx.cgContext.strokeEllipse(in: CGRect(
                     x: statusDotX - statusDotSize/2,
                     y: statusDotY - statusDotSize/2,
@@ -834,9 +802,9 @@ struct MapViewRepresentable: UIViewRepresentable {
             mapView.camera.fly(
                 to: CameraOptions(
                     center: clusterCenter,
-                    zoom: max(15.5, mapView.cameraState.zoom + 0.5),
-                    bearing: mapView.cameraState.bearing,
-                    pitch: mapView.cameraState.pitch
+                    zoom: max(15.5, mapView.mapboxMap.cameraState.zoom + 0.5),
+                    bearing: mapView.mapboxMap.cameraState.bearing,
+                    pitch: mapView.mapboxMap.cameraState.pitch
                 ),
                 duration: 0.5
             )

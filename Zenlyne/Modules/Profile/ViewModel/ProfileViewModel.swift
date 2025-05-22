@@ -67,8 +67,20 @@ class ProfileViewModel: ObservableObject {
                     let avatarUrl = data["avatarUrl"] as? String ?? data["profileImageUrl"] as? String
                     if let avatarUrl = avatarUrl, let url = URL(string: avatarUrl) {
                         self.loadProfileImage(from: url)
+                        
+                        // FIXED: Also notify other parts of the app about the avatar
+                        NotificationCenter.default.post(
+                            name: NSNotification.Name("UserAvatarLoaded"),
+                            object: nil,
+                            userInfo: [
+                                "userId": currentUser.uid,
+                                "avatarUrl": avatarUrl
+                            ]
+                        )
                     }
                 }
+            } else {
+                print("DEBUG: No user document found in Firestore")
             }
         }
     }
