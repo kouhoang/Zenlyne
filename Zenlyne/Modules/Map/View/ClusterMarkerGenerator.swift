@@ -9,86 +9,71 @@ import UIKit
 import MapboxMaps
 
 class ClusterMarkerGenerator {
-    // Generate a marker image for a cluster of friends
-    static func generateClusterMarker(
-        count: Int,
-        friendInitials: [String] = [],
-        isOnline: Bool = true
-    ) -> UIImage {
-        let size: CGFloat = 70 // Marker size (slightly larger to accommodate previews)
-        let renderer = UIGraphicsImageRenderer(size: CGSize(width: size, height: size))
-        
-        return renderer.image { ctx in
-            // Create main circle
-            let circleRect = CGRect(x: 5, y: 5, width: size-10, height: size-10)
-            let circlePath = UIBezierPath(ovalIn: circleRect)
+     static func generateClusterMarker(
+            count: Int,
+            friendInitials: [String] = [],
+            isOnline: Bool = false
+        ) -> UIImage {
+            let size: CGFloat = 60
+            let renderer = UIGraphicsImageRenderer(size: CGSize(width: size, height: size))
             
-            // Fill background with gradient
-            let colors: [CGColor]
-            if isOnline {
-                // Orange gradient for online clusters
-                colors = [
-                    UIColor(red: 1.0, green: 0.6, blue: 0.2, alpha: 0.9).cgColor,
-                    UIColor(red: 0.9, green: 0.4, blue: 0.0, alpha: 0.9).cgColor
+            return renderer.image { ctx in
+                let rectangle = CGRect(x: 0, y: 0, width: size, height: size)
+                
+                // Choose colors based on online status
+                let colors: [CGColor]
+                if isOnline {
+                    colors = [
+                        UIColor(red: 0.0, green: 0.8, blue: 0.0, alpha: 0.9).cgColor,
+                        UIColor(red: 0.0, green: 0.6, blue: 0.0, alpha: 0.9).cgColor
+                    ]
+                } else {
+                    colors = [
+                        UIColor(red: 0.6, green: 0.6, blue: 0.6, alpha: 0.9).cgColor,
+                        UIColor(red: 0.4, green: 0.4, blue: 0.4, alpha: 0.9).cgColor
+                    ]
+                }
+                
+                let gradient = CGGradient(
+                    colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                    colors: colors as CFArray,
+                    locations: [0.0, 1.0]
+                )!
+                
+                // Draw circular background
+                ctx.cgContext.addEllipse(in: rectangle)
+                ctx.cgContext.clip()
+                
+                // Draw gradient
+                ctx.cgContext.drawLinearGradient(
+                    gradient,
+                    start: CGPoint(x: 0, y: 0),
+                    end: CGPoint(x: size, y: size),
+                    options: []
+                )
+                
+                // Draw border
+                ctx.cgContext.setStrokeColor(UIColor.white.cgColor)
+                ctx.cgContext.setLineWidth(3.0)
+                ctx.cgContext.strokeEllipse(in: rectangle.insetBy(dx: 1.5, dy: 1.5))
+                
+                // Draw count text
+                let paragraphStyle = NSMutableParagraphStyle()
+                paragraphStyle.alignment = .center
+                
+                let attributes: [NSAttributedString.Key: Any] = [
+                    .font: UIFont.systemFont(ofSize: 20, weight: .bold),
+                    .foregroundColor: UIColor.white,
+                    .paragraphStyle: paragraphStyle
                 ]
-            } else {
-                // Gray gradient for offline clusters
-                colors = [
-                    UIColor(red: 0.6, green: 0.6, blue: 0.6, alpha: 0.9).cgColor,
-                    UIColor(red: 0.4, green: 0.4, blue: 0.4, alpha: 0.9).cgColor
-                ]
-            }
-            
-            let gradient = CGGradient(
-                colorsSpace: CGColorSpaceCreateDeviceRGB(),
-                colors: colors as CFArray,
-                locations: [0.0, 1.0]
-            )!
-            
-            ctx.cgContext.addPath(circlePath.cgPath)
-            ctx.cgContext.clip()
-            
-            ctx.cgContext.drawRadialGradient(
-                gradient,
-                startCenter: CGPoint(x: size/2, y: size/2),
-                startRadius: 0,
-                endCenter: CGPoint(x: size/2, y: size/2),
-                endRadius: size/2,
-                options: []
-            )
-            
-            // Draw a white border
-            ctx.cgContext.resetClip()
-            ctx.cgContext.setStrokeColor(UIColor.white.cgColor)
-            ctx.cgContext.setLineWidth(3)
-            ctx.cgContext.addPath(circlePath.cgPath)
-            ctx.cgContext.strokePath()
-            
-            // Add subtle inner shadow
-            ctx.cgContext.setShadow(
-                offset: CGSize(width: 0, height: 1),
-                blur: 3,
-                color: UIColor.black.withAlphaComponent(0.2).cgColor
-            )
-            
-            // For clusters with 2-4 friends, show mini avatars in a nice arrangement
-            if count >= 2 && count <= 4 && !friendInitials.isEmpty {
-                drawFriendPreviewAvatars(ctx: ctx, count: count, friendInitials: friendInitials, size: size)
-            } else {
-                // For larger clusters, just show the count
-                let countText = "+\(count)"
-                drawClusterCount(ctx: ctx, text: countText, size: size)
-            }
-            
-            // Add expand indicator to suggest tapping
-            drawExpandIndicator(ctx: ctx, size: size, isOnline: isOnline)
-            
-            // Draw online status indicator if any friends are online
-            if isOnline {
-                drawOnlineIndicator(ctx: ctx, size: size)
+                
+                let countText = "\(count)"
+                let attributedString = NSAttributedString(string: countText, attributes: attributes)
+                
+                let textRect = CGRect(x: 0, y: (size - 24) / 2, width: size, height: 24)
+                attributedString.draw(in: textRect)
             }
         }
-    }
     
     // Draw preview avatars for small clusters (2-4 friends)
     private static func drawFriendPreviewAvatars(

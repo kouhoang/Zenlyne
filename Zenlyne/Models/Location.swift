@@ -8,6 +8,14 @@
 import Foundation
 import CoreLocation
 
+// Extension for UserLocation
+extension UserLocation {
+    func toCoordinate() -> CLLocationCoordinate2D {
+        return CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+    }
+}
+
+// MARK: - UserLocation struct definition (if not defined elsewhere)
 struct UserLocation: Codable {
     let latitude: Double
     let longitude: Double
@@ -23,9 +31,5 @@ struct UserLocation: Codable {
         self.latitude = coordinate.latitude
         self.longitude = coordinate.longitude
         self.timestamp = timestamp
-    }
-    
-    func toCoordinate() -> CLLocationCoordinate2D {
-        return CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
     }
 }

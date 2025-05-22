@@ -504,7 +504,7 @@ class FirebaseService: FirebaseServiceProtocol {
     func testSaveLocationToFirestore(userId: String) {
         let db = Firestore.firestore()
         let testLocation: [String: Any] = [
-            "latitude": 10.762622,
+            "latitude": 20.762622,
             "longitude": 105.660172,
             "timestamp": Date().timeIntervalSince1970,
             "updatedAt": FieldValue.serverTimestamp(),

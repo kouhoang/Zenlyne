@@ -1,136 +1,103 @@
 //
-//  LocationGroup.swift
+//  FriendLocationGrouper.swift
 //  Zenlyne
-//
-//  Created by admin on 20/5/25.
 //
 
 import Foundation
 import CoreLocation
-import MapboxMaps
 
-// Enhanced structure to store grouped locations with relative positions
+enum LocationGroupType {
+    case single
+    case cluster
+}
+
 struct LocationGroup {
-    enum GroupType {
-        case single
-        case cluster     // Multiple friends, show as cluster
-    }
-    
-    let centerCoordinate: CLLocationCoordinate2D
+    let type: LocationGroupType
     let friendIds: [String]
-    let type: GroupType
-    
-    // New property: Store relative positions for friends in this cluster
-    // Key: friendId, Value: Relative position within cluster
+    let centerCoordinate: CLLocationCoordinate2D
+    let count: Int
     var relativePositions: [String: CLLocationCoordinate2D] = [:]
     
-    var count: Int {
-        return friendIds.count
-    }
-    
-    // Generate well-distributed relative positions for friends in this cluster
-    mutating func generateRelativePositions(radius: Double = 20.0) {
-        // Clear existing positions
-        relativePositions = [:]
-        
-        // If only one friend, position at center
-        if friendIds.count == 1, let friendId = friendIds.first {
-            relativePositions[friendId] = centerCoordinate
+    mutating func generateRelativePositions(radius: Double) {
+        guard count > 1 else {
+            // Single friend, just use center
+            if let friendId = friendIds.first {
+                relativePositions[friendId] = centerCoordinate
+            }
             return
         }
         
-        // For multiple friends, create a nice arrangement
-        let positions = calculateOffsetPositions(center: centerCoordinate, count: friendIds.count, radius: radius)
+        let positions = calculateOffsetPositions(
+            center: centerCoordinate,
+            count: count,
+            radius: radius
+        )
         
-        // Assign positions to friends
         for (index, friendId) in friendIds.enumerated() {
             if index < positions.count {
                 relativePositions[friendId] = positions[index]
-            } else {
-                // Fallback to center if we somehow have more friends than positions
-                relativePositions[friendId] = centerCoordinate
             }
         }
     }
     
-    // Calculate evenly distributed positions around center
     private func calculateOffsetPositions(center: CLLocationCoordinate2D, count: Int, radius: Double) -> [CLLocationCoordinate2D] {
         guard count > 0 else { return [] }
         
         var positions: [CLLocationCoordinate2D] = []
         
-        // If only one friend, return the center
         if count == 1 {
             positions.append(center)
             return positions
         }
         
-        // For 2-3 friends, create a more pleasing pattern
         if count == 2 {
-            // For 2 friends, place them horizontally next to each other
-            let latOffset = 0.0
             let lonFactor = cos(center.latitude * Double.pi / 180.0)
-            
-            // Friend 1 (left)
             let lonOffset1 = -radius / (111111.0 * lonFactor)
+            let lonOffset2 = radius / (111111.0 * lonFactor)
+            
             positions.append(CLLocationCoordinate2D(
                 latitude: center.latitude,
                 longitude: center.longitude + lonOffset1
             ))
-            
-            // Friend 2 (right)
-            let lonOffset2 = radius / (111111.0 * lonFactor)
             positions.append(CLLocationCoordinate2D(
                 latitude: center.latitude,
                 longitude: center.longitude + lonOffset2
             ))
         } else if count == 3 {
-            // For 3 friends, place them in a triangle formation
+            // Triangle formation for 3 friends
             let lonFactor = cos(center.latitude * Double.pi / 180.0)
             
-            // Friend 1 (top)
-            let latOffset1 = radius / 111111.0
+            // Top
             positions.append(CLLocationCoordinate2D(
-                latitude: center.latitude + latOffset1,
+                latitude: center.latitude + radius / 111111.0,
                 longitude: center.longitude
             ))
             
-            // Friend 2 (bottom left)
-            let latOffset2 = -radius / (2 * 111111.0)
-            let lonOffset2 = -radius / (111111.0 * lonFactor)
+            // Bottom left
             positions.append(CLLocationCoordinate2D(
-                latitude: center.latitude + latOffset2,
-                longitude: center.longitude + lonOffset2
+                latitude: center.latitude - radius / (2 * 111111.0),
+                longitude: center.longitude - radius / (111111.0 * lonFactor)
             ))
             
-            // Friend 3 (bottom right)
-            let latOffset3 = -radius / (2 * 111111.0)
-            let lonOffset3 = radius / (111111.0 * lonFactor)
+            // Bottom right
             positions.append(CLLocationCoordinate2D(
-                latitude: center.latitude + latOffset3,
-                longitude: center.longitude + lonOffset3
+                latitude: center.latitude - radius / (2 * 111111.0),
+                longitude: center.longitude + radius / (111111.0 * lonFactor)
             ))
         } else {
-            // For more than 3 friends, calculate positions in a circle
+            // Circle formation for 4+ friends
             let angleStep = (2.0 * Double.pi) / Double(count)
             
             for i in 0..<count {
                 let angle = Double(i) * angleStep
-                
-                // Convert meters to coordinate space
-                // ~111,111 meters per degree of latitude
                 let latOffset = (radius * sin(angle)) / 111111.0
-                
-                // Longitude degrees vary based on latitude
                 let lonFactor = cos(center.latitude * Double.pi / 180.0)
                 let lonOffset = (radius * cos(angle)) / (111111.0 * lonFactor)
                 
-                let position = CLLocationCoordinate2D(
+                positions.append(CLLocationCoordinate2D(
                     latitude: center.latitude + latOffset,
                     longitude: center.longitude + lonOffset
-                )
-                
-                positions.append(position)
+                ))
             }
         }
         
@@ -138,159 +105,182 @@ struct LocationGroup {
     }
 }
 
-// Enhanced class for grouping friend locations with expanded clusters support
 class FriendLocationGrouper {
-    // Distance threshold in meters (5 meters = very close proximity)
-    private let proximityThreshold: Double = 5.0
-    
-    // Minimum friends required to form a cluster (at least 2)
-    private let minFriendsForCluster: Int = 2
-    
-    // Track expanded clusters by ID
+    private var currentZoomLevel: Double = 14.0
     var expandedClusterIds: Set<String> = []
     
-    // Current zoom level for dynamic adjustments
-    private var currentZoomLevel: Double = 14.0
+    // MARK: - Public Methods
     
-    // Method to set current zoom level
     func updateZoomLevel(_ zoomLevel: Double) {
         currentZoomLevel = zoomLevel
+        print("DEBUG: FriendLocationGrouper zoom level updated to: \(zoomLevel)")
     }
     
-    // Toggle expansion state for a specific cluster
-    func toggleClusterExpansion(clusterId: String) -> Bool {
-        if expandedClusterIds.contains(clusterId) {
-            expandedClusterIds.remove(clusterId)
-            return false // Now collapsed
-        } else {
-            expandedClusterIds.insert(clusterId)
-            return true // Now expanded
-        }
-    }
-    
-    // Check if a cluster is expanded
-    func isClusterExpanded(clusterId: String) -> Bool {
-        return expandedClusterIds.contains(clusterId)
-    }
-    
-    // Group friend locations based on proximity
     func groupFriendLocations(_ friendLocations: [String: UserLocation]) -> [LocationGroup] {
-        // Early exit if no locations
-        if friendLocations.isEmpty {
-            return []
-        }
+        print("DEBUG: Grouping \(friendLocations.count) friend locations at zoom level \(currentZoomLevel)")
         
-        // Convert to array for easier processing
-        var locations: [(friendId: String, location: CLLocationCoordinate2D)] = []
-        for (friendId, userLocation) in friendLocations {
-            locations.append((friendId, userLocation.toCoordinate()))
-        }
-        
-        // Temporary storage for processed locations
-        var processedLocations = Set<String>()
         var groups: [LocationGroup] = []
+        var processedFriends: Set<String> = []
         
-        // Process each location
-        for (currentFriendId, currentLocation) in locations {
-            // Skip if already processed
-            if processedLocations.contains(currentFriendId) {
+        let clusterRadius = getClusterRadius()
+        print("DEBUG: Using cluster radius: \(clusterRadius)m")
+        
+        for (friendId, location) in friendLocations {
+            if processedFriends.contains(friendId) {
                 continue
             }
             
-            // Mark as processed
-            processedLocations.insert(currentFriendId)
+            let coordinate = location.toCoordinate()
+            var nearbyFriends: [String] = [friendId]
+            var totalLat = coordinate.latitude
+            var totalLon = coordinate.longitude
             
-            // Find nearby friends
-            var nearbyFriendIds: [String] = [currentFriendId]
+            processedFriends.insert(friendId)
             
-            for (otherFriendId, otherLocation) in locations {
-                // Skip if the same friend or already processed
-                if otherFriendId == currentFriendId || processedLocations.contains(otherFriendId) {
+            // Find nearby friends within cluster radius
+            for (otherId, otherLocation) in friendLocations {
+                if processedFriends.contains(otherId) {
                     continue
                 }
                 
-                // Calculate distance between locations
-                let currentCLLocation = CLLocation(latitude: currentLocation.latitude, longitude: currentLocation.longitude)
-                let otherCLLocation = CLLocation(latitude: otherLocation.latitude, longitude: otherLocation.longitude)
+                let otherCoordinate = otherLocation.toCoordinate()
+                let distance = coordinate.distance(to: otherCoordinate)
                 
-                let distanceInMeters = currentCLLocation.distance(from: otherCLLocation)
-                
-                // If within threshold, add to nearby friends
-                if distanceInMeters <= adjustProximityThreshold(for: currentZoomLevel) {
-                    nearbyFriendIds.append(otherFriendId)
-                    processedLocations.insert(otherFriendId)
+                if distance <= clusterRadius {
+                    nearbyFriends.append(otherId)
+                    processedFriends.insert(otherId)
+                    totalLat += otherCoordinate.latitude
+                    totalLon += otherCoordinate.longitude
+                    
+                    print("DEBUG: Friend \(otherId) is \(distance)m from \(friendId), adding to cluster")
                 }
             }
             
-            // Determine group type based on number of friends
-            let groupType: LocationGroup.GroupType
-            if nearbyFriendIds.count < minFriendsForCluster {
-                groupType = .single
-            } else {
-                groupType = .cluster
-            }
-            
-            // Create group with the center as the average of all locations
-            let centerCoordinate = calculateCenterCoordinate(for: nearbyFriendIds, in: friendLocations)
-            
-            var group = LocationGroup(
-                centerCoordinate: centerCoordinate,
-                friendIds: nearbyFriendIds,
-                type: groupType
+            // Calculate center coordinate for the group
+            let centerCoordinate = CLLocationCoordinate2D(
+                latitude: totalLat / Double(nearbyFriends.count),
+                longitude: totalLon / Double(nearbyFriends.count)
             )
             
-            // Generate relative positions for friends in this cluster
-            group.generateRelativePositions(radius: 20.0)
+            let groupType: LocationGroupType = nearbyFriends.count > 1 ? .cluster : .single
+            var group = LocationGroup(
+                type: groupType,
+                friendIds: nearbyFriends,
+                centerCoordinate: centerCoordinate,
+                count: nearbyFriends.count
+            )
+            
+            // Generate relative positions for cluster members
+            if groupType == .cluster {
+                group.generateRelativePositions(radius: min(clusterRadius / 2, 30.0))
+                print("DEBUG: Created cluster with \(nearbyFriends.count) friends at \(centerCoordinate.latitude), \(centerCoordinate.longitude)")
+            } else {
+                print("DEBUG: Created single friend group for \(friendId)")
+            }
             
             groups.append(group)
         }
         
+        print("DEBUG: Created \(groups.count) location groups")
         return groups
     }
     
-    // Calculate center coordinate for a group of friends
-    private func calculateCenterCoordinate(for friendIds: [String], in friendLocations: [String: UserLocation]) -> CLLocationCoordinate2D {
-        var totalLat: Double = 0
-        var totalLon: Double = 0
-        var count: Double = 0
-        
-        for friendId in friendIds {
-            if let location = friendLocations[friendId] {
-                totalLat += location.latitude
-                totalLon += location.longitude
-                count += 1
-            }
-        }
-        
-        if count > 0 {
-            return CLLocationCoordinate2D(
-                latitude: totalLat / count,
-                longitude: totalLon / count
-            )
+    func toggleClusterExpansion(clusterId: String) -> Bool {
+        if expandedClusterIds.contains(clusterId) {
+            expandedClusterIds.remove(clusterId)
+            print("DEBUG: Collapsed cluster: \(clusterId)")
+            return false // Now collapsed
         } else {
-            // Fallback if no valid locations (shouldn't happen)
-            return CLLocationCoordinate2D(latitude: 0, longitude: 0)
+            expandedClusterIds.insert(clusterId)
+            print("DEBUG: Expanded cluster: \(clusterId)")
+            return true // Now expanded
         }
     }
     
-    // Adjust proximity threshold based on zoom level
-    func adjustProximityThreshold(for zoomLevel: Double) -> Double {
-        // At higher zoom levels (closer), we want a smaller threshold
-        // At zoom 20 (very close), use 2 meters
-        // At zoom 15 (city level), use the normal threshold
-        // At zoom 10 (region level), use a larger threshold
+    func isClusterExpanded(clusterId: String) -> Bool {
+        return expandedClusterIds.contains(clusterId)
+    }
+    
+    func expandAllClusters() {
+        // This could be called when zooming in
+        print("DEBUG: Expanding all clusters")
+    }
+    
+    func collapseAllClusters() {
+        expandedClusterIds.removeAll()
+        print("DEBUG: Collapsed all clusters")
+    }
+    
+    // MARK: - Private Methods
+    
+    private func getClusterRadius() -> Double {
+        // Adjust cluster radius based on zoom level
+        // Higher zoom = smaller radius (more precise clustering)
+        // Lower zoom = larger radius (more aggressive clustering)
         
-        if zoomLevel >= 18 {
-            // Very close zoom
-            return max(2.0, proximityThreshold * 0.4)
-        } else if zoomLevel >= 15 {
-            // City level zoom
-            return proximityThreshold
-        } else {
-            // Further zoomed out
-            // Increase threshold as zoom decreases
-            let factor = max(1.0, (15 - zoomLevel) * 0.5)
-            return proximityThreshold * factor
+        switch currentZoomLevel {
+        case 0...8:
+            return 5000.0 // 5km - very aggressive clustering for world/country view
+        case 8...10:
+            return 2000.0 // 2km - city level clustering
+        case 10...12:
+            return 1000.0 // 1km - district level clustering
+        case 12...14:
+            return 500.0  // 500m - neighborhood level clustering
+        case 14...16:
+            return 200.0  // 200m - street level clustering
+        case 16...18:
+            return 100.0  // 100m - block level clustering
+        default:
+            return 50.0   // 50m - very precise clustering for high zoom
         }
+    }
+    
+    private func shouldAutoExpand() -> Bool {
+        // Auto-expand clusters at high zoom levels
+        return currentZoomLevel >= 16.0
+    }
+    
+    private func shouldAutoCollapse() -> Bool {
+        // Auto-collapse clusters at low zoom levels
+        return currentZoomLevel <= 12.0
+    }
+    
+    // MARK: - Debugging Methods
+    
+    func debugPrintGroups(_ groups: [LocationGroup]) {
+        print("DEBUG: === Location Groups Debug ===")
+        for (index, group) in groups.enumerated() {
+            print("DEBUG: Group \(index + 1):")
+            print("  Type: \(group.type)")
+            print("  Count: \(group.count)")
+            print("  Center: \(group.centerCoordinate.latitude), \(group.centerCoordinate.longitude)")
+            print("  Friends: \(group.friendIds.joined(separator: ", "))")
+            
+            if group.type == .cluster {
+                let clusterId = group.friendIds.sorted().joined(separator: "_")
+                print("  Cluster ID: \(clusterId)")
+                print("  Expanded: \(isClusterExpanded(clusterId: clusterId))")
+                
+                if !group.relativePositions.isEmpty {
+                    print("  Relative Positions:")
+                    for (friendId, position) in group.relativePositions {
+                        print("    \(friendId): \(position.latitude), \(position.longitude)")
+                    }
+                }
+            }
+        }
+        print("DEBUG: === End Groups Debug ===")
+    }
+}
+
+// MARK: - Extensions
+
+// Extension to calculate distance between coordinates
+extension CLLocationCoordinate2D {
+    func distance(to coordinate: CLLocationCoordinate2D) -> Double {
+        let location1 = CLLocation(latitude: self.latitude, longitude: self.longitude)
+        let location2 = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
+        return location1.distance(from: location2)
     }
 }
