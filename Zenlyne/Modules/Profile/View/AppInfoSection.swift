@@ -79,7 +79,7 @@ struct AppInfoSection: View {
                     .padding()
                 }
             }
-            .background(Color.black.opacity(0.3))
+            .background(Color.black)
             .cornerRadius(10)
             .padding(.horizontal)
         }
