@@ -187,7 +187,6 @@ class ProfileViewModel: ObservableObject {
                 return
             }
             
-            print("DEBUG: Successfully updated profile image in Firestore")
             completion(true)
         }
     }
@@ -197,7 +196,7 @@ class ProfileViewModel: ObservableObject {
     func updateUserName(completion: @escaping (Bool) -> Void) {
         guard !newFullName.isEmpty else {
             DispatchQueue.main.async {
-                self.errorMessage = "Name cannot be empty"
+                self.errorMessage = "Tên không thể trống"
             }
             completion(false)
             return
@@ -245,7 +244,7 @@ class ProfileViewModel: ObservableObject {
                     // Update was successful
                     self.userFullName = self.newFullName
                     self.isEditingName = false
-                    self.successMessage = "Name updated successfully"
+                    self.successMessage = "Đã cập nhật tên thành công"
                     completion(true)
                 }
             }
@@ -255,7 +254,7 @@ class ProfileViewModel: ObservableObject {
     func updatePassword(completion: @escaping (Bool) -> Void) {
         guard newPassword.count >= 6 else {
             DispatchQueue.main.async {
-                self.errorMessage = "Password must be at least 6 characters"
+                self.errorMessage = "Mật khẩu phải tối thiểu 6 ký tự"
             }
             completion(false)
             return
@@ -263,7 +262,7 @@ class ProfileViewModel: ObservableObject {
         
         guard newPassword == confirmPassword else {
             DispatchQueue.main.async {
-                self.errorMessage = "Passwords do not match"
+                self.errorMessage = "Mật khẩu không khớp"
             }
             completion(false)
             return
@@ -287,7 +286,7 @@ class ProfileViewModel: ObservableObject {
             if let error = error {
                 DispatchQueue.main.async {
                     self.isLoading = false
-                    self.errorMessage = "Current password is incorrect: \(error.localizedDescription)"
+                    self.errorMessage = "Mật khẩu hiện tại không chính xác: \(error.localizedDescription)"
                 }
                 completion(false)
                 return
@@ -312,7 +311,7 @@ class ProfileViewModel: ObservableObject {
                     self.newPassword = ""
                     self.confirmPassword = ""
                     
-                    self.successMessage = "Password updated successfully"
+                    self.successMessage = "Đã cập nhật mật khẩu thành công"
                     completion(true)
                 }
             }

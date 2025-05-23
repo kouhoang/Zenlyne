@@ -230,8 +230,6 @@ class AppDelegate: NSObject, UIApplicationDelegate {
     func setUserOffline() {
         guard let userId = Auth.auth().currentUser?.uid else { return }
         
-        print("DEBUG: Setting user offline: \(userId)")
-        
         // Use your existing firebaseService
         firebaseService.setUserOnlineStatus(userId: userId, isOnline: false)
     }
