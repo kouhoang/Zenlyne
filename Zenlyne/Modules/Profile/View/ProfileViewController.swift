@@ -25,9 +25,9 @@ struct ProfileViewController: View {
         NavigationView {
             ScrollView {
                 LazyVStack(spacing: 0) {
-                    // Profile Section
+                    // Profile Section with Background Image
                     VStack(alignment: .leading) {
-                        Text("Profile")
+                        Text("Hồ sơ")
                             .font(.headline)
                             .foregroundColor(.gray)
                             .padding(.horizontal)
@@ -99,10 +99,11 @@ struct ProfileViewController: View {
                             // Full Name section
                             if viewModel.isEditingName {
                                 HStack {
-                                    TextField("Full Name", text: $viewModel.newFullName)
+                                    TextField("Tên", text: $viewModel.newFullName)
                                         .font(.headline)
                                         .autocapitalization(.words)
                                         .disableAutocorrection(true)
+                                        .foregroundColor(.black)
                                     
                                     Spacer()
                                     
@@ -112,7 +113,7 @@ struct ProfileViewController: View {
                                         }) {
                                             Image(systemName: "xmark.circle.fill")
                                                 .foregroundColor(.red)
-                                                .frame(width: 44, height: 44) // Larger touch target
+                                                .frame(width: 44, height: 44)
                                         }
                                         
                                         Button(action: {
@@ -124,7 +125,7 @@ struct ProfileViewController: View {
                                         }) {
                                             Image(systemName: "checkmark.circle.fill")
                                                 .foregroundColor(.green)
-                                                .frame(width: 44, height: 44) // Larger touch target
+                                                .frame(width: 44, height: 44)
                                         }
                                     }
                                 }
@@ -134,6 +135,7 @@ struct ProfileViewController: View {
                                     Text(viewModel.userFullName)
                                         .font(.headline)
                                         .fontWeight(.bold)
+                                        .foregroundColor(.black)
                                     
                                     Spacer()
                                     
@@ -150,23 +152,33 @@ struct ProfileViewController: View {
                                 .background(Color.clear)
                             }
                             
-                            // Email - Not interactive, just display
+                            // Email
                             HStack {
                                 Text(viewModel.userEmail)
                                     .font(.subheadline)
-                                    .foregroundColor(.gray)
+                                    .foregroundColor(.black.opacity(0.8))
                             }
                         }
                         .frame(maxWidth: .infinity)
                         .padding()
-                        .background(Color(UIColor.systemBackground))
+                        .background(
+                            // Background image with overlay
+                            ZStack {
+                                Image("pink-yellow-plain")
+                                    .resizable()
+                                    .scaledToFill()
+                                    .clipped()
+                                
+                                Color.black.opacity(0.1)
+                            }
+                        )
                         .cornerRadius(10)
                         .padding(.horizontal)
                     }
                     
                     // Account settings section
                     VStack(alignment: .leading) {
-                        Text("Account Settings")
+                        Text("Cài đặt tài khoản")
                             .font(.headline)
                             .foregroundColor(.gray)
                             .padding(.horizontal)
@@ -177,15 +189,15 @@ struct ProfileViewController: View {
                             // Change Password
                             if viewModel.isEditingPassword {
                                 VStack(spacing: 15) {
-                                    SecureField("Current Password", text: $viewModel.currentPassword)
+                                    SecureField("Mật khẩu hiện tại", text: $viewModel.currentPassword)
                                         .textContentType(.password)
                                         .padding(.vertical, 8)
                                     
-                                    SecureField("New Password", text: $viewModel.newPassword)
+                                    SecureField("Mật khẩu mới", text: $viewModel.newPassword)
                                         .textContentType(.newPassword)
                                         .padding(.vertical, 8)
                                     
-                                    SecureField("Confirm New Password", text: $viewModel.confirmPassword)
+                                    SecureField("Xác nhận lại mật khẩu mới", text: $viewModel.confirmPassword)
                                         .textContentType(.newPassword)
                                         .padding(.vertical, 8)
                                     
@@ -195,7 +207,7 @@ struct ProfileViewController: View {
                                         Button(action: {
                                             viewModel.cancelPasswordEdit()
                                         }) {
-                                            Text("Cancel")
+                                            Text("Huỷ")
                                                 .foregroundColor(.red)
                                         }
                                         .padding(.trailing, 10)
@@ -208,7 +220,7 @@ struct ProfileViewController: View {
                                                 }
                                             }
                                         }) {
-                                            Text("Update Password")
+                                            Text("Cập nhật mật khẩu")
                                                 .foregroundColor(.blue)
                                         }
                                         .disabled(viewModel.currentPassword.isEmpty ||
@@ -219,15 +231,16 @@ struct ProfileViewController: View {
                                     }
                                 }
                                 .padding()
-                                .background(Color(UIColor.systemBackground))
+                                .background(Color.black)
                             } else {
                                 Button(action: {
                                     viewModel.isEditingPassword = true
                                 }) {
                                     HStack {
-                                        Image(systemName: "lock.fill")
-                                            .foregroundColor(.blue)
-                                        Text("Change Password")
+                                        IconContainer(systemName: "lock.fill")
+                                        
+                                        Text("Thay đổi mật khẩu")
+                                            .foregroundColor(.white)
                                         Spacer()
                                     }
                                     .padding()
@@ -237,13 +250,15 @@ struct ProfileViewController: View {
                             }
                             
                             Divider()
+                                .background(Color.gray.opacity(0.3))
                             
                             // Privacy Settings
                             NavigationLink(destination: PrivacySettingsView()) {
                                 HStack {
-                                    Image(systemName: "hand.raised.fill")
-                                        .foregroundColor(.blue)
-                                    Text("Privacy Settings")
+                                    IconContainer(systemName: "hand.raised.fill")
+                                    
+                                    Text("Cài đặt Quyền riêng tư")
+                                        .foregroundColor(.white)
                                     Spacer()
                                 }
                                 .padding()
@@ -252,13 +267,15 @@ struct ProfileViewController: View {
                             .buttonStyle(PlainButtonStyle())
                             
                             Divider()
+                                .background(Color.gray.opacity(0.3))
                             
                             // Notification Settings
                             NavigationLink(destination: NotificationSettingsView()) {
                                 HStack {
-                                    Image(systemName: "bell.fill")
-                                        .foregroundColor(.blue)
-                                    Text("Notification Settings")
+                                    IconContainer(systemName: "bell.fill")
+                                    
+                                    Text("Cài đặt thông báo")
+                                        .foregroundColor(.white)
                                     Spacer()
                                 }
                                 .padding()
@@ -266,14 +283,14 @@ struct ProfileViewController: View {
                             }
                             .buttonStyle(PlainButtonStyle())
                         }
-                        .background(Color(UIColor.systemBackground))
+                        .background(Color.black)
                         .cornerRadius(10)
                         .padding(.horizontal)
                     }
                     
                     // Application info section
                     VStack(alignment: .leading) {
-                        Text("App Information")
+                        Text("Thông tin ứng dụng")
                             .font(.headline)
                             .foregroundColor(.gray)
                             .padding(.horizontal)
@@ -282,9 +299,10 @@ struct ProfileViewController: View {
                         
                         VStack(spacing: 0) {
                             HStack {
-                                Image(systemName: "info.circle.fill")
-                                    .foregroundColor(.blue)
-                                Text("About Zenlyne")
+                                IconContainer(systemName: "info.circle.fill")
+                                
+                                Text("Về Zenlyne")
+                                    .foregroundColor(.white)
                                 Spacer()
                                 Text("Version 1.0.0")
                                     .foregroundColor(.gray)
@@ -293,12 +311,14 @@ struct ProfileViewController: View {
                             .padding()
                             
                             Divider()
+                                .background(Color.gray.opacity(0.3))
                             
                             NavigationLink(destination: HelpSupportView()) {
                                 HStack {
-                                    Image(systemName: "questionmark.circle.fill")
-                                        .foregroundColor(.blue)
-                                    Text("Help & Support")
+                                    IconContainer(systemName: "questionmark.circle.fill")
+                                    
+                                    Text("Trợ giúp và Hỗ trợ")
+                                        .foregroundColor(.white)
                                     Spacer()
                                 }
                                 .padding()
@@ -307,12 +327,14 @@ struct ProfileViewController: View {
                             .buttonStyle(PlainButtonStyle())
                             
                             Divider()
+                                .background(Color.gray.opacity(0.3))
                             
                             Link(destination: URL(string: "https://zenlyne.app/terms")!) {
                                 HStack {
-                                    Image(systemName: "doc.text.fill")
-                                        .foregroundColor(.blue)
-                                    Text("Terms of Service")
+                                    IconContainer(systemName: "doc.text.fill")
+                                    
+                                    Text("Điều khoản dịch vụ")
+                                        .foregroundColor(.white)
                                     Spacer()
                                     Image(systemName: "arrow.up.forward.app")
                                         .foregroundColor(.gray)
@@ -321,12 +343,14 @@ struct ProfileViewController: View {
                             }
                             
                             Divider()
+                                .background(Color.gray.opacity(0.3))
                             
                             Link(destination: URL(string: "https://zenlyne.app/privacy")!) {
                                 HStack {
-                                    Image(systemName: "shield.fill")
-                                        .foregroundColor(.blue)
-                                    Text("Privacy Policy")
+                                    IconContainer(systemName: "shield.fill")
+                                    
+                                    Text("Chính sách bảo mật")
+                                        .foregroundColor(.white)
                                     Spacer()
                                     Image(systemName: "arrow.up.forward.app")
                                         .foregroundColor(.gray)
@@ -334,14 +358,14 @@ struct ProfileViewController: View {
                                 .padding()
                             }
                         }
-                        .background(Color(UIColor.systemBackground))
+                        .background(Color.black)
                         .cornerRadius(10)
                         .padding(.horizontal)
                     }
                     
                     // Account actions section
                     VStack(alignment: .leading) {
-                        Text("Account Actions")
+                        Text("Hoạt động tài khoản")
                             .font(.headline)
                             .foregroundColor(.gray)
                             .padding(.horizontal)
@@ -353,9 +377,9 @@ struct ProfileViewController: View {
                                 authViewModel.signOut()
                             }) {
                                 HStack {
-                                    Image(systemName: "arrow.left.circle.fill")
-                                        .foregroundColor(.red)
-                                    Text("Sign Out")
+                                    IconContainer(systemName: "arrow.left.circle.fill")
+                                    
+                                    Text("Đăng xuất")
                                         .foregroundColor(.red)
                                     Spacer()
                                 }
@@ -365,14 +389,15 @@ struct ProfileViewController: View {
                             .buttonStyle(PlainButtonStyle())
                             
                             Divider()
+                                .background(Color.gray.opacity(0.3))
                             
                             Button(action: {
                                 showDeleteConfirmation = true
                             }) {
                                 HStack {
-                                    Image(systemName: "xmark.circle.fill")
-                                        .foregroundColor(.red)
-                                    Text("Delete Account")
+                                    IconContainer(systemName: "xmark.circle.fill")
+                                    
+                                    Text("Xoá tài khoản")
                                         .foregroundColor(.red)
                                     Spacer()
                                 }
@@ -381,15 +406,15 @@ struct ProfileViewController: View {
                             }
                             .buttonStyle(PlainButtonStyle())
                         }
-                        .background(Color(UIColor.systemBackground))
+                        .background(Color.black)
                         .cornerRadius(10)
                         .padding(.horizontal)
                     }
                 }
             }
-            .navigationTitle("Profile")
+            .navigationTitle("Hồ sơ")
             .navigationBarTitleDisplayMode(.inline)
-            .background(Color(UIColor.systemGroupedBackground))
+            .background(Color.black)
             .alert(isPresented: $showAlert) {
                 Alert(
                     title: Text(alertTitle),
@@ -399,10 +424,10 @@ struct ProfileViewController: View {
             }
             .actionSheet(isPresented: $showDeleteConfirmation) {
                 ActionSheet(
-                    title: Text("Delete Account"),
-                    message: Text("Are you sure you want to delete your account? This action cannot be undone and all your data will be permanently removed."),
+                    title: Text("Xóa tài khoản"),
+                    message: Text("Bạn có chắc chắn muốn xóa tài khoản của mình không? Hành động này không thể hoàn tác và tất cả dữ liệu của bạn sẽ bị xóa vĩnh viễn."),
                     buttons: [
-                        .destructive(Text("Delete Account")) {
+                        .destructive(Text("Xoá tài khoản")) {
                             // Implement account deletion functionality
                             deleteAccount()
                         },
@@ -569,25 +594,25 @@ struct SuccessBanner: View {
 struct PrivacySettingsView: View {
     var body: some View {
         List {
-            Section(header: Text("Location Sharing")) {
-                Toggle("Share My Location", isOn: .constant(true))
+            Section(header: Text("Chia sẻ vị trí")) {
+                Toggle("Chia sẻ vị trí của tôi", isOn: .constant(true))
                     .tint(.blue)
                 
-                Toggle("Show My Online Status", isOn: .constant(true))
+                Toggle("Hiện thị trạng thái trực tuyến", isOn: .constant(true))
                     .tint(.blue)
                 
-                Toggle("Show Last Seen Time", isOn: .constant(true))
+                Toggle("Hiển thị thời gian nhìn thấy lần cuối", isOn: .constant(true))
                     .tint(.blue)
             }
             
-            Section(header: Text("Who Can See My Location")) {
-                NavigationLink(destination: Text("Location Permission Settings")) {
-                    Text("Friends Only")
+            Section(header: Text("Ai có thể thấy vị trí của tôi?")) {
+                NavigationLink(destination: Text("Cài đặt quyền vị trí")) {
+                    Text("Chỉ bạn bè")
                 }
             }
             
-            Section(header: Text("Data Privacy")) {
-                Button("Download My Data") {
+            Section(header: Text("Quyền riêng tư dữ liệu")) {
+                Button("Tải xuống dữ liệu của tôi") {
                     // Implement data download
                 }
                 
@@ -596,52 +621,53 @@ struct PrivacySettingsView: View {
                 }
             }
         }
-        .navigationTitle("Privacy Settings")
+        .navigationTitle("Cài đặt quyền riêng tư")
+        .background(.black.opacity(0.7))
     }
 }
 
 struct NotificationSettingsView: View {
     var body: some View {
         List {
-            Section(header: Text("Push Notifications")) {
-                Toggle("Friend Requests", isOn: .constant(true))
+            Section(header: Text("Thông báo đẩy")) {
+                Toggle("Yêu cầu kết bạn", isOn: .constant(true))
                     .tint(.blue)
                 
-                Toggle("Friend Location Updates", isOn: .constant(true))
+                Toggle("Cập nhật vị trí bạn bè", isOn: .constant(true))
                     .tint(.blue)
                 
-                Toggle("Messages", isOn: .constant(true))
+                Toggle("Tin nhắn", isOn: .constant(true))
                     .tint(.blue)
                 
-                Toggle("Friend Activity", isOn: .constant(true))
+                Toggle("Hoạt động của bạn bè", isOn: .constant(true))
                     .tint(.blue)
             }
             
-            Section(header: Text("Email Notifications")) {
-                Toggle("Account Updates", isOn: .constant(true))
+            Section(header: Text("Thông báo qua Email")) {
+                Toggle("Cập nhật tài khoản", isOn: .constant(true))
                     .tint(.blue)
                 
-                Toggle("Security Alerts", isOn: .constant(true))
+                Toggle("Cảnh báo bảo mật", isOn: .constant(true))
                     .tint(.blue)
                 
                 Toggle("Newsletter", isOn: .constant(false))
                     .tint(.blue)
             }
         }
-        .navigationTitle("Notifications")
+        .navigationTitle("Thông báo")
     }
 }
 
 struct HelpSupportView: View {
     var body: some View {
         List {
-            Section(header: Text("Support")) {
+            Section(header: Text("Hỗ trợ")) {
                 NavigationLink(destination: FAQView()) {
-                    Text("Frequently Asked Questions")
+                    Text("Những câu hỏi thường gặp")
                 }
                 
-                NavigationLink(destination: Text("Tutorial Content")) {
-                    Text("How to Use Zenlyne")
+                NavigationLink(destination: Text("Nội dung hướng dẫn")) {
+                    Text("Làm sao để sử dụng Zenlyne")
                 }
                 
                 Button(action: {
@@ -650,25 +676,25 @@ struct HelpSupportView: View {
                         UIApplication.shared.open(url)
                     }
                 }) {
-                    Text("Contact Support")
+                    Text("Liên hệ hỗ trợ")
                 }
             }
             
-            Section(header: Text("Troubleshooting")) {
+            Section(header: Text("Xử lý sự cố")) {
                 Button(action: {
                     // Implement refresh data action
                 }) {
-                    Text("Refresh Location Data")
+                    Text("Làm mới dữ liệu vị trí")
                 }
                 
                 Button(action: {
                     // Implement clear cache action
                 }) {
-                    Text("Clear App Cache")
+                    Text("Xoá Cache")
                 }
             }
             
-            Section(header: Text("About")) {
+            Section(header: Text("Về")) {
                 HStack {
                     Text("Version")
                     Spacer()
@@ -677,14 +703,14 @@ struct HelpSupportView: View {
                 }
                 
                 HStack {
-                    Text("Device ID")
+                    Text("ID thiết bị")
                     Spacer()
-                    Text(UIDevice.current.identifierForVendor?.uuidString.prefix(8) ?? "Unknown")
+                    Text(UIDevice.current.identifierForVendor?.uuidString.prefix(8) ?? "Không rõ")
                         .foregroundColor(.gray)
                 }
             }
         }
-        .navigationTitle("Help & Support")
+        .navigationTitle("Trợ giúp và Hỗ trợ")
     }
 }
 
@@ -730,7 +756,7 @@ struct FAQItem: View {
                     Spacer()
                     
                     Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                        .foregroundColor(.blue)
+                        .foregroundColor(.black)
                 }
             }
             
