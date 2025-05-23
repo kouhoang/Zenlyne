@@ -36,19 +36,20 @@ struct ChatView: View {
             
             ZStack {
                 // Background
-                Color(.systemGroupedBackground).ignoresSafeArea()
+                Color.black.ignoresSafeArea()
                 
                 VStack(spacing: 0) {
                     if viewModel.isLoading && viewModel.messages.isEmpty {
                         Spacer()
                         ProgressView()
+                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
                             .scaleEffect(1.5)
                         Spacer()
                     } else {
                         // Messages list
                         ScrollViewReader { scrollView in
                             ScrollView {
-                                LazyVStack(spacing: 8) {
+                                LazyVStack(spacing: 12) {
                                     ForEach(viewModel.messages) { message in
                                         MessageRow(message: message, otherUser: otherUser)
                                             .id(message.id)
@@ -59,16 +60,17 @@ struct ChatView: View {
                                         .frame(height: 1)
                                         .id("bottom")
                                 }
-                                .padding(.horizontal)
-                                .padding(.top, 8)
+                                .padding(.horizontal, 16)
+                                .padding(.top, 16)
+                                .padding(.bottom, 8)
                             }
                             .onChange(of: viewModel.messages.count) { _ in
-                                withAnimation {
+                                withAnimation(.easeOut(duration: 0.3)) {
                                     scrollView.scrollTo("bottom", anchor: .bottom)
                                 }
                             }
                             .onChange(of: scrollToBottom) { _ in
-                                withAnimation {
+                                withAnimation(.easeOut(duration: 0.3)) {
                                     scrollView.scrollTo("bottom", anchor: .bottom)
                                 }
                             }
@@ -81,41 +83,41 @@ struct ChatView: View {
                         }
                         
                         // Message input bar
-                        HStack(spacing: 8) {
-                            // Message text field
-                            ZStack {
-                                RoundedRectangle(cornerRadius: 20)
-                                    .fill(Color(.systemBackground))
-                                
-                                TextEditor(text: $viewModel.newMessageText)
+                        HStack(spacing: 12) {
+                            // Message text field container
+                            HStack(spacing: 8) {
+                                TextField("Gửi tin nhắn...", text: $viewModel.newMessageText, axis: .vertical)
                                     .focused($isInputFocused)
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 8)
-                                    .background(Color.clear)
-                                    .frame(minHeight: 40)
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 12)
+                                    .background(Color(.systemGray5))
+                                    .cornerRadius(24)
+                                    .lineLimit(1...4)
                             }
-                            .frame(minHeight: 40, maxHeight: 120)
                             
                             // Send button
                             Button(action: sendMessage) {
-                                Circle()
-                                    .fill(Color.blue)
-                                    .frame(width: 40, height: 40)
-                                    .overlay(
-                                        Image(systemName: "arrow.up")
-                                            .font(.system(size: 18, weight: .bold))
-                                            .foregroundColor(.white)
+                                Image(systemName: "arrow.up")
+                                    .font(.system(size: 16, weight: .bold))
+                                    .foregroundColor(.white)
+                                    .frame(width: 36, height: 36)
+                                    .background(
+                                        Circle()
+                                            .fill(viewModel.newMessageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?
+                                                  Color.gray : Color.blue)
                                     )
                             }
                             .disabled(viewModel.newMessageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         }
-                        .padding(.horizontal)
-                        .padding(.vertical, 8)
-                        .background(Color(.systemBackground))
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 12)
+                        .background(Color.black)
                     }
                 }
             }
         }
+        .background(Color.black.ignoresSafeArea())
         .onAppear {
             if let otherUserId = otherUserId {
                 // Start real-time message loading
@@ -157,20 +159,21 @@ struct ChatHeaderView: View {
     
     var body: some View {
         HStack(spacing: 12) {
-            // Close button
+            // Back button
             Button(action: onDismiss) {
-                Image(systemName: "xmark.circle.fill")
+                Image(systemName: "chevron.left")
                     .font(.title2)
-                    .foregroundColor(.gray)
+                    .fontWeight(.medium)
+                    .foregroundColor(.white)
             }
-            .padding(.leading, 8)
+            .padding(.leading, 4)
             
             // User avatar
             Button(action: onProfileTap) {
                 ZStack {
                     Circle()
-                        .fill(Color.blue.opacity(0.2))
-                        .frame(width: 36, height: 36)
+                        .fill(Color.gray.opacity(0.3))
+                        .frame(width: 40, height: 40)
                     
                     if let profileImage = user?.profileImageUrl {
                         AsyncImage(url: URL(string: profileImage)) { image in
@@ -179,27 +182,15 @@ struct ChatHeaderView: View {
                                 .scaledToFill()
                         } placeholder: {
                             Text(user?.initials ?? "")
-                                .font(.caption)
-                                .foregroundColor(.blue)
+                                .font(.subheadline)
+                                .foregroundColor(.white)
                         }
-                        .frame(width: 32, height: 32)
+                        .frame(width: 36, height: 36)
                         .clipShape(Circle())
                     } else {
                         Text(user?.initials ?? "")
-                            .font(.caption)
-                            .foregroundColor(.blue)
-                    }
-                    
-                    // Online status dot
-                    if let isOnline = user?.isOnline, isOnline {
-                        Circle()
-                            .fill(Color.green)
-                            .frame(width: 10, height: 10)
-                            .overlay(
-                                Circle()
-                                    .stroke(Color.white, lineWidth: 1)
-                            )
-                            .position(x: 26, y: 26)
+                            .font(.subheadline)
+                            .foregroundColor(.white)
                     }
                 }
             }
@@ -208,6 +199,7 @@ struct ChatHeaderView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(user?.fullName ?? "Chat")
                     .font(.headline)
+                    .foregroundColor(.white)
                 
                 if let user = user {
                     if user.isOnline {
@@ -231,14 +223,14 @@ struct ChatHeaderView: View {
             Button(action: {}) {
                 Image(systemName: "ellipsis")
                     .font(.title3)
-                    .foregroundColor(.gray)
+                    .foregroundColor(.white)
                     .rotationEffect(.degrees(90))
             }
-            .padding(.trailing, 12)
+            .padding(.trailing, 8)
         }
-        .padding(.vertical, 10)
-        .background(Color(.systemBackground))
-        .shadow(color: Color.black.opacity(0.1), radius: 1, x: 0, y: 1)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(Color.black)
     }
     
     // Helper method to format the relative time
@@ -264,78 +256,76 @@ struct MessageRow: View {
     }
     
     var body: some View {
-        HStack {
+        HStack(alignment: .bottom, spacing: 8) {
             if isFromCurrentUser {
                 Spacer()
+                
+                VStack(alignment: .trailing, spacing: 4) {
+                    // Message bubble for current user
+                    HStack {
+                        Spacer()
+                        Text(message.content)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 10)
+                            .background(Color(.systemGray4))
+                            .foregroundColor(.black)
+                            .cornerRadius(20, corners: [.topLeft, .topRight, .bottomLeft])
+                            .frame(maxWidth: UIScreen.main.bounds.width * 0.7, alignment: .trailing)
+                    }
+                    
+                    // Timestamp
+                    Text(formatTime(message.timestamp))
+                        .font(.caption2)
+                        .foregroundColor(.gray)
+                        .padding(.trailing, 8)
+                }
             } else {
                 // Avatar for other user's messages
-                AvatarView(user: otherUser)
-                    .frame(width: 30, height: 30)
-            }
-            
-            VStack(alignment: isFromCurrentUser ? .trailing : .leading, spacing: 2) {
-                // Message bubble
-                Text(message.content)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(isFromCurrentUser ? Color.blue : Color(.systemGray5))
-                    .foregroundColor(isFromCurrentUser ? .white : .primary)
-                    .cornerRadius(16)
+                ChatAvatarView(user: otherUser, size: 32)
                 
-                // Timestamp
-                Text(formatTime(message.timestamp))
-                    .font(.caption2)
-                    .foregroundColor(.gray)
-                    .padding(.horizontal, 4)
-            }
-            
-            if !isFromCurrentUser {
+                VStack(alignment: .leading, spacing: 4) {
+                    // Message bubble for other user
+                    Text(message.content)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
+                        .background(Color(.systemGray))
+                        .foregroundColor(.white)
+                        .cornerRadius(20, corners: [.topLeft, .topRight, .bottomRight])
+                        .frame(maxWidth: UIScreen.main.bounds.width * 0.7, alignment: .leading)
+                    
+                    // Timestamp
+                    Text(formatTime(message.timestamp))
+                        .font(.caption2)
+                        .foregroundColor(.gray)
+                        .padding(.leading, 8)
+                }
+                
                 Spacer()
             }
         }
-        .padding(.vertical, 4)
     }
 }
 
-//struct AvatarView: View {
-//    let user: User?
-//    
-//    var body: some View {
-//        ZStack {
-//            Circle()
-//                .fill(Color.blue.opacity(0.2))
-//            
-//            if let profileImage = user?.profileImageUrl {
-//                AsyncImage(url: URL(string: profileImage)) { image in
-//                    image
-//                        .resizable()
-//                        .scaledToFill()
-//                } placeholder: {
-//                    Text(user?.initials ?? "?")
-//                        .font(.caption)
-//                        .foregroundColor(.blue)
-//                }
-//                .clipShape(Circle())
-//            } else {
-//                Text(user?.initials ?? "?")
-//                    .font(.caption)
-//                    .foregroundColor(.blue)
-//            }
-//            
-//            // Online status indicator
-//            if let isOnline = user?.isOnline, isOnline {
-//                Circle()
-//                    .fill(Color.green)
-//                    .frame(width: 8, height: 8)
-//                    .overlay(
-//                        Circle()
-//                            .stroke(Color.white, lineWidth: 1)
-//                    )
-//                    .position(x: 22, y: 22)
-//            }
-//        }
-//    }
-//}
+// Extension for corner radius
+extension View {
+    func cornerRadius(_ radius: CGFloat, corners: UIRectCorner) -> some View {
+        clipShape(RoundedCorner(radius: radius, corners: corners))
+    }
+}
+
+struct RoundedCorner: Shape {
+    var radius: CGFloat = .infinity
+    var corners: UIRectCorner = .allCorners
+
+    func path(in rect: CGRect) -> Path {
+        let path = UIBezierPath(
+            roundedRect: rect,
+            byRoundingCorners: corners,
+            cornerRadii: CGSize(width: radius, height: radius)
+        )
+        return Path(path.cgPath)
+    }
+}
 
 struct FriendProfileView: View {
     let user: User
@@ -344,6 +334,8 @@ struct FriendProfileView: View {
     var body: some View {
         NavigationView {
             ZStack(alignment: .topTrailing) {
+                Color.black.ignoresSafeArea()
+                
                 Button(action: {
                     presentationMode.wrappedValue.dismiss()
                 }) {
@@ -353,12 +345,12 @@ struct FriendProfileView: View {
                         .padding()
                 }
                 
-                // Main
+                // Main content
                 VStack(spacing: 20) {
                     // Profile Image
                     ZStack {
                         Circle()
-                            .fill(Color.blue.opacity(0.2))
+                            .fill(Color.gray.opacity(0.3))
                             .frame(width: 120, height: 120)
                         
                         if let profileImage = user.profileImageUrl {
@@ -369,14 +361,14 @@ struct FriendProfileView: View {
                             } placeholder: {
                                 Text(user.initials)
                                     .font(.title)
-                                    .foregroundColor(.blue)
+                                    .foregroundColor(.white)
                             }
                             .frame(width: 116, height: 116)
                             .clipShape(Circle())
                         } else {
                             Text(user.initials)
                                 .font(.title)
-                                .foregroundColor(.blue)
+                                .foregroundColor(.white)
                         }
                         
                         // Online status
@@ -386,7 +378,7 @@ struct FriendProfileView: View {
                                 .frame(width: 24, height: 24)
                                 .overlay(
                                     Circle()
-                                        .stroke(Color.white, lineWidth: 2)
+                                        .stroke(Color.black, lineWidth: 2)
                                 )
                                 .position(x: 100, y: 100)
                         }
@@ -397,6 +389,7 @@ struct FriendProfileView: View {
                     Text(user.fullName)
                         .font(.title2)
                         .fontWeight(.semibold)
+                        .foregroundColor(.white)
                     
                     if user.isOnline {
                         Text("Đang hoạt động")
@@ -421,6 +414,7 @@ struct FriendProfileView: View {
             .navigationBarTitleDisplayMode(.inline)
             .navigationBarHidden(true)
         }
+        .preferredColorScheme(.dark)
     }
 }
 
@@ -430,4 +424,5 @@ struct FriendProfileView: View {
         chatId: "test_chat_id",
         otherUserId: "test_user_id"
     )
+    .preferredColorScheme(.dark)
 }

@@ -3,7 +3,7 @@
 //  Zenlyne
 //
 //  Created by admin on 6/5/25.
-//  Updated to better support sheet presentation
+//
 
 import SwiftUI
 import FirebaseAuth
@@ -13,6 +13,7 @@ struct ConversationListView: View {
     @Environment(\.presentationMode) var presentationMode
     @State private var showNewMessageSheet = false
     @State private var searchText = ""
+    @State private var isSearching = false
     @State private var selectedChat: Chat? = nil
     @State private var selectedOtherUserId: String? = nil
     @State private var showChatView = false
@@ -21,6 +22,8 @@ struct ConversationListView: View {
     
     var body: some View {
         ZStack {
+            Color.black.ignoresSafeArea()
+            
             // Main content
             VStack(spacing: 0) {
                 // Header
@@ -28,9 +31,10 @@ struct ConversationListView: View {
                     Button(action: {
                         presentationMode.wrappedValue.dismiss()
                     }) {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.title)
-                            .foregroundColor(.gray)
+                        Image(systemName: "chevron.left")
+                            .font(.title2)
+                            .fontWeight(.medium)
+                            .foregroundColor(.white)
                     }
                     
                     Spacer()
@@ -38,59 +42,121 @@ struct ConversationListView: View {
                     Text("Tin Nhắn")
                         .font(.title)
                         .fontWeight(.bold)
+                        .foregroundColor(.white)
                     
                     Spacer()
                     
-                    Button(action: {
-                        showNewMessageSheet = true
-                    }) {
-                        Image(systemName: "square.and.pencil")
-                            .font(.title2)
-                            .foregroundColor(.blue)
+                    HStack(spacing: 12) {
+                        // Search button
+                        Button(action: {
+                            withAnimation(.easeInOut(duration: 0.3)) {
+                                isSearching.toggle()
+                                if !isSearching {
+                                    searchText = ""
+                                }
+                            }
+                        }) {
+                            IconContainer(systemName: "magnifyingglass")
+                        }
+                        
+                        // New message button
+                        Button(action: {
+                            showNewMessageSheet = true
+                        }) {
+                            IconContainer(systemName: "square.and.pencil")
+                        }
                     }
                 }
-                .padding()
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
                 
                 // Search bar
-                HStack {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundColor(.gray)
-                        .padding(.leading, 8)
-                    
-                    TextField("Tìm kiếm", text: $searchText)
-                        .padding(10)
-                    
-                    if !searchText.isEmpty {
-                        Button(action: {
-                            searchText = ""
-                        }) {
-                            Image(systemName: "xmark.circle.fill")
+                if isSearching {
+                    HStack {
+                        HStack {
+                            Image(systemName: "magnifyingglass")
                                 .foregroundColor(.gray)
+                                .font(.system(size: 16))
+                            
+                            TextField("Tìm kiếm tin nhắn...", text: $searchText)
+                                .foregroundColor(.white)
+                                .autocapitalization(.none)
+                                .disableAutocorrection(true)
+                            
+                            if !searchText.isEmpty {
+                                Button(action: {
+                                    searchText = ""
+                                }) {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .foregroundColor(.gray)
+                                        .font(.system(size: 16))
+                                }
+                            }
                         }
-                        .padding(.trailing, 8)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(Color.black)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(
+                                    LinearGradient(
+                                        gradient: Gradient(colors: [Color.pink, Color.yellow]),
+                                        startPoint: .leading,
+                                        endPoint: .trailing
+                                    ),
+                                    lineWidth: 2
+                                )
+                        )
+                        .cornerRadius(8)
+                        
+                        Button("Hủy") {
+                            withAnimation(.easeInOut(duration: 0.3)) {
+                                isSearching = false
+                                searchText = ""
+                            }
+                        }
+                        .foregroundColor(.white)
                     }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 10)
+                    .transition(.move(edge: .top).combined(with: .opacity))
                 }
-                .background(Color(.systemGray6))
-                .cornerRadius(10)
-                .padding(.horizontal)
                 
                 // Content
                 ZStack {
                     if viewModel.chats.isEmpty && !viewModel.isLoading {
                         emptyStateView
+                    } else if filteredChats.isEmpty && !searchText.isEmpty {
+                        // No search results
+                        VStack(spacing: 20) {
+                            Image(systemName: "magnifyingglass")
+                                .font(.system(size: 60))
+                                .foregroundColor(.gray)
+                            
+                            Text("Không tìm thấy kết quả")
+                                .font(.headline)
+                                .foregroundColor(.white)
+                            
+                            Text("Không có cuộc trò chuyện nào phù hợp với từ khóa \"\(searchText)\"")
+                                .font(.subheadline)
+                                .foregroundColor(.gray)
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal)
+                        }
+                        .padding()
+                        .frame(maxWidth: .infinity)
                     } else {
                         conversationsList
                     }
                     
                     if viewModel.isLoading {
                         ProgressView()
+                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
                             .scaleEffect(1.5)
-                            .progressViewStyle(CircularProgressViewStyle())
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .background(Color(.systemBackground).edgesIgnoringSafeArea(.all))
             .onAppear {
                 // Start real-time chat updates
                 viewModel.loadChats()
@@ -100,8 +166,15 @@ struct ConversationListView: View {
             }
             .sheet(isPresented: $showNewMessageSheet) {
                 NewMessageView(onSelectUser: { user in
-                    showNewMessageSheet = false
-                    openChatWithUser(user)
+                    // Don't dismiss immediately - let the sheet animation complete first
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        showNewMessageSheet = false
+                        
+                        // Add another small delay before opening chat to avoid race condition
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            openChatWithUser(user)
+                        }
+                    }
                 })
             }
             
@@ -126,10 +199,11 @@ struct ConversationListView: View {
         VStack(spacing: 20) {
             Image(systemName: "message.fill")
                 .font(.system(size: 60))
-                .foregroundColor(.blue.opacity(0.5))
+                .foregroundColor(.gray)
             
             Text("Không có tin nhắn nào")
                 .font(.headline)
+                .foregroundColor(.white)
             
             Text("Bắt đầu cuộc trò chuyện bằng cách chạm vào biểu tượng bút chì ở trên cùng")
                 .font(.subheadline)
@@ -176,9 +250,12 @@ struct ConversationListView: View {
                         Label("Xóa", systemImage: "trash")
                     }
                 }
+                .listRowBackground(Color.black)
             }
         }
         .listStyle(PlainListStyle())
+        .background(Color.black)
+        .scrollContentBackground(.hidden)
         .refreshable {
             viewModel.loadChats()
             updateContactStatuses()
@@ -263,7 +340,7 @@ struct ConversationListView: View {
     }
 }
 
-// Individual conversation row
+// Individual conversation row - similar to EnhancedFriendRow
 struct ConversationRowView: View {
     let chat: Chat
     let user: User?
@@ -307,14 +384,12 @@ struct ConversationRowView: View {
     
     var body: some View {
         HStack(spacing: 12) {
-            // Profile Photo with status indicator at bottom left
-            ZStack(alignment: .bottomLeading) {
-                // Avatar background
+            // Avatar with online/offline status - similar to EnhancedFriendRow
+            ZStack {
                 Circle()
-                    .fill(Color.blue.opacity(0.2))
-                    .frame(width: 60, height: 60)
+                    .fill(Color.gray.opacity(0.3))
+                    .frame(width: 50, height: 50)
                 
-                // User image or initials
                 if let profileImage = user?.profileImageUrl {
                     AsyncImage(url: URL(string: profileImage)) { image in
                         image
@@ -322,94 +397,141 @@ struct ConversationRowView: View {
                             .scaledToFill()
                     } placeholder: {
                         Text(user?.initials ?? "?")
-                            .font(.title2)
-                            .foregroundColor(.blue)
+                            .font(.title3)
+                            .foregroundColor(.white)
                     }
-                    .frame(width: 56, height: 56)
+                    .frame(width: 46, height: 46)
                     .clipShape(Circle())
-                    .padding(2)
                 } else {
                     Text(user?.initials ?? "?")
-                        .font(.title2)
-                        .foregroundColor(.blue)
-                        .frame(width: 56, height: 56)
-                        .padding(2)
+                        .font(.title3)
+                        .foregroundColor(.white)
                 }
                 
-                // Status indicator at bottom right
+                // Online status indicator
                 if let user = user {
                     Circle()
                         .fill(user.isOnline ? Color.green : Color.red)
                         .frame(width: 14, height: 14)
                         .overlay(
                             Circle()
-                                .stroke(Color.white, lineWidth: 2)
+                                .stroke(Color.black, lineWidth: 2)
                         )
-                        .offset(x: 38, y: -4)
+                        .position(x: 40, y: 40)
                 }
             }
-            .frame(width: 60, height: 60)
+            .frame(width: 50)
             
-            // User info and message content
-            VStack(alignment: .leading, spacing: 4) {
-                // Top row: name and time
-                HStack {
-                    // User name
-                    Text(user?.fullName ?? "Người dùng")
-                        .font(.headline)
-                        .foregroundColor(.primary)
-                    
-                    Spacer()
-                    
-                    // Message time
-                    Text(formatTime(chat.lastMessage?.timestamp))
-                        .font(.caption)
-                        .foregroundColor(.gray)
-                }
+            VStack(alignment: .leading, spacing: 0) {
+                // User name
+                Text(user?.fullName ?? "Người dùng")
+                    .font(.headline)
+                    .foregroundColor(.white)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
                 
-                // Middle row: online status text if offline
-                if let user = user, !user.isOnline {
-                    Text(lastSeenText(for: user))
-                        .font(.caption)
-                        .foregroundColor(.gray)
+                // Online status or last seen
+                Group {
+                    if let user = user {
+                        if user.isOnline {
+                            Text("Đang hoạt động")
+                                .font(.subheadline)
+                                .foregroundColor(.green)
+                        } else if let lastSeen = user.lastSeen {
+                            let formatter = RelativeDateTimeFormatter()
+                            Text("Hoạt động \(formatter.localizedString(for: lastSeen, relativeTo: Date()))")
+                                .font(.subheadline)
+                                .foregroundColor(.gray)
+                                .lineLimit(1)
+                        }
+                    }
                 }
+                .frame(height: 18)
                 
-                // Bottom row: message preview
-                HStack {
+                // Last message preview
+                Group {
                     if let lastMessage = chat.lastMessage {
-                        // Truncate message preview if too long
                         Text(lastMessage.content.count > 30 ?
                              String(lastMessage.content.prefix(30)) + "..." :
                              lastMessage.content)
-                            .font(.subheadline)
-                            .foregroundColor(chat.unreadCount > 0 ? .primary : .gray)
+                            .font(.caption)
+                            .foregroundColor(.gray)
                             .lineLimit(1)
                     } else {
                         Text("Bắt đầu trò chuyện")
-                            .font(.subheadline)
+                            .font(.caption)
                             .foregroundColor(.gray)
                             .italic()
                     }
-                    
-                    Spacer()
-                    
-                    // Unread message indicator
-                    if chat.unreadCount > 0 {
-                        Text("\(chat.unreadCount)")
-                            .font(.caption)
-                            .bold()
-                            .foregroundColor(.white)
-                            .frame(width: 20, height: 20)
-                            .background(Color.blue)
-                            .clipShape(Circle())
-                    }
+                }
+                .frame(height: 16)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            
+            Spacer()
+            
+            VStack(alignment: .trailing, spacing: 4) {
+                // Message time
+                Text(formatTime(chat.lastMessage?.timestamp))
+                    .font(.caption)
+                    .foregroundColor(.gray)
+                
+                // Unread count badge
+                if chat.unreadCount > 0 {
+                    Text("\(chat.unreadCount)")
+                        .font(.caption)
+                        .bold()
+                        .foregroundColor(.white)
+                        .frame(width: 20, height: 20)
+                        .background(Color.blue)
+                        .clipShape(Circle())
                 }
             }
+            .frame(width: 60)
         }
         .padding(.vertical, 8)
+        .frame(height: 70)
+    }
+}
+
+// Custom chat avatar view
+struct ChatAvatarView: View {
+    let user: User?
+    let size: CGFloat
+    
+    init(user: User?, size: CGFloat = 32) {
+        self.user = user
+        self.size = size
+    }
+    
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(Color.gray.opacity(0.3))
+                .frame(width: size, height: size)
+            
+            if let profileImage = user?.profileImageUrl {
+                AsyncImage(url: URL(string: profileImage)) { image in
+                    image
+                        .resizable()
+                        .scaledToFill()
+                } placeholder: {
+                    Text(user?.initials ?? "?")
+                        .font(.system(size: size * 0.4))
+                        .foregroundColor(.white)
+                }
+                .frame(width: size - 4, height: size - 4)
+                .clipShape(Circle())
+            } else {
+                Text(user?.initials ?? "?")
+                    .font(.system(size: size * 0.4))
+                    .foregroundColor(.white)
+            }
+        }
     }
 }
 
 #Preview {
     ConversationListView()
+        .preferredColorScheme(.dark)
 }
