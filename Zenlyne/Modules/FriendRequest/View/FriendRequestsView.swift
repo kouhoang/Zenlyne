@@ -19,10 +19,13 @@ struct FriendRequestsView: View {
     var body: some View {
         NavigationView {
             ZStack {
+                Color.black.ignoresSafeArea()
+                
                 VStack {
                     if viewModel.isLoading {
                         ProgressView("Đang tải...")
-                            .progressViewStyle(CircularProgressViewStyle())
+                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                            .foregroundColor(.white)
                             .scaleEffect(1.5)
                             .padding()
                     } else if viewModel.friendRequests.isEmpty {
@@ -33,6 +36,7 @@ struct FriendRequestsView: View {
                             
                             Text("Không có lời mời kết bạn")
                                 .font(.headline)
+                                .foregroundColor(.white)
                             
                             Text("Khi có người gửi lời mời kết bạn, bạn sẽ thấy họ ở đây")
                                 .font(.subheadline)
@@ -53,8 +57,12 @@ struct FriendRequestsView: View {
                                         declineFriendRequest(request)
                                     }
                                 )
+                                .listRowBackground(Color.black)
                             }
                         }
+                        .listStyle(PlainListStyle())
+                        .background(Color.black)
+                        .scrollContentBackground(.hidden)
                         .refreshable {
                             loadFriendRequests()
                         }
@@ -69,9 +77,17 @@ struct FriendRequestsView: View {
                 }
             }
             .navigationBarTitle("Lời mời kết bạn", displayMode: .inline)
-            .navigationBarItems(trailing: Button("Đóng") {
-                dismiss()
-            })
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Đóng") {
+                        dismiss()
+                    }
+                    .foregroundColor(.white)
+                }
+            }
+            .toolbarBackground(Color.black, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .onAppear {
                 loadFriendRequests()
             }
@@ -87,6 +103,7 @@ struct FriendRequestsView: View {
                 )
             }
         }
+        .preferredColorScheme(.dark)
     }
     
     func loadFriendRequests() {
@@ -127,13 +144,13 @@ struct FriendRequestRow: View {
             // Avatar
             ZStack {
                 Circle()
-                    .fill(Color.blue.opacity(0.2))
+                    .fill(Color.gray.opacity(0.3))
                     .frame(width: 50, height: 50)
                 
                 if senderImage == nil {
                     Text(getInitials(from: senderName))
                         .font(.title3)
-                        .foregroundColor(.blue)
+                        .foregroundColor(.white)
                 } else {
                     AsyncImage(url: URL(string: senderImage!)) { image in
                         image
@@ -142,7 +159,7 @@ struct FriendRequestRow: View {
                     } placeholder: {
                         Text(getInitials(from: senderName))
                             .font(.title3)
-                            .foregroundColor(.blue)
+                            .foregroundColor(.white)
                     }
                     .frame(width: 46, height: 46)
                     .clipShape(Circle())
@@ -152,6 +169,7 @@ struct FriendRequestRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(senderName.isEmpty ? request.senderEmail : senderName)
                     .font(.headline)
+                    .foregroundColor(.white)
                 
                 Text("Muốn kết bạn với bạn")
                     .font(.subheadline)
@@ -165,20 +183,33 @@ struct FriendRequestRow: View {
                 Button(action: onDecline) {
                     Image(systemName: "xmark")
                         .font(.system(size: 14, weight: .bold))
-                        .foregroundColor(.white)
-                        .padding(8)
-                        .background(Color.red)
-                        .clipShape(Circle())
+                        .foregroundColor(.gray)
+                        .frame(width: 32, height: 32)
+                        .background(Color(.systemGray5))
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
                 }
                 
                 // Accept button
                 Button(action: onAccept) {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundColor(.white)
-                        .padding(8)
-                        .background(Color.green)
-                        .clipShape(Circle())
+                    ZStack {
+                        // Gradient background matching pink-yellow-plain
+                        LinearGradient(
+                            gradient: Gradient(colors: [
+                                Color(red: 0.4, green: 0.9, blue: 0.8), // Cyan
+                                Color(red: 0.6, green: 0.4, blue: 0.9), // Purple
+                                Color(red: 1.0, green: 0.7, blue: 0.4)  // Orange/Yellow
+                            ]),
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                        .frame(width: 32, height: 32)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        
+                        Image(systemName: "person.badge.plus")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundColor(.black)
+                    }
+                    .frame(width: 32, height: 32)
                 }
             }
         }
@@ -217,5 +248,6 @@ struct FriendRequestsView_Previews: PreviewProvider {
     static var previews: some View {
         FriendRequestsView()
             .environmentObject(AuthViewModel())
+            .preferredColorScheme(.dark)
     }
 }

@@ -42,7 +42,7 @@ struct EnhancedFriendRow: View {
             }
         }
         
-        return .red
+        return .gray
     }
     
     var body: some View {
@@ -51,7 +51,7 @@ struct EnhancedFriendRow: View {
                 // Avatar with online/offline status
                 ZStack {
                     Circle()
-                        .fill(Color.blue.opacity(0.2))
+                        .fill(Color.gray.opacity(0.3))
                         .frame(width: 50, height: 50)
                     
                     if let profileImage = friend.profileImageUrl {
@@ -62,25 +62,25 @@ struct EnhancedFriendRow: View {
                         } placeholder: {
                             Text(friend.initials)
                                 .font(.title3)
-                                .foregroundColor(.blue)
+                                .foregroundColor(.white)
                         }
                         .frame(width: 46, height: 46)
                         .clipShape(Circle())
                     } else {
                         Text(friend.initials)
                             .font(.title3)
-                            .foregroundColor(.blue)
+                            .foregroundColor(.white)
                     }
                     
                     // Online status indicator
                     Circle()
                         .fill(isOnline ? Color.green : Color.red)
-                        .frame(width: 14, height: 14)
+                        .frame(width: 10, height: 10)
                         .overlay(
                             Circle()
-                                .stroke(Color.white, lineWidth: 2)
+                                .stroke(Color.black, lineWidth: 2)
                         )
-                        .position(x: 40, y: 40)
+                        .position(x: 43, y: 43)
                 }
                 .frame(width: 50)
                 
@@ -89,6 +89,7 @@ struct EnhancedFriendRow: View {
                     // Use lineLimit to limit the length of the username
                     Text(friend.fullName)
                         .font(.headline)
+                        .foregroundColor(.white)
                         .lineLimit(1)
                         .truncationMode(.tail)
                     
@@ -153,6 +154,7 @@ struct EnhancedFriendRow: View {
             .frame(height: 70)
         }
         .buttonStyle(PlainButtonStyle())
+        .listRowBackground(Color.black)
         .contextMenu {
             Button(action: {
                 // Start navigation to friend
@@ -204,5 +206,7 @@ struct EnhancedFriendRow_Previews: PreviewProvider {
         )
         .previewLayout(.sizeThatFits)
         .padding()
+        .background(Color.black)
+        .preferredColorScheme(.dark)
     }
 }

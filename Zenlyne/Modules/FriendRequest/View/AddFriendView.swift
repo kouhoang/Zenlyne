@@ -24,6 +24,7 @@ struct AddFriendView: View {
                 Text("Thêm bạn bè")
                     .font(.title)
                     .fontWeight(.bold)
+                    .foregroundColor(.white)
                     .padding(.top)
                 
                 Text("Nhập email của người bạn muốn kết bạn")
@@ -33,11 +34,15 @@ struct AddFriendView: View {
                     .padding(.horizontal)
                 
                 VStack(alignment: .leading) {
-                    Text("Email").foregroundColor(Color(.darkGray)).fontWeight(.semibold).font(.footnote)
+                    Text("Email")
+                        .foregroundColor(.gray)
+                        .fontWeight(.semibold)
+                        .font(.footnote)
                     
                     HStack {
                         TextField("name@example.com", text: $email)
                             .font(.system(size: 14))
+                            .foregroundColor(.white)
                             .autocapitalization(.none)
                             .keyboardType(.emailAddress)
                             .disableAutocorrection(true)
@@ -51,8 +56,10 @@ struct AddFriendView: View {
                             }
                         }
                     }
-                    
-                    Divider()
+                    .padding(.vertical, 8)
+                    .padding(.horizontal, 12)
+                    .background(Color(.systemGray6))
+                    .cornerRadius(8)
                 }
                 .padding(.horizontal)
                 .padding(.top, 20)
@@ -86,10 +93,19 @@ struct AddFriendView: View {
                 Spacer()
             }
             .padding()
+            .background(Color.black.ignoresSafeArea())
             .navigationBarTitle("Thêm bạn bè", displayMode: .inline)
-            .navigationBarItems(trailing: Button("Đóng") {
-                dismiss()
-            })
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Đóng") {
+                        dismiss()
+                    }
+                    .foregroundColor(.white)
+                }
+            }
+            .toolbarBackground(Color.black, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
             .alert(isPresented: $showAlert) {
                 Alert(
                     title: Text(alertTitle),
@@ -101,6 +117,7 @@ struct AddFriendView: View {
                 hideKeyboard()
             }
         }
+        .preferredColorScheme(.dark)
     }
     
     // Check valid email
@@ -137,5 +154,6 @@ struct AddFriendView_Previews: PreviewProvider {
     static var previews: some View {
         AddFriendView()
             .environmentObject(AuthViewModel())
+            .preferredColorScheme(.dark)
     }
 }

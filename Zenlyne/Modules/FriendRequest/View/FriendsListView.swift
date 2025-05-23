@@ -17,57 +17,135 @@ struct FriendsListView: View {
     @State private var pendingRequestsCount = 0
     @State private var isRefreshing = false
     @State private var errorMessage: String? = nil
+    @State private var searchText = ""
+    @State private var isSearching = false
     @EnvironmentObject var authViewModel: AuthViewModel
+    
+    // Filtered friends based on search text
+    var filteredFriends: [User] {
+        if searchText.isEmpty {
+            return viewModel.friends
+        } else {
+            return viewModel.friends.filter { friend in
+                friend.fullName.localizedCaseInsensitiveContains(searchText) ||
+                friend.email.localizedCaseInsensitiveContains(searchText)
+            }
+        }
+    }
     
     var body: some View {
         VStack(spacing: 0) {
-            // Header with function button
+            // Header with function buttons
             HStack {
                 Text("Bạn bè")
                     .font(.title)
                     .fontWeight(.bold)
+                    .foregroundColor(.white)
                 
                 Spacer()
                 
-                // Badge shows number of friend requests
-                Button(action: {
-                    showFriendRequestsSheet = true
-                }) {
-                    ZStack {
-                        Image(systemName: "person.badge.plus")
-                            .font(.system(size: 22))
-                            .foregroundColor(.blue)
-                        
-                        if pendingRequestsCount > 0 {
-                            Text("\(pendingRequestsCount)")
-                                .font(.system(size: 12, weight: .bold))
-                                .foregroundColor(.white)
-                                .frame(width: 18, height: 18)
-                                .background(Color.red)
-                                .clipShape(Circle())
-                                .offset(x: 10, y: -10)
+                HStack(spacing: 12) {
+                    // Search button
+                    Button(action: {
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            isSearching.toggle()
+                            if !isSearching {
+                                searchText = ""
+                            }
+                        }
+                    }) {
+                        IconContainer(systemName: "magnifyingglass")
+                    }
+                    
+                    // Friend requests button with badge
+                    Button(action: {
+                        showFriendRequestsSheet = true
+                    }) {
+                        ZStack {
+                            IconContainer(systemName: "person.badge.plus")
+                            
+                            if pendingRequestsCount > 0 {
+                                Text("\(pendingRequestsCount)")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundColor(.white)
+                                    .frame(width: 16, height: 16)
+                                    .background(Color.red)
+                                    .clipShape(Circle())
+                                    .offset(x: 12, y: -12)
+                            }
                         }
                     }
-                }
-                .padding(.trailing, 10)
-                
-                // Add friend button
-                Button(action: {
-                    showAddFriendSheet = true
-                }) {
-                    Image(systemName: "person.crop.circle.badge.plus")
-                        .font(.system(size: 22))
-                        .foregroundColor(.blue)
+                    
+                    // Add friend button
+                    Button(action: {
+                        showAddFriendSheet = true
+                    }) {
+                        IconContainer(systemName: "person.crop.circle.badge.plus")
+                    }
                 }
             }
             .padding(.horizontal)
             .padding(.top)
             .padding(.bottom, 10)
             
+            // Search bar
+            if isSearching {
+                HStack {
+                    HStack {
+                        Image(systemName: "magnifyingglass")
+                            .foregroundColor(.gray)
+                            .font(.system(size: 16))
+                        
+                        TextField("Tìm kiếm bạn bè...", text: $searchText)
+                            .foregroundColor(.white)
+                            .autocapitalization(.none)
+                            .disableAutocorrection(true)
+                        
+                        if !searchText.isEmpty {
+                            Button(action: {
+                                searchText = ""
+                            }) {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundColor(.gray)
+                                    .font(.system(size: 16))
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Color.black)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(
+                                LinearGradient(
+                                    gradient: Gradient(colors: [Color.pink, Color.yellow]),
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                ),
+                                lineWidth: 2
+                            )
+                    )
+                    .cornerRadius(8)
+                    
+                    Button("Hủy") {
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            isSearching = false
+                            searchText = ""
+                        }
+                    }
+                    .foregroundColor(.white)
+                }
+                .padding(.horizontal)
+                .padding(.bottom, 10)
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+            
             // Main content
             ZStack(alignment: .top) {
                 if isRefreshing {
                     ProgressView("Đang tải danh sách bạn bè...")
+                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                        .foregroundColor(.white)
                         .padding()
                 }
                 else if let error = errorMessage {
@@ -84,6 +162,7 @@ struct FriendsListView: View {
                         
                         Text("Bạn chưa có bạn bè nào")
                             .font(.headline)
+                            .foregroundColor(.white)
                         
                         Text("Mời bạn bè tham gia Zenlyne để xem vị trí của họ")
                             .font(.subheadline)
@@ -106,9 +185,28 @@ struct FriendsListView: View {
                     }
                     .padding()
                     .frame(maxWidth: .infinity)
+                } else if filteredFriends.isEmpty && !searchText.isEmpty {
+                    // No search results
+                    VStack(spacing: 20) {
+                        Image(systemName: "magnifyingglass")
+                            .font(.system(size: 60))
+                            .foregroundColor(.gray)
+                        
+                        Text("Không tìm thấy kết quả")
+                            .font(.headline)
+                            .foregroundColor(.white)
+                        
+                        Text("Không có bạn bè nào phù hợp với từ khóa \"\(searchText)\"")
+                            .font(.subheadline)
+                            .foregroundColor(.gray)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal)
+                    }
+                    .padding()
+                    .frame(maxWidth: .infinity)
                 } else {
                     List {
-                        ForEach(viewModel.friends) { friend in
+                        ForEach(filteredFriends) { friend in
                             EnhancedFriendRow(
                                 friend: friend,
                                 hasLocation: viewModel.friendLocations[friend.id] != nil,
@@ -126,10 +224,13 @@ struct FriendsListView: View {
                                     )
                                 }
                             )
+                            .listRowBackground(Color.black)
                         }
                         .onDelete(perform: removeFriend)
                     }
                     .listStyle(PlainListStyle())
+                    .background(Color.black)
+                    .scrollContentBackground(.hidden)
                     .refreshable {
                         // Refresh list on pull down
                         await refreshFriendsListAsync()
@@ -138,6 +239,7 @@ struct FriendsListView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
+        .background(Color.black.ignoresSafeArea())
         .sheet(isPresented: $showAddFriendSheet, onDismiss: {
             refreshFriendsList()
         }) {
@@ -277,7 +379,7 @@ struct FriendsListView: View {
         guard let currentUser = Auth.auth().currentUser else { return }
         
         offsets.forEach { index in
-            let friend = viewModel.friends[index]
+            let friend = filteredFriends[index] // Use filtered friends
             print("DEBUG: Đang xóa bạn: \(friend.fullName) (ID: \(friend.id))")
             
             let firebaseService = FirebaseService()
@@ -304,5 +406,6 @@ struct FriendsListView_Previews: PreviewProvider {
         let viewModel = LocationViewModel()
         FriendsListView(viewModel: viewModel)
             .environmentObject(AuthViewModel())
+            .preferredColorScheme(.dark)
     }
 }
