@@ -88,7 +88,7 @@ struct ChatView: View {
                             HStack(spacing: 8) {
                                 TextField("Gửi tin nhắn...", text: $viewModel.newMessageText, axis: .vertical)
                                     .focused($isInputFocused)
-                                    .foregroundColor(.white)
+                                    .foregroundColor(.black)
                                     .padding(.horizontal, 16)
                                     .padding(.vertical, 12)
                                     .background(Color(.systemGray5))

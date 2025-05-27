@@ -36,10 +36,10 @@ class LocationViewModel: NSObject, ObservableObject {
     
     private var clusterState = ClusterState()
     
-    // Initialize with default camera position at Ho Chi Minh City
+    // Initialize with default camera position at NWS
     init(locationService: LocationServiceProtocol = LocationService(),
          firebaseService: FirebaseServiceProtocol = FirebaseService()) {
-        // Default camera position (Ho Chi Minh City)
+        // Default camera position (NWS)
         self.cameraOptions = CameraOptions(
             center: CLLocationCoordinate2D(latitude: 21.01991, longitude: 105.7838),
             zoom: 14.0,
@@ -97,18 +97,22 @@ class LocationViewModel: NSObject, ObservableObject {
     // MARK: - Map Camera Control
     
     func focusOnUserLocation() {
-        guard let userLocation = userLocation else { return }
-        
-        // Animate camera to user location
-        cameraOptions = CameraOptions(
-            center: userLocation,
-            zoom: 15.0,
-            bearing: 0,
-            pitch: 0
-        )
-        
-        isTrackingLocation = true
-    }
+            guard let userLocation = userLocation else {
+                print("DEBUG: No user location available to focus")
+                return
+            }
+            
+            DispatchQueue.main.async {
+                self.cameraOptions = CameraOptions(
+                    center: userLocation,
+                    zoom: 15.0,
+                    bearing: 0,
+                    pitch: 0
+                )
+                self.isTrackingLocation = true
+                print("DEBUG: Focused camera on user location: \(userLocation.latitude), \(userLocation.longitude)")
+            }
+        }
     
     // MARK: - Friend Location Observers
     
@@ -330,22 +334,13 @@ class LocationViewModel: NSObject, ObservableObject {
 
 extension LocationViewModel: LocationServiceDelegate {
     func locationService(_ service: LocationServiceProtocol, didUpdateLocation location: CLLocation) {
-        // Update UI with new location
+        // Only upadte userLocation, do not change cameraOptions
         DispatchQueue.main.async {
             self.userLocation = location.coordinate
-            
-            // If tracking is enabled, update camera to follow user
-            if self.isTrackingLocation {
-                self.cameraOptions = CameraOptions(
-                    center: location.coordinate,
-                    zoom: self.cameraOptions.zoom,
-                    bearing: self.cameraOptions.bearing,
-                    pitch: self.cameraOptions.pitch
-                )
-            }
+            print("DEBUG: Updated user location to \(location.coordinate.latitude), \(location.coordinate.longitude)")
         }
         
-        // Save location to Firebase
+        // Sava location into Firebase
         if let userId = Auth.auth().currentUser?.uid {
             let userLocation = UserLocation(coordinate: location.coordinate)
             firebaseService.saveUserLocation(userId: userId, location: userLocation)
