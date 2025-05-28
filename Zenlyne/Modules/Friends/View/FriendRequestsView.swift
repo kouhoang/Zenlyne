@@ -13,6 +13,7 @@ struct FriendRequestsView: View {
     @State private var showAlert = false
     @State private var alertTitle = ""
     @State private var alertMessage = ""
+    @State private var processingRequestId: String? = nil
     @EnvironmentObject var authViewModel: AuthViewModel
     @Environment(\.dismiss) private var dismiss
     
@@ -22,7 +23,8 @@ struct FriendRequestsView: View {
                 Color.black.ignoresSafeArea()
                 
                 VStack {
-                    if viewModel.isLoading {
+                    if viewModel.isLoading && viewModel.friendRequests.isEmpty {
+                        // Show loading only when initially loading
                         ProgressView("Đang tải...")
                             .progressViewStyle(CircularProgressViewStyle(tint: .white))
                             .foregroundColor(.white)
@@ -50,40 +52,62 @@ struct FriendRequestsView: View {
                             ForEach(viewModel.friendRequests) { request in
                                 FriendRequestRow(
                                     request: request,
+                                    isProcessing: processingRequestId == request.id,
                                     onAccept: {
-                                        acceptFriendRequest(request)
+                                        handleAcceptRequest(request)
                                     },
                                     onDecline: {
-                                        declineFriendRequest(request)
+                                        handleDeclineRequest(request)
                                     }
                                 )
                                 .listRowBackground(Color.black)
+                                .listRowInsets(EdgeInsets())
                             }
                         }
                         .listStyle(PlainListStyle())
                         .background(Color.black)
                         .scrollContentBackground(.hidden)
                         .refreshable {
-                            loadFriendRequests()
+                            // Only refresh if not currently processing a request
+                            if processingRequestId == nil {
+                                await refreshFriendRequests()
+                            }
                         }
                     }
                     
+                    // Error message display
                     if !viewModel.errorMessage.isEmpty {
-                        Text(viewModel.errorMessage)
-                            .font(.footnote)
-                            .foregroundColor(.red)
-                            .padding()
+                        HStack {
+                            Image(systemName: "exclamationmark.triangle")
+                                .foregroundColor(.red)
+                            Text(viewModel.errorMessage)
+                                .font(.footnote)
+                                .foregroundColor(.red)
+                        }
+                        .padding()
+                        .background(Color.red.opacity(0.1))
+                        .cornerRadius(8)
+                        .padding(.horizontal)
                     }
                 }
             }
             .navigationBarTitle("Lời mời kết bạn", displayMode: .inline)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    if !viewModel.friendRequests.isEmpty {
+                        Text("\(viewModel.friendRequests.count) lời mời")
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                    }
+                }
+                
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("Đóng") {
                         dismiss()
                     }
                     .foregroundColor(.white)
+                    .disabled(processingRequestId != nil)
                 }
             }
             .toolbarBackground(Color.black, for: .navigationBar)
@@ -96,63 +120,125 @@ struct FriendRequestsView: View {
                     title: Text(alertTitle),
                     message: Text(alertMessage),
                     dismissButton: .default(Text("OK")) {
-                        if alertTitle == "Thành công" {
-                            loadFriendRequests()
+                        // Clear error message after showing alert
+                        if alertTitle == "Lỗi" {
+                            viewModel.errorMessage = ""
                         }
                     }
                 )
+            }
+            .onChange(of: viewModel.errorMessage) { errorMessage in
+                // Show alert for error messages
+                if !errorMessage.isEmpty {
+                    showErrorAlert(message: errorMessage)
+                }
             }
         }
         .preferredColorScheme(.dark)
     }
     
-    func loadFriendRequests() {
-        viewModel.fetchFriendRequests()
-    }
+    // MARK: - Private Methods
     
-    func acceptFriendRequest(_ request: FriendRequest) {
-        viewModel.acceptFriendRequest(requestId: request.id) { success, message in
+    private func loadFriendRequests() {
+        viewModel.fetchFriendRequests {
+            // Handle completion if needed
             DispatchQueue.main.async {
-                alertTitle = success ? "Thành công" : "Lỗi"
-                alertMessage = message
-                showAlert = true
+                // Any additional UI updates after loading
             }
         }
     }
     
-    func declineFriendRequest(_ request: FriendRequest) {
+    private func refreshFriendRequests() async {
+        await withCheckedContinuation { continuation in
+            viewModel.fetchFriendRequests {
+                continuation.resume()
+            }
+        }
+    }
+    
+    private func handleAcceptRequest(_ request: FriendRequest) {
+        guard processingRequestId == nil else { return }
+        
+        processingRequestId = request.id
+        
+        viewModel.acceptFriendRequest(requestId: request.id) { [weak viewModel] success, message in
+            DispatchQueue.main.async {
+                self.processingRequestId = nil
+                
+                if success {
+                    // Show success message briefly
+                    self.showSuccessAlert(message: message)
+                    
+                    // Post notification for other views to refresh
+                    NotificationCenter.default.post(
+                        name: NSNotification.Name("FriendRequestAccepted"),
+                        object: nil,
+                        userInfo: ["friendId": request.senderId]
+                    )
+                } else {
+                    self.showErrorAlert(message: message)
+                }
+            }
+        }
+    }
+    
+    private func handleDeclineRequest(_ request: FriendRequest) {
+        guard processingRequestId == nil else { return }
+        
+        processingRequestId = request.id
+        
         viewModel.declineFriendRequest(requestId: request.id) { success, message in
             DispatchQueue.main.async {
-                alertTitle = success ? "Thành công" : "Lỗi"
-                alertMessage = message
-                showAlert = true
+                self.processingRequestId = nil
+                
+                if success {
+                    // For decline, we might not want to show success alert
+                    // Just log or handle silently
+                    print("Đã từ chối lời mời kết bạn thành công")
+                } else {
+                    self.showErrorAlert(message: message)
+                }
             }
         }
+    }
+    
+    private func showSuccessAlert(message: String) {
+        alertTitle = "Thành công"
+        alertMessage = message
+        showAlert = true
+    }
+    
+    private func showErrorAlert(message: String) {
+        alertTitle = "Lỗi"
+        alertMessage = message
+        showAlert = true
     }
 }
 
 struct FriendRequestRow: View {
     let request: FriendRequest
+    let isProcessing: Bool
     let onAccept: () -> Void
     let onDecline: () -> Void
     
     @State private var senderName = ""
     @State private var senderImage: String?
+    @State private var isLoadingSenderInfo = true
     
     var body: some View {
         HStack {
-            // Avatar
+            // Avatar with loading state
             ZStack {
                 Circle()
                     .fill(Color.gray.opacity(0.3))
                     .frame(width: 50, height: 50)
                 
-                if senderImage == nil {
-                    Text(getInitials(from: senderName))
-                        .font(.title3)
-                        .foregroundColor(.white)
-                } else {
-                    AsyncImage(url: URL(string: senderImage!)) { image in
+                if isLoadingSenderInfo {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                } else if let senderImage = senderImage {
+                    AsyncImage(url: URL(string: senderImage)) { image in
                         image
                             .resizable()
                             .scaledToFill()
@@ -163,6 +249,10 @@ struct FriendRequestRow: View {
                     }
                     .frame(width: 46, height: 46)
                     .clipShape(Circle())
+                } else {
+                    Text(getInitials(from: senderName))
+                        .font(.title3)
+                        .foregroundColor(.white)
                 }
             }
             
@@ -170,80 +260,138 @@ struct FriendRequestRow: View {
                 Text(senderName.isEmpty ? request.senderEmail : senderName)
                     .font(.headline)
                     .foregroundColor(.white)
+                    .lineLimit(1)
                 
                 Text("Muốn kết bạn với bạn")
                     .font(.subheadline)
                     .foregroundColor(.gray)
+                
+                // Show email if different from name
+                if !senderName.isEmpty && senderName != request.senderEmail {
+                    Text(request.senderEmail)
+                        .font(.caption)
+                        .foregroundColor(.gray.opacity(0.8))
+                        .lineLimit(1)
+                }
             }
             
             Spacer()
             
-            HStack(spacing: 10) {
+            // Action buttons
+            HStack(spacing: 12) {
                 // Decline button
-                Button(action: onDecline) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundColor(.gray)
-                        .frame(width: 32, height: 32)
-                        .background(Color(.systemGray5))
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                Button(action: {
+                    print("DEBUG: Decline button tapped for request: \(request.id)")
+                    onDecline()
+                }) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color(.systemGray5))
+                            .frame(width: 36, height: 36)
+                        
+                        if isProcessing {
+                            ProgressView()
+                                .scaleEffect(0.7)
+                                .progressViewStyle(CircularProgressViewStyle(tint: .gray))
+                        } else {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 16, weight: .bold))
+                                .foregroundColor(.gray)
+                        }
+                    }
                 }
+                .buttonStyle(PlainButtonStyle())
+                .disabled(isProcessing)
                 
                 // Accept button
-                Button(action: onAccept) {
+                Button(action: {
+                    print("DEBUG: Accept button tapped for request: \(request.id)")
+                    onAccept()
+                }) {
                     ZStack {
-                        // Gradient background matching pink-yellow-plain
-                        LinearGradient(
-                            gradient: Gradient(colors: [
-                                Color(red: 0.4, green: 0.9, blue: 0.8), // Cyan
-                                Color(red: 0.6, green: 0.4, blue: 0.9), // Purple
-                                Color(red: 1.0, green: 0.7, blue: 0.4)  // Orange/Yellow
-                            ]),
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                        .frame(width: 32, height: 32)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(
+                                LinearGradient(
+                                    gradient: Gradient(colors: [
+                                        Color(red: 0.4, green: 0.9, blue: 0.8),
+                                        Color(red: 0.6, green: 0.4, blue: 0.9),
+                                        Color(red: 1.0, green: 0.7, blue: 0.4)
+                                    ]),
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                            .opacity(isProcessing ? 0.6 : 1.0)
+                            .frame(width: 36, height: 36)
                         
-                        Image(systemName: "person.badge.plus")
-                            .font(.system(size: 14, weight: .bold))
-                            .foregroundColor(.black)
+                        if isProcessing {
+                            ProgressView()
+                                .scaleEffect(0.7)
+                                .progressViewStyle(CircularProgressViewStyle(tint: .black))
+                        } else {
+                            Image(systemName: "person.badge.plus")
+                                .font(.system(size: 16, weight: .bold))
+                                .foregroundColor(.black)
+                        }
                     }
-                    .frame(width: 32, height: 32)
                 }
+                .buttonStyle(PlainButtonStyle())
+                .disabled(isProcessing)
             }
         }
         .padding(.vertical, 4)
+        .opacity(isProcessing ? 0.7 : 1.0)
+        .animation(.easeInOut(duration: 0.2), value: isProcessing)
         .onAppear {
             loadSenderInfo()
         }
+
     }
     
     private func loadSenderInfo() {
         let db = Firestore.firestore()
+        
         db.collection("users").document(request.senderId).getDocument { snapshot, error in
-            guard let data = snapshot?.data() else { return }
-            
-            if let name = data["fullName"] as? String {
-                self.senderName = name
-            }
-            
-            if let imageUrl = data["profileImageUrl"] as? String {
-                self.senderImage = imageUrl
+            DispatchQueue.main.async {
+                self.isLoadingSenderInfo = false
+                
+                guard let data = snapshot?.data() else {
+                    // Fallback to email if user data not found
+                    self.senderName = self.request.senderEmail
+                    return
+                }
+                
+                if let name = data["fullName"] as? String, !name.isEmpty {
+                    self.senderName = name
+                } else {
+                    self.senderName = self.request.senderEmail
+                }
+                
+                if let imageUrl = data["profileImageUrl"] as? String, !imageUrl.isEmpty {
+                    self.senderImage = imageUrl
+                }
             }
         }
     }
     
     private func getInitials(from name: String) -> String {
+        if name.isEmpty {
+            return "?"
+        }
+        
         let formatter = PersonNameComponentsFormatter()
         if let components = formatter.personNameComponents(from: name) {
             formatter.style = .abbreviated
-            return formatter.string(from: components)
+            let initials = formatter.string(from: components)
+            return initials.isEmpty ? String(name.prefix(1)).uppercased() : initials
         }
-        return ""
+        
+        // Fallback: get first character
+        return String(name.prefix(1)).uppercased()
     }
 }
 
+// MARK: - Preview
 struct FriendRequestsView_Previews: PreviewProvider {
     static var previews: some View {
         FriendRequestsView()
