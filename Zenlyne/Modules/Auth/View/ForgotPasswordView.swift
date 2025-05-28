@@ -107,7 +107,7 @@ struct ForgotPasswordView: View {
                 isSuccess = false
             } else {
                 alertTitle = "Success"
-                message = "Password reset email has been sent to \(email). Please check your inbox."
+                message = "Email đặt lại mật khẩu đã được gửi tới \(email). Vui lòng kiểm tra hộp thư đến của bạn."
                 isSuccess = true
             }
             

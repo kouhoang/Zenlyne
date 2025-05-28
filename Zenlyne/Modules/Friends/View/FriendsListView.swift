@@ -21,14 +21,29 @@ struct FriendsListView: View {
     @State private var isSearching = false
     @EnvironmentObject var authViewModel: AuthViewModel
     
-    // Filtered friends based on search text
+    // Filtered friends based on search text and sorted by online status
     var filteredFriends: [User] {
+        let baseFilteredFriends: [User]
+        
         if searchText.isEmpty {
-            return viewModel.friends
+            baseFilteredFriends = viewModel.friends
         } else {
-            return viewModel.friends.filter { friend in
+            baseFilteredFriends = viewModel.friends.filter { friend in
                 friend.fullName.localizedCaseInsensitiveContains(searchText) ||
                 friend.email.localizedCaseInsensitiveContains(searchText)
+            }
+        }
+        
+        // Sort by online status: online friends first, then offline friends
+        return baseFilteredFriends.sorted { friend1, friend2 in
+            // If one is online and the other is not, prioritize the online one
+            if friend1.isOnline && !friend2.isOnline {
+                return true
+            } else if !friend1.isOnline && friend2.isOnline {
+                return false
+            } else {
+                // If both have the same online status, sort by name
+                return friend1.fullName.localizedCaseInsensitiveCompare(friend2.fullName) == .orderedAscending
             }
         }
     }
