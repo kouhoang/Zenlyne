@@ -51,11 +51,14 @@ struct MapViewRepresentable: UIViewRepresentable {
         
     func updateUIView(_ mapView: MapView, context: Context) {
         print("DEBUG: Updating MapView with \(viewModel.friendLocations.count) friend locations")
-        
-        // Update camera position when viewModel changes
+
+        // Cập nhật kiểu bản đồ theo trạng thái hiện tại
+        mapView.mapboxMap.loadStyle(viewModel.currentMapStyle.mapboxStyle)
+
+        // Cập nhật vị trí camera
         mapView.camera.fly(to: viewModel.cameraOptions, duration: 0.25)
-        
-        // Update user annotation when location changes
+
+        // Cập nhật vị trí người dùng và bạn bè
         if let userLocation = viewModel.userLocation {
             context.coordinator.updateUserAnnotation(
                 for: mapView,
@@ -63,14 +66,14 @@ struct MapViewRepresentable: UIViewRepresentable {
                 userName: viewModel.currentUser.fullName
             )
         }
-        
-        // Update friend annotations when their locations change
+
         context.coordinator.updateFriendAnnotations(
             for: mapView,
             friendLocations: viewModel.friendLocations,
             friends: viewModel.friends
         )
     }
+
     
     func makeCoordinator() -> Coordinator {
         Coordinator(viewModel: viewModel)

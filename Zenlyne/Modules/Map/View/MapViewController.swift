@@ -21,20 +21,21 @@ struct MapViewController: View {
     @State private var showConversationList = false
     @State private var selectedFriendId: String? = nil
     @State private var pendingRequestsCount: Int = 0
+    @State private var showMapStyleMenu = false
     
     // Friend cluster support
     @State private var showClusterSelection: Bool = false
     @State private var selectedClusterFriendIds: [String] = []
     @State private var isDraggingClusterPanel: Bool = false
     @State private var clusterPanelOffset: CGSize = .zero
-    @State private var clusterPanelHeight: CGFloat = 400  // Default height, will be adjusted dynamically
+    @State private var clusterPanelHeight: CGFloat = 400
     
     // FIXED: Add state to force map refresh
     @State private var mapRefreshTrigger = false
     
     var body: some View {
         ZStack {
-            // Base Map View - FIXED: Add refresh trigger
+            // Base Map View
             MapViewRepresentable(viewModel: viewModel)
                 .ignoresSafeArea()
                 .id(mapRefreshTrigger) // Force refresh when trigger changes
@@ -45,7 +46,7 @@ struct MapViewController: View {
                     Spacer()
                     
                     VStack(spacing: 10) {
-                        // FIXED: Profile Button with safe avatar handling
+                        // Profile Button with safe avatar handling
                         Button(action: {
                             showProfileView.toggle()
                         }) {
@@ -60,7 +61,7 @@ struct MapViewController: View {
                         Button(action: {
                             showFriendsListView.toggle()
                         }) {
-                            Image("friends") // Using your asset name
+                            Image("friends") 
                                 .resizable()
                                 .scaledToFit()
                                 .frame(width: 40, height: 40)
@@ -92,6 +93,10 @@ struct MapViewController: View {
                                 MessageCountBadge()
                             }
                         }
+                        
+                        // Map Style Button
+                        MapStyleButton(viewModel: viewModel)
+                        
                     }
                     .padding(.top, 70)
                     .padding(.trailing, 8)

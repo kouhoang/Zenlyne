@@ -13,7 +13,61 @@ import FirebaseAuth
 import FirebaseFirestore
 import FirebaseDatabase
 
+// MARK: - Map Style Options
+enum MapStyle {
+    case streets
+    case satellite
+    case satelliteStreets
+    
+    var mapboxStyle: StyleURI {
+        switch self {
+        case .streets:
+            return .streets
+        case .satellite:
+            return .satellite
+        case .satelliteStreets:
+            return .satelliteStreets
+        }
+    }
+    
+    var displayName: String {
+        switch self {
+        case .streets:
+            return "Standard"
+        case .satellite:
+            return "Satellite"
+        case .satelliteStreets:
+            return "Hybrid"
+        }
+    }
+    
+    var iconName: String {
+        switch self {
+        case .streets:
+            return "map"
+        case .satellite:
+            return "globe"
+        case .satelliteStreets:
+            return "building.2"
+        }
+    }
+    
+    // Get the next style in the cycle
+    func nextStyle() -> MapStyle {
+        switch self {
+        case .streets:
+            return .satellite
+        case .satellite:
+            return .satelliteStreets
+        case .satelliteStreets:
+            return .streets
+        }
+    }
+}
+
 class LocationViewModel: NSObject, ObservableObject {
+    @Published var currentMapStyle: MapStyle = .streets
+    
     // User & Friends
     @Published var currentUser: User = User.MOCK_USER
     @Published var friends: [User] = []
@@ -97,22 +151,26 @@ class LocationViewModel: NSObject, ObservableObject {
     // MARK: - Map Camera Control
     
     func focusOnUserLocation() {
-            guard let userLocation = userLocation else {
-                print("DEBUG: No user location available to focus")
-                return
-            }
-            
-            DispatchQueue.main.async {
-                self.cameraOptions = CameraOptions(
-                    center: userLocation,
-                    zoom: 15.0,
-                    bearing: 0,
-                    pitch: 0
-                )
-                self.isTrackingLocation = true
-                print("DEBUG: Focused camera on user location: \(userLocation.latitude), \(userLocation.longitude)")
-            }
+        guard let userLocation = userLocation else {
+            print("DEBUG: No user location available to focus")
+            return
         }
+        
+        DispatchQueue.main.async {
+            self.cameraOptions = CameraOptions(
+                center: userLocation,
+                zoom: 15.0,
+                bearing: 0,
+                pitch: 0
+            )
+            self.isTrackingLocation = true
+            print("DEBUG: Focused camera on user location: \(userLocation.latitude), \(userLocation.longitude)")
+        }
+    }
+    
+    func toggleMapStyle() {
+        currentMapStyle = currentMapStyle.nextStyle()
+    }
     
     // MARK: - Friend Location Observers
     
