@@ -9,34 +9,117 @@ import Foundation
 import Firebase
 import FirebaseAuth
 import FirebaseFirestore
+import Combine
 
 protocol AuthentiicationFormProtocol {
     var formIsValid: Bool { get }
 }
 
+// MARK: - Auth States
+enum AuthState {
+    case idle
+    case loading
+    case authenticated(User)
+    case unauthenticated
+    case error(String)
+}
+
+enum AuthError: Error {
+    case userNotFound
+    case emailInUse
+    case weakPassword
+    case invalidEmail
+    case wrongPassword
+    case unknownError
+    
+    var localizedDescription: String {
+        switch self {
+        case .userNotFound:
+            return "User not found"
+        case .emailInUse:
+            return "Email already in use"
+        case .weakPassword:
+            return "Password too weak"
+        case .invalidEmail:
+            return "Invalid email"
+        case .wrongPassword:
+            return "Wrong password"
+        case .unknownError:
+            return "Unknown error occurred"
+        }
+    }
+}
+
+@MainActor
 class AuthViewModel: ObservableObject {
+    // MARK: - Published Properties (Giữ nguyên để tương thích)
     @Published var userSessions: FirebaseAuth.User?
     @Published var currentUser: User?
     @Published var isSignedOut = false
     @Published var resetPasswordSuccess = false
     @Published var resetPasswordError: String?
     
-    init() {
+    // MARK: - Combine Publishers
+    @Published private var authState: AuthState = .idle
+    private var cancellables = Set<AnyCancellable>()
+    
+    // MARK: - Computed Properties
+    var authStatePublisher: Published<AuthState>.Publisher { $authState }
+    
+    var isAuthenticated: Bool {
+        return userSessions != nil && currentUser != nil
+    }
+    
+    var isLoading: Bool {
+        if case .loading = authState {
+            return true
+        }
+        return false
+    }
+    
+    // MARK: - Services
+    private let firebaseService: FirebaseServiceProtocol
+    
+    // MARK: - Initialization
+    init(firebaseService: FirebaseServiceProtocol = FirebaseService()) {
+        self.firebaseService = firebaseService
         self.userSessions = Auth.auth().currentUser
+        
+        setupAuthStateListener()
         
         if self.userSessions != nil {
             Task {
-                await fetchUser()  // load user information from Firebase when having sessions
+                await fetchUser()
             }
         }
     }
     
+    // MARK: - Private Methods
+    private func setupAuthStateListener() {
+        // Listen to Firebase Auth state changes
+        Auth.auth().addStateDidChangeListener { [weak self] _, user in
+            Task { @MainActor in
+                self?.userSessions = user
+                if user != nil {
+                    await self?.fetchUser()
+                } else {
+                    self?.currentUser = nil
+                    self?.authState = .unauthenticated
+                }
+            }
+        }
+    }
+    
+    // MARK: - Public Methods (Giữ nguyên interface)
+    
     func signIn(withEmail email: String, password: String) async throws {
+        authState = .loading
+        
         do {
             let result = try await Auth.auth().signIn(withEmail: email, password: password)
             self.userSessions = result.user
             await fetchUser()
-            self.isSignedOut = false  // Reset sign out state on successful login
+            self.isSignedOut = false
             
             // Set user as online after login
             let db = Firestore.firestore()
@@ -49,21 +132,25 @@ class AuthViewModel: ObservableObject {
                 }
             }
             
+            if let user = currentUser {
+                authState = .authenticated(user)
+            }
+            
         } catch {
             print("DEBUG: Failed to login with error \(error.localizedDescription)")
+            authState = .error(error.localizedDescription)
             throw error
         }
     }
 
     func createUser(withEmail email: String, password: String, fullName: String) async throws {
+        authState = .loading
+        
         do {
-            // create new user by Firebase Auth
             let result = try await Auth.auth().createUser(withEmail: email, password: password)
-            // update user information into main thread
             self.userSessions = result.user
-            // create User with necessary information
+            
             let user = User(id: result.user.uid, fullName: fullName, email: email)
-            // save user information into Firestore
             let userData: [String: Any] = [
                 "id": user.id,
                 "fullName": user.fullName,
@@ -72,38 +159,45 @@ class AuthViewModel: ObservableObject {
             ]
             try await Firestore.firestore().collection("users").document(user.id).setData(userData)
             
-            // Also update the display name in Firebase Auth
             let changeRequest = result.user.createProfileChangeRequest()
             changeRequest.displayName = fullName
             try await changeRequest.commitChanges()
             
             await fetchUser()
+            
+            if let user = currentUser {
+                authState = .authenticated(user)
+            }
+            
         } catch {
             print("DEBUG: Failed to create user with error \(error.localizedDescription)")
+            authState = .error(error.localizedDescription)
             throw error
         }
     }
     
     func resetPassword(email: String) async throws {
+        authState = .loading
+        
         do {
             try await Auth.auth().sendPasswordReset(withEmail: email)
             self.resetPasswordSuccess = true
             self.resetPasswordError = nil
+            authState = .idle
         } catch {
             print("DEBUG: Failed to send password reset email with error \(error.localizedDescription)")
             self.resetPasswordSuccess = false
             self.resetPasswordError = error.localizedDescription
+            authState = .error(error.localizedDescription)
             throw error
         }
     }
     
     func signOut() {
         do {
-            // Set user as offline before signing out
             if let currentUserId = Auth.auth().currentUser?.uid {
                 let db = Firestore.firestore()
                 
-                // Update Firestore synchronously before signing out
                 let semaphore = DispatchSemaphore(value: 0)
                 
                 db.collection("users").document(currentUserId).updateData([
@@ -118,17 +212,18 @@ class AuthViewModel: ObservableObject {
                     semaphore.signal()
                 }
                 
-                // Wait briefly for the offline status to be set
                 _ = semaphore.wait(timeout: .now() + 1.0)
             }
             
-            try Auth.auth().signOut() // sign out user on backend
-            self.userSessions = nil // This will trigger navigation back to login
-            self.currentUser = nil // wipe out current user data model
+            try Auth.auth().signOut()
+            self.userSessions = nil
+            self.currentUser = nil
             self.isSignedOut = true
-        }
-        catch {
+            self.authState = .unauthenticated
+            
+        } catch {
             print("DEBUG: Failed to sign out with error \(error.localizedDescription)")
+            authState = .error(error.localizedDescription)
         }
     }
     
@@ -137,21 +232,26 @@ class AuthViewModel: ObservableObject {
             throw AuthError.userNotFound
         }
         
+        authState = .loading
+        
         do {
-            // 1. Update Auth profile
             let changeRequest = currentUser.createProfileChangeRequest()
             changeRequest.displayName = newName
             try await changeRequest.commitChanges()
             
-            // 2. Update Firestore
             try await Firestore.firestore().collection("users").document(currentUser.uid).updateData([
                 "fullName": newName
             ])
             
-            // 3. Update local user
             await fetchUser()
+            
+            if let user = self.currentUser {
+                authState = .authenticated(user)
+            }
+            
         } catch {
             print("DEBUG: Failed to update user name with error \(error.localizedDescription)")
+            authState = .error(error.localizedDescription)
             throw error
         }
     }
@@ -162,15 +262,19 @@ class AuthViewModel: ObservableObject {
             throw AuthError.userNotFound
         }
         
+        authState = .loading
+        
         do {
-            // 1. Reauthenticate user
             let credential = EmailAuthProvider.credential(withEmail: email, password: currentPassword)
             _ = try await currentUser.reauthenticate(with: credential)
             
-            // 2. Update password
             try await currentUser.updatePassword(to: newPassword)
+            
+            authState = .idle
+            
         } catch {
             print("DEBUG: Failed to update password with error \(error.localizedDescription)")
+            authState = .error(error.localizedDescription)
             throw error
         }
     }
@@ -178,6 +282,7 @@ class AuthViewModel: ObservableObject {
     func fetchUser() async {
         guard let uid = Auth.auth().currentUser?.uid else {
             print("DEBUG: No current user found")
+            authState = .unauthenticated
             return
         }
         
@@ -191,12 +296,21 @@ class AuthViewModel: ObservableObject {
                 if let userData = usersSnapshot.data(),
                    let fullName = userData["fullName"] as? String,
                    let email = userData["email"] as? String {
-                    self.currentUser = User(id: uid, fullName: fullName, email: email)
+                    
+                    var user = User(id: uid, fullName: fullName, email: email)
                     
                     // Add profile image if available
                     if let profileImageUrl = userData["profileImageUrl"] as? String {
-                        self.currentUser?.profileImageUrl = profileImageUrl
+                        user.profileImageUrl = profileImageUrl
                     }
+                    
+                    // Add avatar URL if available
+                    if let avatarUrl = userData["avatarUrl"] as? String {
+                        user.avatarUrl = avatarUrl
+                    }
+                    
+                    self.currentUser = user
+                    authState = .authenticated(user)
                     
                     print("DEBUG: Successfully decoded user data")
                 }
@@ -218,6 +332,7 @@ class AuthViewModel: ObservableObject {
                             "email": newUser.email
                         ])
                         self.currentUser = newUser
+                        authState = .authenticated(newUser)
                         print("DEBUG: Migrated user data from 'user' to 'users' collection")
                     }
                 } else {
@@ -233,6 +348,7 @@ class AuthViewModel: ObservableObject {
                             "email": newUser.email
                         ])
                         self.currentUser = newUser
+                        authState = .authenticated(newUser)
                         print("DEBUG: Created new user document based on Auth info")
                     }
                 }
@@ -241,9 +357,10 @@ class AuthViewModel: ObservableObject {
             if let user = self.currentUser {
                 print("DEBUG: Current user is \(user.fullName) with email: \(user.email)")
             }
+            
         } catch {
             print("DEBUG: Error fetching user: \(error.localizedDescription)")
-            print("DEBUG: Error details: \(error)")
+            authState = .error(error.localizedDescription)
         }
     }
     
@@ -251,11 +368,11 @@ class AuthViewModel: ObservableObject {
         guard let uid = self.userSessions?.uid else { return }
         
         let userRef = Firestore.firestore().collection("users").document(uid)
-        userRef.updateData(["profileImageUrl": imageUrl]) { error in
+        userRef.updateData(["profileImageUrl": imageUrl]) { [weak self] error in
             if let error = error {
                 print("DEBUG: Failed to update user data with error: \(error.localizedDescription)")
                 
-                if let currentUser = self.currentUser {
+                if let currentUser = self?.currentUser {
                     let userData: [String: Any] = [
                         "id": currentUser.id,
                         "fullName": currentUser.fullName,
@@ -269,7 +386,7 @@ class AuthViewModel: ObservableObject {
                         } else {
                             print("DEBUG: Successfully set user data with image URL")
                             Task { @MainActor in
-                                await self.fetchUser()
+                                await self?.fetchUser()
                             }
                         }
                     }
@@ -279,7 +396,7 @@ class AuthViewModel: ObservableObject {
             
             print("DEBUG: Successfully updated user data with image URL")
             Task { @MainActor in
-                await self.fetchUser()
+                await self?.fetchUser()
             }
         }
     }
@@ -299,7 +416,6 @@ class AuthViewModel: ObservableObject {
             if !docSnapshot.exists {
                 print("DEBUG: Creating missing user document for \(currentUser.email ?? "unknown email")")
                 
-                // Create basic user document
                 let userData: [String: Any] = [
                     "id": currentUser.uid,
                     "fullName": currentUser.displayName ?? "User",
@@ -310,22 +426,54 @@ class AuthViewModel: ObservableObject {
                 try await docRef.setData(userData)
                 print("DEBUG: Successfully created user document")
                 
-                // Refresh current user information
                 await fetchUser()
             } else {
                 print("DEBUG: User document exists")
             }
         } catch {
             print("DEBUG: Error checking/creating user document: \(error.localizedDescription)")
+            authState = .error(error.localizedDescription)
         }
     }
 }
 
-enum AuthError: Error {
-    case userNotFound
-    case emailInUse
-    case weakPassword
-    case invalidEmail
-    case wrongPassword
-    case unknownError
+// MARK: - Combine Convenience Extensions
+extension AuthViewModel {
+    
+    /// Publisher that emits when user authentication status changes
+    var isAuthenticatedPublisher: AnyPublisher<Bool, Never> {
+        $userSessions
+            .map { $0 != nil }
+            .removeDuplicates()
+            .eraseToAnyPublisher()
+    }
+    
+    /// Publisher that emits current user changes
+    var currentUserPublisher: AnyPublisher<User?, Never> {
+        $currentUser
+            .removeDuplicates { $0?.id == $1?.id }
+            .eraseToAnyPublisher()
+    }
+    
+    /// Publisher for loading state
+    var isLoadingPublisher: AnyPublisher<Bool, Never> {
+        $authState
+            .map { state in
+                if case .loading = state { return true }
+                return false
+            }
+            .removeDuplicates()
+            .eraseToAnyPublisher()
+    }
+    
+    /// Publisher for error state
+    var errorPublisher: AnyPublisher<String?, Never> {
+        $authState
+            .map { state in
+                if case .error(let message) = state { return message }
+                return nil
+            }
+            .removeDuplicates()
+            .eraseToAnyPublisher()
+    }
 }

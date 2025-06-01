@@ -17,9 +17,10 @@ struct MapViewRepresentable: UIViewRepresentable {
     init(viewModel: LocationViewModel) {
         self.viewModel = viewModel
     }
-        
-    func makeUIView(context: Context) -> MapView {
-        let mapView = MapView(frame: .zero)
+    
+    func makeUIView(context: Context) -> UIView {
+        let containerView = UIView()
+        let mapView = MapboxMaps.MapView(frame: .zero)
         
         // Configure the map style
         mapView.mapboxMap.loadStyle(.streets)
@@ -45,20 +46,35 @@ struct MapViewRepresentable: UIViewRepresentable {
             let newZoom = mapView.cameraState.zoom
             context.coordinator.handleZoomLevelChanged(mapView: mapView, newZoomLevel: newZoom)
         }
+        
+        // Add mapView to container
+        containerView.addSubview(mapView)
+        mapView.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            mapView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
+            mapView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
+            mapView.topAnchor.constraint(equalTo: containerView.topAnchor),
+            mapView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor)
+        ])
+        
+        // Store reference to mapView in coordinator
+        context.coordinator.mapView = mapView
                 
-        return mapView
+        return containerView
     }
         
-    func updateUIView(_ mapView: MapView, context: Context) {
+    func updateUIView(_ uiView: UIView, context: Context) {
+        guard let mapView = context.coordinator.mapView else { return }
+        
         print("DEBUG: Updating MapView with \(viewModel.friendLocations.count) friend locations")
 
-        // Cập nhật kiểu bản đồ theo trạng thái hiện tại
+        // Update map style according to current state
         mapView.mapboxMap.loadStyle(viewModel.currentMapStyle.mapboxStyle)
 
-        // Cập nhật vị trí camera
+        // Update camera position
         mapView.camera.fly(to: viewModel.cameraOptions, duration: 0.25)
 
-        // Cập nhật vị trí người dùng và bạn bè
+        // Update user and friends positions
         if let userLocation = viewModel.userLocation {
             context.coordinator.updateUserAnnotation(
                 for: mapView,
@@ -74,19 +90,17 @@ struct MapViewRepresentable: UIViewRepresentable {
         )
     }
 
-    
     func makeCoordinator() -> Coordinator {
         Coordinator(viewModel: viewModel)
     }
     
     class Coordinator: NSObject {
         private var viewModel: LocationViewModel
+        var mapView: MapboxMaps.MapView?
         private var userAnnotationManager: PointAnnotationManager?
         private var friendAnnotationManager: PointAnnotationManager?
         private var expandedClusterAnnotationManager: PointAnnotationManager?
-        private var pulseAnnotationManager: CircleAnnotationManager?
         private var friendIdByAnnotationId: [String: String] = [:]
-        private var pulseTimers: [String: Timer] = [:]
         private let locationGrouper = FriendLocationGrouper()
         private var clusterIdByAnnotationId: [String: [String]] = [:]
         private var expandedClusterAnnotations: [String: [PointAnnotation]] = [:]
@@ -96,6 +110,9 @@ struct MapViewRepresentable: UIViewRepresentable {
         
         // Keep track of current location groups for reference
         private var currentLocationGroups: [LocationGroup] = []
+        
+        // Image cache for async loading
+        private var imageCache: [String: UIImage] = [:]
         
         init(viewModel: LocationViewModel) {
             self.viewModel = viewModel
@@ -110,7 +127,7 @@ struct MapViewRepresentable: UIViewRepresentable {
             NotificationCenter.default.post(name: NSNotification.Name("MapTapped"), object: nil)
         }
         
-        func handleZoomLevelChanged(mapView: MapView, newZoomLevel: Double) {
+        @MainActor func handleZoomLevelChanged(mapView: MapboxMaps.MapView, newZoomLevel: Double) {
             // Only react if the zoom level has changed significantly
             if abs(newZoomLevel - currentMapZoomLevel) > 0.5 {
                 currentMapZoomLevel = newZoomLevel
@@ -138,7 +155,7 @@ struct MapViewRepresentable: UIViewRepresentable {
         
         // MARK: - Cluster Expansion Management
         
-        private func autoExpandClustersForZoomLevel(mapView: MapView) {
+        @MainActor private func autoExpandClustersForZoomLevel(mapView: MapboxMaps.MapView) {
             var expanded = false
             
             // Find all clusters and mark them as expanded
@@ -164,7 +181,7 @@ struct MapViewRepresentable: UIViewRepresentable {
             }
         }
         
-        private func collapseAllClusters(mapView: MapView) {
+        @MainActor private func collapseAllClusters(mapView: MapboxMaps.MapView) {
             // Reset all expanded clusters
             locationGrouper.expandedClusterIds = Set<String>()
             
@@ -182,32 +199,75 @@ struct MapViewRepresentable: UIViewRepresentable {
             )
         }
         
-        // MARK: - Pulsing Effect
+        // MARK: - Async Image Loading
         
-        // Simplified pulsing effect using regular annotations instead of layers
-        private func addPulseEffectLayer(for mapView: MapView, at coordinate: CLLocationCoordinate2D, color: UIColor, isUser: Bool) {
-            // Disable pulse effect - removing bloom effect as requested
+        private func loadImageAsync(from urlString: String, completion: @escaping (UIImage?) -> Void) {
+            // Check cache first
+            if let cachedImage = imageCache[urlString] {
+                completion(cachedImage)
+                return
+            }
             
-            // Note: We're keeping this method but making it empty to avoid breaking existing calls
-            // Any calls to this method will now have no effect
-        }
-        
-        
-        // Helper function to update pulse effect position
-        private func updatePulseEffect(for mapView: MapView, at coordinate: CLLocationCoordinate2D, isUser: Bool) {
-            // Disable pulse effect - removing bloom effect as requested
+            guard let url = URL(string: urlString) else {
+                completion(nil)
+                return
+            }
             
-            // Note: We're keeping this method but making it empty to avoid breaking existing calls
-            // Any calls to this method will now have no effect
+            URLSession.shared.dataTask(with: url) { [weak self] data, _, error in
+                guard let data = data, error == nil, let image = UIImage(data: data) else {
+                    DispatchQueue.main.async {
+                        completion(nil)
+                    }
+                    return
+                }
+                
+                // Cache the image
+                self?.imageCache[urlString] = image
+                
+                DispatchQueue.main.async {
+                    completion(image)
+                }
+            }.resume()
         }
         
         // MARK: - Annotation Creation
         
-        func createUserMarkerImage(for mapView: MapView) {
+        @MainActor func createUserMarkerImage(for mapView: MapboxMaps.MapView) {
             let size: CGFloat = 50
+            
+            // Use current avatar URL with consistent property name
+            let avatarUrl = viewModel.currentUser.currentAvatarUrl ?? viewModel.currentUser.profileImageUrl
+            
+            if let avatarUrlString = avatarUrl {
+                // Load image asynchronously
+                loadImageAsync(from: avatarUrlString) { [weak self] avatarImage in
+                    let annotationImage = self?.generateUserMarkerImage(size: size, avatarImage: avatarImage)
+                    guard let image = annotationImage else { return }
+                    
+                    do {
+                        try mapView.mapboxMap.style.addImage(image, id: "user-marker-id")
+                        print("DEBUG: Successfully added user marker image with avatar")
+                    } catch {
+                        print("DEBUG: Error adding user marker image: \(error.localizedDescription)")
+                    }
+                }
+            } else {
+                // Generate marker without avatar immediately
+                let annotationImage = generateUserMarkerImage(size: size, avatarImage: nil)
+                
+                do {
+                    try mapView.mapboxMap.style.addImage(annotationImage, id: "user-marker-id")
+                    print("DEBUG: Successfully added user marker image without avatar")
+                } catch {
+                    print("DEBUG: Error adding user marker image: \(error.localizedDescription)")
+                }
+            }
+        }
+        
+        private func generateUserMarkerImage(size: CGFloat, avatarImage: UIImage?) -> UIImage {
             let renderer = UIGraphicsImageRenderer(size: CGSize(width: size, height: size))
             
-            let annotationImage = renderer.image { ctx in
+            return renderer.image { ctx in
                 let rectangle = CGRect(x: 0, y: 0, width: size, height: size)
                 let cornerRadius: CGFloat = 14
                 
@@ -219,34 +279,10 @@ struct MapViewRepresentable: UIViewRepresentable {
                 ctx.cgContext.addPath(bezierPath.cgPath)
                 ctx.cgContext.clip()
                 
-                // Try to load and draw user avatar if available
-                var drawnAvatar = false
-                
-                if let avatarUrl = viewModel.currentUser.currentAvatarUrl,
-                   let url = URL(string: avatarUrl) {
-                    
-                    // Use URLSession to fetch image synchronously for marker creation
-                    let semaphore = DispatchSemaphore(value: 0)
-                    var avatarImage: UIImage?
-                    
-                    URLSession.shared.dataTask(with: url) { data, _, _ in
-                        if let data = data {
-                            avatarImage = UIImage(data: data)
-                        }
-                        semaphore.signal()
-                    }.resume()
-                    
-                    // Wait for image load (with timeout)
-                    _ = semaphore.wait(timeout: .now() + 2.0)
-                    
-                    if let image = avatarImage {
-                        // Draw avatar image filling the entire rounded rectangle
-                        image.draw(in: rectangle)
-                        drawnAvatar = true
-                    }
-                }
-                
-                if !drawnAvatar {
+                if let image = avatarImage {
+                    // Draw avatar image filling the entire rounded rectangle
+                    image.draw(in: rectangle)
+                } else {
                     // Create gradient background as fallback
                     let colors = [
                         UIColor(red: 0.2, green: 0.6, blue: 1.0, alpha: 0.9).cgColor,
@@ -299,17 +335,9 @@ struct MapViewRepresentable: UIViewRepresentable {
                 ctx.cgContext.addPath(borderPath.cgPath)
                 ctx.cgContext.strokePath()
             }
-            
-            // Add the image to the style with proper error handling
-            do {
-                try mapView.mapboxMap.style.addImage(annotationImage, id: "user-marker-id")
-                print("DEBUG: Successfully added user marker image")
-            } catch {
-                print("DEBUG: Error adding user marker image: \(error.localizedDescription)")
-            }
         }
         
-        func updateUserAnnotation(for mapView: MapView, at coordinate: CLLocationCoordinate2D, userName: String) {
+        @MainActor func updateUserAnnotation(for mapView: MapboxMaps.MapView, at coordinate: CLLocationCoordinate2D, userName: String) {
             guard let annotationManager = userAnnotationManager else {
                 print("DEBUG: User annotation manager is nil")
                 return
@@ -336,7 +364,7 @@ struct MapViewRepresentable: UIViewRepresentable {
         }
         
         // Create an annotation for a single friend
-        private func createFriendAnnotation(for friend: User, at coordinate: CLLocationCoordinate2D, mapView: MapView) -> PointAnnotation {
+        private func createFriendAnnotation(for friend: User, at coordinate: CLLocationCoordinate2D, mapView: MapboxMaps.MapView) -> PointAnnotation {
             let isOnline = friend.isOnline
             
             // Create marker image for this friend with their avatar
@@ -345,7 +373,7 @@ struct MapViewRepresentable: UIViewRepresentable {
                 friendId: friend.id,
                 name: friend.fullName,
                 isOnline: isOnline,
-                profileImageUrl: friend.currentAvatarUrl // FIXED: Use currentAvatarUrl
+                profileImageUrl: friend.currentAvatarUrl ?? friend.profileImageUrl
             )
             
             // Create annotation
@@ -364,7 +392,7 @@ struct MapViewRepresentable: UIViewRepresentable {
         }
 
         // Create an annotation for a cluster of friends
-        private func createClusterAnnotation(for group: LocationGroup, friends: [User], mapView: MapView) -> PointAnnotation {
+        private func createClusterAnnotation(for group: LocationGroup, friends: [User], mapView: MapboxMaps.MapView) -> PointAnnotation {
             // Determine if any friend in the cluster is online
             let anyOnline = friends.contains { $0.isOnline }
             
@@ -399,12 +427,57 @@ struct MapViewRepresentable: UIViewRepresentable {
             return annotation
         }
 
-        // FIXED: Update method to load friend avatars properly
-        func createFriendMarkerImage(for mapView: MapView, friendId: String? = nil, name: String? = nil, isOnline: Bool = false, profileImageUrl: String? = nil) {
-            let size: CGFloat = 50 // Square dimensions
+        // Updated method to load friend avatars asynchronously
+        func createFriendMarkerImage(for mapView: MapboxMaps.MapView, friendId: String? = nil, name: String? = nil, isOnline: Bool = false, profileImageUrl: String? = nil) {
+            let size: CGFloat = 50
+            
+            if let avatarUrlString = profileImageUrl {
+                // Load image asynchronously
+                loadImageAsync(from: avatarUrlString) { [weak self] avatarImage in
+                    let markerImage = self?.generateFriendMarkerImage(
+                        size: size,
+                        name: name,
+                        isOnline: isOnline,
+                        avatarImage: avatarImage
+                    )
+                    
+                    guard let image = markerImage else { return }
+                    
+                    let statusText = isOnline ? "online" : "offline"
+                    let markerId = friendId != nil ? "friend-marker-\(friendId!)-\(statusText)" : "friend-marker-default-\(statusText)"
+                    
+                    do {
+                        try mapView.mapboxMap.style.addImage(image, id: markerId)
+                        print("DEBUG: Successfully added friend marker for \(name ?? "Unknown") with avatar")
+                    } catch {
+                        print("DEBUG: Error adding friend marker image: \(error.localizedDescription)")
+                    }
+                }
+            } else {
+                // Generate marker without avatar immediately
+                let markerImage = generateFriendMarkerImage(
+                    size: size,
+                    name: name,
+                    isOnline: isOnline,
+                    avatarImage: nil
+                )
+                
+                let statusText = isOnline ? "online" : "offline"
+                let markerId = friendId != nil ? "friend-marker-\(friendId!)-\(statusText)" : "friend-marker-default-\(statusText)"
+                
+                do {
+                    try mapView.mapboxMap.style.addImage(markerImage, id: markerId)
+                    print("DEBUG: Successfully added friend marker for \(name ?? "Unknown") without avatar")
+                } catch {
+                    print("DEBUG: Error adding friend marker image: \(error.localizedDescription)")
+                }
+            }
+        }
+        
+        private func generateFriendMarkerImage(size: CGFloat, name: String?, isOnline: Bool, avatarImage: UIImage?) -> UIImage {
             let renderer = UIGraphicsImageRenderer(size: CGSize(width: size, height: size))
             
-            let annotationImage = renderer.image { ctx in
+            return renderer.image { ctx in
                 let rectangle = CGRect(x: 0, y: 0, width: size, height: size)
                 let cornerRadius: CGFloat = 12
                 
@@ -416,32 +489,10 @@ struct MapViewRepresentable: UIViewRepresentable {
                 ctx.cgContext.addPath(bezierPath.cgPath)
                 ctx.cgContext.clip()
                 
-                // FIXED: Try to load friend avatar if available
-                var drawnAvatar = false
-                if let avatarUrl = profileImageUrl, let url = URL(string: avatarUrl) {
-                    
-                    // Use URLSession to fetch image synchronously for marker creation
-                    let semaphore = DispatchSemaphore(value: 0)
-                    var avatarImage: UIImage?
-                    
-                    URLSession.shared.dataTask(with: url) { data, _, _ in
-                        if let data = data {
-                            avatarImage = UIImage(data: data)
-                        }
-                        semaphore.signal()
-                    }.resume()
-                    
-                    // Wait for image load (with timeout)
-                    _ = semaphore.wait(timeout: .now() + 1.0)
-                    
-                    if let image = avatarImage {
-                        // Draw avatar image filling the entire rounded rectangle
-                        image.draw(in: rectangle)
-                        drawnAvatar = true
-                    }
-                }
-                
-                if !drawnAvatar {
+                if let image = avatarImage {
+                    // Draw avatar image filling the entire rounded rectangle
+                    image.draw(in: rectangle)
+                } else {
                     // Create gradient background - different colors for online/offline
                     let colors: [CGColor]
                     if isOnline {
@@ -545,21 +596,14 @@ struct MapViewRepresentable: UIViewRepresentable {
                     height: statusDotSize
                 ))
             }
-            
-            // Create unique ID for marker based on ID and online status
-            let statusText = isOnline ? "online" : "offline"
-            let markerId = friendId != nil ? "friend-marker-\(friendId!)-\(statusText)" : "friend-marker-default-\(statusText)"
-            
-            // Add the image to the style
-            do {
-                try mapView.mapboxMap.style.addImage(annotationImage, id: markerId)
-                print("DEBUG: Successfully added friend marker for \(name ?? "Unknown")")
-            } catch {
-                print("DEBUG: Error adding friend marker image: \(error.localizedDescription)")
-            }
         }
         
-        func refreshUserMarkerWithNewAvatar(for mapView: MapView) {
+        @MainActor func refreshUserMarkerWithNewAvatar(for mapView: MapboxMaps.MapView) {
+            // Clear cached avatar for current user
+            if let avatarUrl = viewModel.currentUser.currentAvatarUrl ?? viewModel.currentUser.profileImageUrl {
+                imageCache.removeValue(forKey: avatarUrl)
+            }
+            
             // Recreate user marker with new avatar
             createUserMarkerImage(for: mapView)
             
@@ -575,7 +619,7 @@ struct MapViewRepresentable: UIViewRepresentable {
         
         // MARK: - Friend Annotations Update
         
-        func updateFriendAnnotations(for mapView: MapView, friendLocations: [String: UserLocation], friends: [User]) {
+        @MainActor func updateFriendAnnotations(for mapView: MapboxMaps.MapView, friendLocations: [String: UserLocation], friends: [User]) {
             guard let annotationManager = friendAnnotationManager,
                   let expandedAnnotationManager = expandedClusterAnnotationManager else { return }
             
@@ -673,7 +717,7 @@ struct MapViewRepresentable: UIViewRepresentable {
         }
         
         // Create an annotation for the current user
-        private func createUserAnnotation(at coordinate: CLLocationCoordinate2D, userName: String, mapView: MapView) -> PointAnnotation {
+        @MainActor private func createUserAnnotation(at coordinate: CLLocationCoordinate2D, userName: String, mapView: MapboxMaps.MapView) -> PointAnnotation {
             // Create user marker image if needed
             createUserMarkerImage(for: mapView)
             
@@ -683,33 +727,24 @@ struct MapViewRepresentable: UIViewRepresentable {
             annotation.iconImage = "user-marker-id"
             annotation.iconSize = 1.0
             
-            // Note: iconZOrder is not available in this version of MapboxMaps
-            // We'll use layer ordering instead
-            
             return annotation
         }
         
         // MARK: - Annotation Setup
         
-        func setupAnnotations(for mapView: MapView) {
+        @MainActor func setupAnnotations(for mapView: MapboxMaps.MapView) {
             print("DEBUG: Setting up annotations")
             
             // Create the annotation managers
             userAnnotationManager = mapView.annotations.makePointAnnotationManager()
             friendAnnotationManager = mapView.annotations.makePointAnnotationManager()
             expandedClusterAnnotationManager = mapView.annotations.makePointAnnotationManager()
-            pulseAnnotationManager = mapView.annotations.makeCircleAnnotationManager()
             
             // Create the custom image for user location
             createUserMarkerImage(for: mapView)
             
             // Create the custom image for friend locations
             createFriendMarkerImage(for: mapView)
-            
-            // Add pulsing effect to user location using circle layers
-            if let userLocation = viewModel.userLocation {
-                addPulseEffectLayer(for: mapView, at: userLocation, color: UIColor.blue, isUser: true)
-            }
             
             // Update friend markers
             updateFriendAnnotations(
@@ -750,10 +785,10 @@ struct MapViewRepresentable: UIViewRepresentable {
         
         // MARK: - Cluster Animation Helpers
         
-        private func animateClusterExpansion(
+        @MainActor private func animateClusterExpansion(
             for clusterId: String,
             at clusterCenter: CLLocationCoordinate2D,
-            mapView: MapView
+            mapView: MapboxMaps.MapView
         ) {
             // Find the relevant group for this cluster ID
             guard let group = currentLocationGroups.first(where: {
@@ -816,7 +851,7 @@ struct MapViewRepresentable: UIViewRepresentable {
         private func animateClusterCollapse(
             for clusterId: String,
             at clusterCenter: CLLocationCoordinate2D,
-            mapView: MapView,
+            mapView: MapboxMaps.MapView,
             completion: @escaping () -> Void
         ) {
             guard let expandedAnnotations = expandedClusterAnnotations[clusterId],
@@ -852,7 +887,6 @@ struct MapViewRepresentable: UIViewRepresentable {
             // For 2-3 friends, create a more pleasing pattern
             if count == 2 {
                 // For 2 friends, place them horizontally next to each other
-                let latOffset = 0.0
                 let lonFactor = cos(center.latitude * Double.pi / 180.0)
                 
                 // Friend 1 (left)
@@ -895,8 +929,7 @@ struct MapViewRepresentable: UIViewRepresentable {
                     longitude: center.longitude + lonOffset3
                 ))
             } else {
-                // For more than 3 friends (shouldn't happen with current logic, but just in case)
-                // Calculate positions in a circle
+                // For more than 3 friends, calculate positions in a circle
                 let angleStep = (2.0 * Double.pi) / Double(count)
                 
                 for i in 0..<count {
@@ -920,6 +953,14 @@ struct MapViewRepresentable: UIViewRepresentable {
             }
             
             return positions
+        }
+        
+        // MARK: - Memory Management
+        
+        deinit {
+            // Clean up observers and caches
+            NotificationCenter.default.removeObserver(self)
+            imageCache.removeAll()
         }
     }
 }
@@ -951,7 +992,6 @@ extension MapViewRepresentable.Coordinator: AnnotationInteractionDelegate {
                     let clusterCenter = pointAnnotation.point.coordinates
                     
                     // Post a notification to handle this in the parent view
-                    // This way we can access the mapView from there
                     NotificationCenter.default.post(
                         name: NSNotification.Name("ClusterToggled"),
                         object: nil,

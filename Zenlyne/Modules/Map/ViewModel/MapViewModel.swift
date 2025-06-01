@@ -12,6 +12,7 @@ import MapboxMaps
 import FirebaseAuth
 import FirebaseFirestore
 import FirebaseDatabase
+import Combine
 
 // MARK: - Map Style Options
 enum MapStyle {
@@ -52,7 +53,6 @@ enum MapStyle {
         }
     }
     
-    // Get the next style in the cycle
     func nextStyle() -> MapStyle {
         switch self {
         case .streets:
@@ -65,34 +65,44 @@ enum MapStyle {
     }
 }
 
+// MARK: - Location States
+enum LocationTrackingState {
+    case idle
+    case requesting
+    case tracking
+    case denied
+    case error(String)
+}
+
+@MainActor
 class LocationViewModel: NSObject, ObservableObject {
-    @Published var currentMapStyle: MapStyle = .streets
     
-    // User & Friends
+    // MARK: - Published Properties (Giữ nguyên để tương thích)
+    @Published var currentMapStyle: MapStyle = .streets
     @Published var currentUser: User = User.MOCK_USER
     @Published var friends: [User] = []
     @Published var friendLocations: [String: UserLocation] = [:]
-    
-    // Location tracking
     @Published var userLocation: CLLocationCoordinate2D?
     @Published var isTrackingLocation: Bool = false
-    
-    // Camera settings for MapView
     @Published var cameraOptions: CameraOptions
     
-    // Services
+    // MARK: - Combine Publishers
+    @Published private var locationTrackingState: LocationTrackingState = .idle
+    private var cancellables = Set<AnyCancellable>()
+    
+    // MARK: - Services
     private let locationService: LocationServiceProtocol
     private let firebaseService: FirebaseServiceProtocol
     
-    // Tracks active observers
+    // MARK: - Internal State
     private var locationObserversActive = false
     private var onlineStatusObserversActive = false
-    
     private var clusterState = ClusterState()
     
-    // Initialize with default camera position at NWS
+    // MARK: - Initialization
     init(locationService: LocationServiceProtocol = LocationService(),
          firebaseService: FirebaseServiceProtocol = FirebaseService()) {
+        
         // Default camera position (NWS)
         self.cameraOptions = CameraOptions(
             center: CLLocationCoordinate2D(latitude: 21.01991, longitude: 105.7838),
@@ -110,12 +120,59 @@ class LocationViewModel: NSObject, ObservableObject {
         if let locationService = locationService as? LocationService {
             locationService.delegate = self
         }
+        
+        setupCombineBindings()
     }
     
-    // MARK: - Location Tracking
+    // MARK: - Private Setup
+    private func setupCombineBindings() {
+        // Observe location tracking state changes
+        $locationTrackingState
+            .sink { [weak self] state in
+                switch state {
+                case .tracking:
+                    self?.isTrackingLocation = true
+                case .denied, .error, .idle:
+                    self?.isTrackingLocation = false
+                case .requesting:
+                    break
+                }
+            }
+            .store(in: &cancellables)
+        
+        // Observe user location changes and update camera if needed
+        $userLocation
+            .compactMap { $0 }
+            .debounce(for: .milliseconds(500), scheduler: RunLoop.main)
+            .sink { [weak self] location in
+                self?.handleUserLocationUpdate(location)
+            }
+            .store(in: &cancellables)
+        
+        // Observe friend locations and update clustering
+        $friendLocations
+            .combineLatest($friends)
+            .debounce(for: .milliseconds(300), scheduler: RunLoop.main)
+            .sink { [weak self] locations, friends in
+                self?.handleFriendLocationsUpdate(locations: locations, friends: friends)
+            }
+            .store(in: &cancellables)
+    }
+    
+    private func handleUserLocationUpdate(_ location: CLLocationCoordinate2D) {
+        print("DEBUG: User location updated via Combine: \(location.latitude), \(location.longitude)")
+    }
+    
+    private func handleFriendLocationsUpdate(locations: [String: UserLocation], friends: [User]) {
+        print("DEBUG: Friend locations updated via Combine: \(locations.count) locations for \(friends.count) friends")
+    }
+    
+    // MARK: - Location Tracking (Giữ nguyên interface)
     
     func startTrackingLocation() {
         print("DEBUG: Starting location tracking")
+        locationTrackingState = .requesting
+        
         locationService.requestAlwaysAuthorization()
         locationService.startUpdatingLocation()
         
@@ -128,6 +185,7 @@ class LocationViewModel: NSObject, ObservableObject {
     func stopTrackingLocation() {
         print("DEBUG: Stopping location tracking")
         locationService.stopUpdatingLocation()
+        locationTrackingState = .idle
         
         // Set user as offline
         if let userId = Auth.auth().currentUser?.uid {
@@ -148,7 +206,7 @@ class LocationViewModel: NSObject, ObservableObject {
         }
     }
     
-    // MARK: - Map Camera Control
+    // MARK: - Map Camera Control (Giữ nguyên interface)
     
     func focusOnUserLocation() {
         guard let userLocation = userLocation else {
@@ -156,23 +214,21 @@ class LocationViewModel: NSObject, ObservableObject {
             return
         }
         
-        DispatchQueue.main.async {
-            self.cameraOptions = CameraOptions(
-                center: userLocation,
-                zoom: 15.0,
-                bearing: 0,
-                pitch: 0
-            )
-            self.isTrackingLocation = true
-            print("DEBUG: Focused camera on user location: \(userLocation.latitude), \(userLocation.longitude)")
-        }
+        cameraOptions = CameraOptions(
+            center: userLocation,
+            zoom: 15.0,
+            bearing: 0,
+            pitch: 0
+        )
+        isTrackingLocation = true
+        print("DEBUG: Focused camera on user location: \(userLocation.latitude), \(userLocation.longitude)")
     }
     
     func toggleMapStyle() {
         currentMapStyle = currentMapStyle.nextStyle()
     }
     
-    // MARK: - Friend Location Observers
+    // MARK: - Friend Location Observers (Giữ nguyên interface)
     
     func startObservingFriendLocations(friendIds: [String]) {
         guard !friendIds.isEmpty else {
@@ -199,7 +255,7 @@ class LocationViewModel: NSObject, ObservableObject {
             }
             
             // Update friend location in main thread
-            DispatchQueue.main.async {
+            Task { @MainActor in
                 self.friendLocations = locations
             }
         }
@@ -218,7 +274,7 @@ class LocationViewModel: NSObject, ObservableObject {
                 guard let self = self else { return }
                 
                 // Update friend's online status
-                DispatchQueue.main.async {
+                Task { @MainActor in
                     if let index = self.friends.firstIndex(where: { $0.id == friendId }) {
                         self.friends[index].isOnline = isOnline
                         
@@ -228,7 +284,7 @@ class LocationViewModel: NSObject, ObservableObject {
                             database.child("users").child(friendId).child("lastSeen").observeSingleEvent(of: .value) { snapshot in
                                 if let timestamp = snapshot.value as? Double {
                                     let date = Date(timeIntervalSince1970: timestamp / 1000)
-                                    DispatchQueue.main.async {
+                                    Task { @MainActor in
                                         self.friends[index].lastSeen = date
                                     }
                                 }
@@ -251,7 +307,7 @@ class LocationViewModel: NSObject, ObservableObject {
         }
     }
     
-    // MARK: - Helper Methods
+    // MARK: - Helper Methods (Giữ nguyên interface)
     
     func getFriend(byId id: String) -> User? {
         return friends.first { $0.id == id }
@@ -281,7 +337,7 @@ class LocationViewModel: NSObject, ObservableObject {
             
             print("DEBUG: Loaded \(friends.count) friends")
             
-            DispatchQueue.main.async {
+            Task { @MainActor in
                 self.friends = friends
                 
                 // Start observing your friends' location and status
@@ -301,11 +357,7 @@ class LocationViewModel: NSObject, ObservableObject {
         
         guard let friendLocation = friendLocations[friendId] else {
             print("DEBUG: No location found for friend with ID: \(friendId)")
-            
-            // Display debug information about existing locations
             print("DEBUG: Available friend locations: \(friendLocations.keys.joined(separator: ", "))")
-            
-            // Check database directly
             debugFriendLocationsInDatabase()
             return
         }
@@ -388,17 +440,16 @@ class LocationViewModel: NSObject, ObservableObject {
     }
 }
 
-// MARK: - LocationServiceDelegate
-
+// MARK: - LocationServiceDelegate (Giữ nguyên)
 extension LocationViewModel: LocationServiceDelegate {
     func locationService(_ service: LocationServiceProtocol, didUpdateLocation location: CLLocation) {
-        // Only upadte userLocation, do not change cameraOptions
-        DispatchQueue.main.async {
-            self.userLocation = location.coordinate
-            print("DEBUG: Updated user location to \(location.coordinate.latitude), \(location.coordinate.longitude)")
-        }
+        // Update userLocation and tracking state
+        userLocation = location.coordinate
+        locationTrackingState = .tracking
         
-        // Sava location into Firebase
+        print("DEBUG: Updated user location to \(location.coordinate.latitude), \(location.coordinate.longitude)")
+        
+        // Save location to Firebase
         if let userId = Auth.auth().currentUser?.uid {
             let userLocation = UserLocation(coordinate: location.coordinate)
             firebaseService.saveUserLocation(userId: userId, location: userLocation)
@@ -407,27 +458,35 @@ extension LocationViewModel: LocationServiceDelegate {
     
     func locationService(_ service: LocationServiceProtocol, didFailWithError error: Error) {
         print("DEBUG: Location error: \(error.localizedDescription)")
+        locationTrackingState = .error(error.localizedDescription)
     }
     
     func locationService(_ service: LocationServiceProtocol, didChangeAuthorization status: CLAuthorizationStatus) {
         print("DEBUG: Location authorization status changed: \(status.rawValue)")
         
-        // Start tracking when authorized
-        if status == .authorizedWhenInUse || status == .authorizedAlways {
+        switch status {
+        case .authorizedWhenInUse, .authorizedAlways:
             locationService.startUpdatingLocation()
+            locationTrackingState = .tracking
+        case .denied, .restricted:
+            locationTrackingState = .denied
+        case .notDetermined:
+            locationTrackingState = .requesting
+        @unknown default:
+            locationTrackingState = .idle
         }
     }
 }
 
+// MARK: - Cluster Management (Giữ nguyên interface)
 extension LocationViewModel {
-    // Track expanded cluster IDs
+    
     private struct ClusterState {
         var expandedClusterIds: Set<String> = []
         var currentZoomLevel: Double = 14.0
         var autoExpandThreshold: Double = 16.0
     }
     
-    // Update current zoom level
     func updateMapZoomLevel(_ zoomLevel: Double) {
         clusterState.currentZoomLevel = zoomLevel
         
@@ -435,39 +494,30 @@ extension LocationViewModel {
         if zoomLevel >= clusterState.autoExpandThreshold {
             expandAllClustersInView()
         } else if zoomLevel < clusterState.autoExpandThreshold - 1.0 {
-            // Collapse clusters when zoomed out
             collapseAllClusters()
         }
     }
     
-    // Toggle a specific cluster's expansion state
     func toggleClusterExpansion(clusterId: String) -> Bool {
         if clusterState.expandedClusterIds.contains(clusterId) {
             clusterState.expandedClusterIds.remove(clusterId)
-            return false // Now collapsed
+            return false
         } else {
             clusterState.expandedClusterIds.insert(clusterId)
-            return true // Now expanded
+            return true
         }
     }
     
-    // Check if a cluster is expanded
     func isClusterExpanded(clusterId: String) -> Bool {
         return clusterState.expandedClusterIds.contains(clusterId)
     }
     
-    // Expand all clusters currently in view
     private func expandAllClustersInView() {
-        // For now, we'll simply flag all clusters as expanded
-        // In a real implementation, you would only expand clusters visible in the current camera view
-        
-        // Process current friend locations to identify clusters
         let friendLocationGetter = FriendLocationGrouper()
         friendLocationGetter.updateZoomLevel(clusterState.currentZoomLevel)
         
         let locationGroups = friendLocationGetter.groupFriendLocations(friendLocations)
         
-        // Mark all multi-friend clusters as expanded
         for group in locationGroups {
             if group.type == .cluster && group.count >= 2 {
                 let clusterId = group.friendIds.sorted().joined(separator: "_")
@@ -475,51 +525,94 @@ extension LocationViewModel {
             }
         }
         
-        // Notify that clusters have changed to trigger update
-        self.objectWillChange.send()
+        objectWillChange.send()
     }
     
-    // Collapse all currently expanded clusters
     private func collapseAllClusters() {
         if !clusterState.expandedClusterIds.isEmpty {
             clusterState.expandedClusterIds.removeAll()
-            
-            // Notify that clusters have changed to trigger update
-            self.objectWillChange.send()
+            objectWillChange.send()
         }
     }
     
-    // Focus on a specific cluster
     func focusOnCluster(clusterId: String, expanded: Bool = true) {
-        // Find the relevant group for this cluster ID
         let friendLocationGetter = FriendLocationGrouper()
         let locationGroups = friendLocationGetter.groupFriendLocations(friendLocations)
         
-        // Find the cluster's center point
         if let group = locationGroups.first(where: {
             $0.type == .cluster &&
             $0.friendIds.sorted().joined(separator: "_") == clusterId
         }) {
-            // Set expanded state if requested
             if expanded {
                 clusterState.expandedClusterIds.insert(clusterId)
             }
             
-            // Focus camera on the cluster
             cameraOptions = CameraOptions(
                 center: group.centerCoordinate,
-                zoom: 15.5, // Higher zoom to better see the expanded cluster
+                zoom: 15.5,
                 bearing: 0,
                 pitch: 0
             )
             
-            // Notify changes
-            self.objectWillChange.send()
+            objectWillChange.send()
         }
     }
     
-    // Get all currently expanded cluster IDs
     func getExpandedClusterIds() -> Set<String> {
         return clusterState.expandedClusterIds
+    }
+}
+
+// MARK: - Combine Publishers
+extension LocationViewModel {
+    
+    /// Publisher that emits location tracking state changes
+    var locationTrackingStatePublisher: Published<LocationTrackingState>.Publisher {
+        $locationTrackingState
+    }
+    
+    /// Publisher for user location changes
+    var userLocationPublisher: AnyPublisher<CLLocationCoordinate2D?, Never> {
+        $userLocation
+            .removeDuplicates { lhs, rhs in
+                guard let lhs = lhs, let rhs = rhs else {
+                    return lhs == nil && rhs == nil
+                }
+                return abs(lhs.latitude - rhs.latitude) < 0.0001 &&
+                       abs(lhs.longitude - rhs.longitude) < 0.0001
+            }
+            .eraseToAnyPublisher()
+    }
+    
+    /// Publisher for friend locations changes
+    var friendLocationsPublisher: AnyPublisher<[String: UserLocation], Never> {
+        $friendLocations
+            .removeDuplicates()
+            .eraseToAnyPublisher()
+    }
+    
+    /// Publisher for friends list changes
+    var friendsPublisher: AnyPublisher<[User], Never> {
+        $friends
+            .removeDuplicates { $0.map(\.id) == $1.map(\.id) }
+            .eraseToAnyPublisher()
+    }
+    
+    /// Publisher for map style changes
+    var mapStylePublisher: AnyPublisher<MapStyle, Never> {
+        $currentMapStyle
+            .removeDuplicates()
+            .eraseToAnyPublisher()
+    }
+    
+    /// Publisher for camera option changes
+    var cameraOptionsPublisher: AnyPublisher<CameraOptions, Never> {
+        $cameraOptions
+            .removeDuplicates { lhs, rhs in
+                return lhs.center?.latitude == rhs.center?.latitude &&
+                       lhs.center?.longitude == rhs.center?.longitude &&
+                       lhs.zoom == rhs.zoom
+            }
+            .eraseToAnyPublisher()
     }
 }

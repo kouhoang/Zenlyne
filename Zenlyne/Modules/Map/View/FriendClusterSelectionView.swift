@@ -1,21 +1,23 @@
 //
-//  FriendClusterSelectionView.swift
+//  EnhancedFriendClusterSelectionView.swift
 //  Zenlyne
 //
 //  Created by admin on 20/5/25.
 //
 
-
 import SwiftUI
 
-struct FriendClusterSelectionView: View {
+struct EnhancedFriendClusterSelectionView: View {
     let friends: [User]
     let onFriendSelected: (String) -> Void
     let onClose: () -> Void
     
+    @State private var isExpanded = false
+    private let animationDuration: Double = 0.3
+    
     var body: some View {
         VStack(spacing: 0) {
-            // Handle for dragging
+            // Handle for dragging/collapsing
             HStack {
                 Spacer()
                 Rectangle()
@@ -29,7 +31,7 @@ struct FriendClusterSelectionView: View {
             
             // Header
             HStack {
-                Text("\(friends.count) bạn bè ở đây")
+                Text("\(friends.count) Friends in this Area")
                     .font(.headline)
                     .foregroundColor(.primary)
                 
@@ -44,14 +46,36 @@ struct FriendClusterSelectionView: View {
             .padding(.horizontal, 16)
             .padding(.bottom, 12)
             
+            // Online status summary
+            let onlineCount = friends.filter { $0.isOnline }.count
+            if onlineCount > 0 {
+                HStack(spacing: 4) {
+                    Circle()
+                        .fill(Color.green)
+                        .frame(width: 8, height: 8)
+                    
+                    Text("\(onlineCount) online now")
+                        .font(.subheadline)
+                        .foregroundColor(.green)
+                        .padding(.bottom, 8)
+                }
+            }
+            
             Divider()
             
             // Friends list
             ScrollView {
                 LazyVStack(spacing: 0) {
                     ForEach(friends) { friend in
-                        FriendClusterRow(friend: friend) {
-                            onFriendSelected(friend.id)
+                        EnhancedFriendClusterRow(friend: friend) {
+                            withAnimation {
+                                self.isExpanded = false
+                            }
+                            
+                            // Slight delay before notifying selection to allow animation to complete
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                                onFriendSelected(friend.id)
+                            }
                         }
                         
                         if friend.id != friends.last?.id {
@@ -62,6 +86,47 @@ struct FriendClusterSelectionView: View {
                 }
                 .padding(.vertical, 8)
             }
+            
+            // Quick action buttons
+            HStack(spacing: 20) {
+                // Message All button
+                Button(action: {
+                    // This would open a group chat with all these friends
+                    print("Message all tapped")
+                }) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "message.fill")
+                            .foregroundColor(.white)
+                        Text("Message All")
+                            .fontWeight(.medium)
+                            .foregroundColor(.white)
+                    }
+                    .padding(.vertical, 12)
+                    .frame(maxWidth: .infinity)
+                    .background(Color.blue)
+                    .cornerRadius(12)
+                }
+                
+                // Navigate button
+                Button(action: {
+                    print("Navigate tapped")
+                }) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "location.fill")
+                            .foregroundColor(.white)
+                        Text("Navigate")
+                            .fontWeight(.medium)
+                            .foregroundColor(.white)
+                    }
+                    .padding(.vertical, 12)
+                    .frame(maxWidth: .infinity)
+                    .background(Color.orange)
+                    .cornerRadius(12)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 8)
+            .padding(.bottom, 16)
         }
         .background(
             RoundedRectangle(cornerRadius: 20)
@@ -69,10 +134,16 @@ struct FriendClusterSelectionView: View {
                 .shadow(color: Color.black.opacity(0.2), radius: 10, x: 0, y: 5)
         )
         .padding(.horizontal)
+        .onAppear {
+            // Animate expansion when view appears
+            withAnimation(.easeOut(duration: animationDuration)) {
+                isExpanded = true
+            }
+        }
     }
 }
 
-struct FriendClusterRow: View {
+struct EnhancedFriendClusterRow: View {
     let friend: User
     let onTap: () -> Void
     
@@ -82,7 +153,7 @@ struct FriendClusterRow: View {
                 // Avatar with status indicator
                 ZStack(alignment: .bottomTrailing) {
                     // Avatar circle
-                    if let profileImageUrl = friend.profileImageUrl,
+                    if let profileImageUrl = friend.currentAvatarUrl,
                        let url = URL(string: profileImageUrl) {
                         AsyncImage(url: url) { image in
                             image
@@ -134,11 +205,11 @@ struct FriendClusterRow: View {
                     
                     HStack(spacing: 4) {
                         if friend.isOnline {
-                            Text("Đang hoạt động")
+                            Text("Online")
                                 .font(.system(size: 14))
                                 .foregroundColor(.green)
                         } else if let lastSeen = friend.lastSeen {
-                            Text("Hoạt động \(lastSeen, formatter: RelativeDateTimeFormatter())")
+                            Text("Last seen \(formatLastSeen(lastSeen))")
                                 .font(.system(size: 14))
                                 .foregroundColor(.gray)
                         } else {
@@ -151,14 +222,55 @@ struct FriendClusterRow: View {
                 
                 Spacer()
                 
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(.gray)
+                // Distance (if available)
+                if let _ = friend.lastLocation {
+                    Text("Show")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundColor(.blue)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                        .background(Color.blue.opacity(0.1))
+                        .cornerRadius(8)
+                }
             }
-            .padding(.vertical, 12)
-            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .padding(.horizontal, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color.white)
+                    .opacity(0.01)
+            )
             .contentShape(Rectangle())
         }
-        .buttonStyle(PlainButtonStyle())
+        .buttonStyle(ScaleButtonStyle())
     }
+    
+    // Helper method to format last seen time
+    private func formatLastSeen(_ date: Date) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .short
+        return formatter.localizedString(for: date, relativeTo: Date())
+    }
+}
+
+// Button style for a subtle scale effect on tap
+struct ScaleButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .animation(.easeOut(duration: 0.2), value: configuration.isPressed)
+            .background(
+                configuration.isPressed ?
+                    Color.gray.opacity(0.1).cornerRadius(12) :
+                    Color.clear.cornerRadius(12)
+            )
+    }
+}
+
+#Preview {
+    EnhancedFriendClusterSelectionView(
+        friends: [User.MOCK_USER],
+        onFriendSelected: { _ in },
+        onClose: {}
+    )
 }
