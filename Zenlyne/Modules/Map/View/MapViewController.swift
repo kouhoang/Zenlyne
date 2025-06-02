@@ -112,7 +112,8 @@ struct MapView: View {
                 .environmentObject(authViewModel)
         }
         .sheet(isPresented: $showFriendsListView) {
-            FriendsListView(viewModel: viewModel)
+            FriendsListView(locationViewModel: viewModel)
+                .environmentObject(authViewModel)
         }
         .sheet(isPresented: $showFriendRequestsView) {
             FriendRequestsView()
@@ -364,10 +365,17 @@ struct MapView: View {
     private func loadFriendsAndStartObserving() {
         if let currentUserId = Auth.auth().currentUser?.uid {
             print("DEBUG: Loading friends for current user: \(currentUserId)")
-            let friendViewModel = FriendRequestViewModel()
-            friendViewModel.fetchFriends(forUserId: currentUserId) { friends in
-                print("DEBUG: Loaded \(friends.count) friends from Firebase")
-                DispatchQueue.main.async {
+            
+            let friendViewModel = FriendViewModel()
+            
+            // Call fetchFriends() and observe reslut by Combine
+            friendViewModel.fetchFriends()
+            
+            // Subscribe to friends changes
+            friendViewModel.$friends
+                .receive(on: DispatchQueue.main)
+                .sink { friends in
+                    print("DEBUG: Loaded \(friends.count) friends from Firebase")
                     self.viewModel.friends = friends
                     
                     if !friends.isEmpty {
@@ -377,11 +385,13 @@ struct MapView: View {
                         self.viewModel.startObservingFriendOnlineStatus(friendIds: friendIds)
                     }
                 }
-            }
+                .store(in: &cancellables)
+            
         } else {
             print("DEBUG: No current user ID available")
         }
     }
+
     
     private func setupNotificationListeners() {
         // Set up a listener to select friends on the map

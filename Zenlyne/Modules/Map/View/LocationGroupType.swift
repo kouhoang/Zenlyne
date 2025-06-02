@@ -1,12 +1,4 @@
 //
-//  LocationGroupType.swift
-//  Zenlyne
-//
-//  Created by kou on 2/6/25.
-//
-
-
-//
 //  FriendLocationGrouper.swift
 //  Zenlyne
 //

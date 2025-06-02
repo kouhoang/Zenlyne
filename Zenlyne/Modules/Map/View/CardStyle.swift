@@ -1,12 +1,4 @@
 //
-//  CardStyle.swift
-//  Zenlyne
-//
-//  Created by kou on 2/6/25.
-//
-
-
-//
 //  ViewExtensions.swift
 //  Zenlyne
 //

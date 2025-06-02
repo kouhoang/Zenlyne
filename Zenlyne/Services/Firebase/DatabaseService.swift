@@ -433,7 +433,52 @@ class FirebaseService: FirebaseServiceProtocol {
         locationListeners[userId] = listener
     }
     
-    // MARK: - Helper Methods (Giữ nguyên)
+    // MARK: - Helper Methods
+    
+    func getPendingFriendRequestsCount(for userId: String, completion: @escaping (Int) -> Void) {
+        let db = Firestore.firestore()
+        
+        db.collection("users").document(userId).getDocument { snapshot, error in
+            if let error = error {
+                print("DEBUG: Error fetching user document: \(error.localizedDescription)")
+                completion(0)
+                return
+            }
+            
+            guard let document = snapshot, document.exists,
+                  let data = document.data(),
+                  let friendRequests = data["friendRequests"] as? [String] else {
+                completion(0)
+                return
+            }
+            
+            completion(friendRequests.count)
+        }
+    }
+    
+    func removeFriend(currentUserId: String, friendId: String, completion: @escaping (Bool) -> Void) {
+        let db = Firestore.firestore()
+        let batch = db.batch()
+        
+        // Remove friend from current user's friend list
+        let currentUserRef = db.collection("users").document(currentUserId)
+        batch.updateData(["friendIds": FieldValue.arrayRemove([friendId])], forDocument: currentUserRef)
+        
+        // Remove current user from friend's friend list
+        let friendRef = db.collection("users").document(friendId)
+        batch.updateData(["friendIds": FieldValue.arrayRemove([currentUserId])], forDocument: friendRef)
+        
+        batch.commit { error in
+            if let error = error {
+                print("DEBUG: Error removing friend: \(error.localizedDescription)")
+                completion(false)
+            } else {
+                print("DEBUG: Successfully removed friend relationship")
+                completion(true)
+            }
+        }
+    }
+
     
     private func fetchAllFriendLocations(userIds: [String], completion: @escaping ([String: UserLocation]) -> Void) {
         let db = Firestore.firestore()

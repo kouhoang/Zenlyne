@@ -2,84 +2,389 @@
 //  FriendService.swift
 //  Zenlyne
 //
-//  Created by admin on 8/4/25.
-//
 
 import Foundation
 import FirebaseFirestore
 import FirebaseAuth
+import Combine
 
-extension FirebaseService {
+protocol FriendServiceProtocol {
+    func sendFriendRequest(toEmail email: String) -> AnyPublisher<String, Error>
+    func fetchFriendRequests() -> AnyPublisher<[FriendRequest], Error>
+    func acceptFriendRequest(requestId: String) -> AnyPublisher<String, Error>
+    func declineFriendRequest(requestId: String) -> AnyPublisher<String, Error>
+    func fetchFriends(forUserId userId: String) -> AnyPublisher<[User], Error>
+    func removeFriend(currentUserId: String, friendId: String) -> AnyPublisher<Void, Error>
+    func getPendingRequestsCount() -> AnyPublisher<Int, Error>
+}
+
+class FriendService: FriendServiceProtocol {
+    private let db = Firestore.firestore()
+    private var cancellables = Set<AnyCancellable>()
     
-    func sendFriendRequest(from currentUser: User, to email: String, completion: @escaping (Bool, String) -> Void) {
-        let db = Firestore.firestore()
-        
-        guard email != currentUser.email else {
-            completion(false, "Bạn không thể gửi lời mời kết bạn cho chính mình")
-            return
-        }
-        
-        // Find users by email
-        db.collection("users")
-            .whereField("email", isEqualTo: email)
-            .getDocuments { snapshot, error in
-                if let error = error {
-                    completion(false, "Lỗi: \(error.localizedDescription)")
-                    return
-                }
-                
-                // Check if user found
-                guard let documents = snapshot?.documents, !documents.isEmpty else {
-                    completion(false, "Không tìm thấy người dùng với email này")
-                    return
-                }
-                
-                // Get recipient information
-                guard let data = documents.first?.data(),
-                      let recipientId = data["id"] as? String else {
-                    completion(false, "Không thể xác định người nhận")
-                    return
-                }
-                
-                // Check if already friends
-                self.checkIfAlreadyFriends(userId: currentUser.id, friendId: recipientId) { isAlreadyFriends in
-                    if isAlreadyFriends {
-                        completion(false, "Bạn đã là bạn bè với người này")
+    // MARK: - Send Friend Request
+    func sendFriendRequest(toEmail email: String) -> AnyPublisher<String, Error> {
+        Future<String, Error> { [weak self] promise in
+            guard let self = self else {
+                promise(.failure(FriendError.serviceUnavailable))
+                return
+            }
+            
+            guard let currentUser = Auth.auth().currentUser else {
+                promise(.failure(FriendError.userNotAuthenticated))
+                return
+            }
+            
+            // Validate email
+            guard email != currentUser.email else {
+                promise(.failure(FriendError.cannotAddSelf))
+                return
+            }
+            
+            // Find user by email
+            self.db.collection("users")
+                .whereField("email", isEqualTo: email)
+                .getDocuments { snapshot, error in
+                    if let error = error {
+                        promise(.failure(error))
                         return
                     }
                     
-                    // Check if invitation has been sent before
-                    self.checkExistingFriendRequest(senderId: currentUser.id, recipientId: recipientId) { existingRequest in
-                        if existingRequest {
-                            completion(false, "Bạn đã gửi lời mời kết bạn trước đó")
+                    guard let documents = snapshot?.documents, !documents.isEmpty else {
+                        promise(.failure(FriendError.userNotFound))
+                        return
+                    }
+                    
+                    let recipientId = documents[0].documentID
+                    
+                    // Check if already friends
+                    self.checkIfAlreadyFriends(userId: currentUser.uid, friendId: recipientId) { isAlreadyFriends in
+                        if isAlreadyFriends {
+                            promise(.failure(FriendError.alreadyFriends))
                             return
                         }
                         
-                        // Create new friend request
-                        let requestData: [String: Any] = [
-                            "senderId": currentUser.id,
-                            "senderEmail": currentUser.email,
-                            "recipientId": recipientId,
-                            "status": "pending",
-                            "timestamp": Timestamp(date: Date())
-                        ]
-                        
-                        // Save request into Firestore
-                        db.collection("friend_requests").addDocument(data: requestData) { error in
-                            if let error = error {
-                                completion(false, "Lỗi: \(error.localizedDescription)")
-                            } else {
-                                completion(true, "Đã gửi lời mời kết bạn thành công")
+                        // Check existing request
+                        self.checkExistingFriendRequest(senderId: currentUser.uid, recipientId: recipientId) { existingRequest in
+                            if existingRequest {
+                                promise(.failure(FriendError.requestAlreadySent))
+                                return
+                            }
+                            
+                            // Create friend request
+                            let friendRequest: [String: Any] = [
+                                "senderId": currentUser.uid,
+                                "senderEmail": currentUser.email ?? "",
+                                "recipientId": recipientId,
+                                "status": "pending",
+                                "timestamp": FieldValue.serverTimestamp()
+                            ]
+                            
+                            self.db.collection("friend_requests").addDocument(data: friendRequest) { error in
+                                if let error = error {
+                                    promise(.failure(error))
+                                } else {
+                                    promise(.success("Đã gửi lời mời kết bạn thành công"))
+                                }
                             }
                         }
                     }
                 }
-            }
+        }
+        .eraseToAnyPublisher()
     }
     
+    // MARK: - Fetch Friend Requests
+    func fetchFriendRequests() -> AnyPublisher<[FriendRequest], Error> {
+        Future<[FriendRequest], Error> { promise in
+            guard let currentUser = Auth.auth().currentUser else {
+                promise(.failure(FriendError.userNotAuthenticated))
+                return
+            }
+            
+            self.db.collection("friend_requests")
+                .whereField("recipientId", isEqualTo: currentUser.uid)
+                .whereField("status", isEqualTo: "pending")
+                .getDocuments { snapshot, error in
+                    if let error = error {
+                        promise(.failure(error))
+                        return
+                    }
+                    
+                    guard let documents = snapshot?.documents else {
+                        promise(.success([]))
+                        return
+                    }
+                    
+                    let requests = documents.compactMap { document -> FriendRequest? in
+                        let data = document.data()
+                        return FriendRequest(
+                            id: document.documentID,
+                            senderId: data["senderId"] as? String ?? "",
+                            senderEmail: data["senderEmail"] as? String ?? "",
+                            recipientId: data["recipientId"] as? String ?? "",
+                            status: data["status"] as? String ?? ""
+                        )
+                    }
+                    
+                    promise(.success(requests))
+                }
+        }
+        .eraseToAnyPublisher()
+    }
     
+    // MARK: - Accept Friend Request
+    func acceptFriendRequest(requestId: String) -> AnyPublisher<String, Error> {
+        Future<String, Error> { promise in
+            guard let currentUser = Auth.auth().currentUser else {
+                promise(.failure(FriendError.userNotAuthenticated))
+                return
+            }
+            
+            let requestRef = self.db.collection("friend_requests").document(requestId)
+            
+            self.db.runTransaction({ (transaction, errorPointer) -> Any? in
+                do {
+                    let requestDocument = try transaction.getDocument(requestRef)
+                    
+                    guard let data = requestDocument.data(),
+                          let senderId = data["senderId"] as? String,
+                          let recipientId = data["recipientId"] as? String,
+                          let status = data["status"] as? String else {
+                        let error = NSError(
+                            domain: "FriendRequestError",
+                            code: -1,
+                            userInfo: [NSLocalizedDescriptionKey: "Không tìm thấy lời mời kết bạn"]
+                        )
+                        errorPointer?.pointee = error
+                        return nil
+                    }
+                    
+                    guard recipientId == currentUser.uid else {
+                        let error = NSError(
+                            domain: "FriendRequestError",
+                            code: -2,
+                            userInfo: [NSLocalizedDescriptionKey: "Bạn không có quyền chấp nhận lời mời này"]
+                        )
+                        errorPointer?.pointee = error
+                        return nil
+                    }
+                    
+                    guard status == "pending" else {
+                        let error = NSError(
+                            domain: "FriendRequestError",
+                            code: -3,
+                            userInfo: [NSLocalizedDescriptionKey: "Lời mời này đã được xử lý"]
+                        )
+                        errorPointer?.pointee = error
+                        return nil
+                    }
+                    
+                    // Update request status
+                    transaction.updateData(["status": "accepted"], forDocument: requestRef)
+                    
+                    // Add to friends lists
+                    let currentUserRef = self.db.collection("users").document(currentUser.uid)
+                    transaction.updateData([
+                        "friendIds": FieldValue.arrayUnion([senderId])
+                    ], forDocument: currentUserRef)
+                    
+                    let senderRef = self.db.collection("users").document(senderId)
+                    transaction.updateData([
+                        "friendIds": FieldValue.arrayUnion([currentUser.uid])
+                    ], forDocument: senderRef)
+                    
+                    return nil
+                    
+                } catch {
+                    errorPointer?.pointee = error as NSError
+                    return nil
+                }
+            }) { (result, error) in
+                if let error = error {
+                    promise(.failure(error))
+                } else {
+                    promise(.success("Đã chấp nhận lời mời kết bạn thành công"))
+                }
+            }
+        }
+        .eraseToAnyPublisher()
+    }
+    
+    // MARK: - Decline Friend Request
+    func declineFriendRequest(requestId: String) -> AnyPublisher<String, Error> {
+        Future<String, Error> { promise in
+            guard let currentUser = Auth.auth().currentUser else {
+                promise(.failure(FriendError.userNotAuthenticated))
+                return
+            }
+            
+            let requestRef = self.db.collection("friend_requests").document(requestId)
+            
+            self.db.runTransaction({ (transaction, errorPointer) -> Any? in
+                do {
+                    let requestDocument = try transaction.getDocument(requestRef)
+                    
+                    guard let data = requestDocument.data(),
+                          let recipientId = data["recipientId"] as? String,
+                          let status = data["status"] as? String else {
+                        let error = NSError(
+                            domain: "FriendRequestError",
+                            code: -1,
+                            userInfo: [NSLocalizedDescriptionKey: "Không tìm thấy lời mời kết bạn"]
+                        )
+                        errorPointer?.pointee = error
+                        return nil
+                    }
+                    
+                    guard recipientId == currentUser.uid else {
+                        let error = NSError(
+                            domain: "FriendRequestError",
+                            code: -2,
+                            userInfo: [NSLocalizedDescriptionKey: "Bạn không có quyền từ chối lời mời này"]
+                        )
+                        errorPointer?.pointee = error
+                        return nil
+                    }
+                    
+                    guard status == "pending" else {
+                        let error = NSError(
+                            domain: "FriendRequestError",
+                            code: -3,
+                            userInfo: [NSLocalizedDescriptionKey: "Lời mời này đã được xử lý"]
+                        )
+                        errorPointer?.pointee = error
+                        return nil
+                    }
+                    
+                    transaction.updateData(["status": "declined"], forDocument: requestRef)
+                    
+                    return nil
+                    
+                } catch {
+                    errorPointer?.pointee = error as NSError
+                    return nil
+                }
+            }) { (result, error) in
+                if let error = error {
+                    promise(.failure(error))
+                } else {
+                    promise(.success("Đã từ chối lời mời kết bạn"))
+                }
+            }
+        }
+        .eraseToAnyPublisher()
+    }
+    
+    // MARK: - Fetch Friends
+    func fetchFriends(forUserId userId: String) -> AnyPublisher<[User], Error> {
+        Future<[User], Error> { promise in
+            let userRef = self.db.collection("users").document(userId)
+            
+            userRef.getDocument { snapshot, error in
+                if let error = error {
+                    promise(.failure(error))
+                    return
+                }
+                
+                guard let document = snapshot, document.exists,
+                      let data = document.data() else {
+                    promise(.success([]))
+                    return
+                }
+                
+                let friendIds = data["friendIds"] as? [String] ?? []
+                
+                if friendIds.isEmpty {
+                    promise(.success([]))
+                    return
+                }
+                
+                let group = DispatchGroup()
+                var friends: [User] = []
+                
+                for friendId in friendIds {
+                    group.enter()
+                    
+                    self.db.collection("users").document(friendId).getDocument { friendSnapshot, friendError in
+                        defer { group.leave() }
+                        
+                        guard let friendDoc = friendSnapshot, friendDoc.exists,
+                              let friendData = friendDoc.data(),
+                              let fullName = friendData["fullName"] as? String,
+                              let email = friendData["email"] as? String else {
+                            return
+                        }
+                        
+                        var friend = User(id: friendId, fullName: fullName, email: email)
+                        friend.profileImageUrl = friendData["profileImageUrl"] as? String
+                        friend.isOnline = friendData["isOnline"] as? Bool ?? false
+                        
+                        if let lastSeenTimestamp = friendData["lastSeen"] as? TimeInterval {
+                            friend.lastSeen = Date(timeIntervalSince1970: lastSeenTimestamp)
+                        }
+                        
+                        friends.append(friend)
+                    }
+                }
+                
+                group.notify(queue: .main) {
+                    promise(.success(friends))
+                }
+            }
+        }
+        .eraseToAnyPublisher()
+    }
+    
+    // MARK: - Remove Friend
+    func removeFriend(currentUserId: String, friendId: String) -> AnyPublisher<Void, Error> {
+        Future<Void, Error> { promise in
+            self.db.collection("users").document(currentUserId).updateData([
+                "friendIds": FieldValue.arrayRemove([friendId])
+            ]) { error in
+                if let error = error {
+                    promise(.failure(error))
+                    return
+                }
+                
+                self.db.collection("users").document(friendId).updateData([
+                    "friendIds": FieldValue.arrayRemove([currentUserId])
+                ]) { error in
+                    if let error = error {
+                        promise(.failure(error))
+                    } else {
+                        promise(.success(()))
+                    }
+                }
+            }
+        }
+        .eraseToAnyPublisher()
+    }
+    
+    // MARK: - Get Pending Requests Count
+    func getPendingRequestsCount() -> AnyPublisher<Int, Error> {
+        Future<Int, Error> { promise in
+            guard let currentUser = Auth.auth().currentUser else {
+                promise(.failure(FriendError.userNotAuthenticated))
+                return
+            }
+            
+            self.db.collection("friend_requests")
+                .whereField("recipientId", isEqualTo: currentUser.uid)
+                .whereField("status", isEqualTo: "pending")
+                .getDocuments { snapshot, error in
+                    if let error = error {
+                        promise(.failure(error))
+                    } else {
+                        promise(.success(snapshot?.documents.count ?? 0))
+                    }
+                }
+        }
+        .eraseToAnyPublisher()
+    }
+    
+    // MARK: - Helper Methods
     private func checkIfAlreadyFriends(userId: String, friendId: String, completion: @escaping (Bool) -> Void) {
-        let db = Firestore.firestore()
         db.collection("users").document(userId).getDocument { snapshot, error in
             guard let document = snapshot, document.exists,
                   let data = document.data(),
@@ -93,7 +398,6 @@ extension FirebaseService {
     }
     
     private func checkExistingFriendRequest(senderId: String, recipientId: String, completion: @escaping (Bool) -> Void) {
-        let db = Firestore.firestore()
         db.collection("friend_requests")
             .whereField("senderId", isEqualTo: senderId)
             .whereField("recipientId", isEqualTo: recipientId)
@@ -107,167 +411,31 @@ extension FirebaseService {
                 completion(!documents.isEmpty)
             }
     }
-    
-    // Get the number of pending friend requests
-    func getPendingFriendRequestsCount(for userId: String, completion: @escaping (Int) -> Void) {
-        let db = Firestore.firestore()
-        
-        db.collection("friendRequests")
-            .whereField("receiverId", isEqualTo: userId)
-            .whereField("status", isEqualTo: "pending")
-            .getDocuments { snapshot, error in
-                if let error = error {
-                    print("DEBUG: Error getting pending requests: \(error.localizedDescription)")
-                    completion(0)
-                    return
-                }
-                
-                completion(snapshot?.documents.count ?? 0)
-            }
-    }
-    
-    // Get the list of pending friend requests
-    func getPendingFriendRequests(for userId: String, completion: @escaping ([FriendRequest]) -> Void) {
-        let db = Firestore.firestore()
-        
-        db.collection("friend_requests")
-            .whereField("recipientId", isEqualTo: userId)
-            .whereField("status", isEqualTo: "pending")
-            .getDocuments { snapshot, error in
-                guard let documents = snapshot?.documents else {
-                    completion([])
-                    return
-                }
-                
-                let requests = documents.compactMap { document -> FriendRequest? in
-                    let data = document.data()
-                    guard let senderId = data["senderId"] as? String,
-                          let senderEmail = data["senderEmail"] as? String,
-                          let recipientId = data["recipientId"] as? String,
-                          let status = data["status"] as? String else {
-                        return nil
-                    }
-                    
-                    return FriendRequest(
-                        id: document.documentID,
-                        senderId: senderId,
-                        senderEmail: senderEmail,
-                        recipientId: recipientId,
-                        status: status
-                    )
-                }
-                
-                completion(requests)
-            }
-    }
-    
-    func acceptFriendRequest(requestId: String, completion: @escaping (Bool, String) -> Void) {
-        guard let currentUser = Auth.auth().currentUser else {
-            completion(false, "Người dùng chưa đăng nhập")
-            return
-        }
-        
-        let db = Firestore.firestore()
-        let requestRef = db.collection("friend_requests").document(requestId)
-        
-        db.runTransaction { (transaction, errorPointer) -> Any? in
-            do {
-                let requestDocument = try transaction.getDocument(requestRef)
-                
-                guard let data = requestDocument.data(),
-                      let senderId = data["senderId"] as? String,
-                      let status = data["status"] as? String else {
-                    errorPointer?.pointee = NSError(
-                        domain: "FriendRequestError",
-                        code: -1,
-                        userInfo: [NSLocalizedDescriptionKey: "Không tìm thấy thông tin lời mời"]
-                    )
-                    return nil
-                }
-                
-                // Check the status of the invitation
-                if status != "pending" {
-                    errorPointer?.pointee = NSError(
-                        domain: "FriendRequestError",
-                        code: -2,
-                        userInfo: [NSLocalizedDescriptionKey: "Lời mời này đã được xử lý"]
-                    )
-                    return nil
-                }
-                
-                // Update invitation status to "accepted"
-                transaction.updateData(["status": "accepted"], forDocument: requestRef)
-                
-                // Add sender to recipient's friends list
-                let currentUserRef = db.collection("users").document(currentUser.uid)
-                transaction.updateData(["friendIds": FieldValue.arrayUnion([senderId])], forDocument: currentUserRef)
-                
-                // Add recipient to sender's friends list
-                let senderRef = db.collection("users").document(senderId)
-                transaction.updateData(["friendIds": FieldValue.arrayUnion([currentUser.uid])], forDocument: senderRef)
-                
-                return nil
-            } catch {
-                errorPointer?.pointee = error as NSError
-                return nil
-            }
-        } completion: { (result, error) in
-            if let error = error {
-                completion(false, "Lỗi: \(error.localizedDescription)")
-            } else {
-                completion(true, "Đã chấp nhận lời mời kết bạn thành công")
-            }
-        }
-    }
-    
-    // Reject friend request
-    func declineFriendRequest(requestId: String, completion: @escaping (Bool, String) -> Void) {
-        let db = Firestore.firestore()
-        let requestRef = db.collection("friend_requests").document(requestId)
-        
-        requestRef.updateData(["status": "declined"]) { error in
-            if let error = error {
-                completion(false, "Lỗi: \(error.localizedDescription)")
-            } else {
-                completion(true, "Đã từ chối lời mời kết bạn")
-            }
-        }
-    }
-    
-    // Delete friend
-    func removeFriend(currentUserId: String, friendId: String, completion: @escaping (Bool) -> Void) {
-        let db = Firestore.firestore()
-        
-        // Remove friend from current user's friendIds
-        db.collection("users").document(currentUserId).updateData([
-            "friendIds": FieldValue.arrayRemove([friendId])
-        ]) { error in
-            if let error = error {
-                print("DEBUG: Error removing friend from current user: \(error.localizedDescription)")
-                completion(false)
-                return
-            }
-            
-            // Remove current user from friend's friendIds
-            db.collection("users").document(friendId).updateData([
-                "friendIds": FieldValue.arrayRemove([currentUserId])
-            ]) { error in
-                if let error = error {
-                    print("DEBUG: Error removing current user from friend: \(error.localizedDescription)")
-                    completion(false)
-                    return
-                }
-                
-                completion(true)
-            }
-        }
-    }
-    
-    // Mời bạn bè thông qua Email
-    func inviteFriendByEmail(email: String, from user: User, completion: @escaping (Bool, String) -> Void) {
+}
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-            completion(true, "Đã gửi lời mời đến \(email). Người dùng sẽ nhận được email với liên kết tải ứng dụng.")
+// MARK: - Friend Errors
+enum FriendError: LocalizedError {
+    case userNotAuthenticated
+    case userNotFound
+    case cannotAddSelf
+    case alreadyFriends
+    case requestAlreadySent
+    case serviceUnavailable
+    
+    var errorDescription: String? {
+        switch self {
+        case .userNotAuthenticated:
+            return "Người dùng chưa đăng nhập"
+        case .userNotFound:
+            return "Không tìm thấy người dùng với email này"
+        case .cannotAddSelf:
+            return "Bạn không thể gửi lời mời kết bạn cho chính mình"
+        case .alreadyFriends:
+            return "Người này đã là bạn bè của bạn"
+        case .requestAlreadySent:
+            return "Bạn đã gửi lời mời kết bạn cho người này trước đó"
+        case .serviceUnavailable:
+            return "Dịch vụ tạm thời không khả dụng"
         }
     }
 }

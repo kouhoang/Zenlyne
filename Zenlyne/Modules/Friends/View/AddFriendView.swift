@@ -6,12 +6,10 @@
 //
 
 import SwiftUI
-import FirebaseFirestore
-import FirebaseAuth
+import Combine
 
 struct AddFriendView: View {
-    @StateObject private var viewModel = FriendRequestViewModel()
-    @State private var email = ""
+    @StateObject private var viewModel = AddFriendViewModel()
     @State private var showAlert = false
     @State private var alertTitle = ""
     @State private var alertMessage = ""
@@ -21,75 +19,11 @@ struct AddFriendView: View {
     var body: some View {
         NavigationView {
             VStack(spacing: 20) {
-                Text("Thêm bạn bè")
-                    .font(.title)
-                    .fontWeight(.bold)
-                    .foregroundColor(.white)
-                    .padding(.top)
-                
-                Text("Nhập email của người bạn muốn kết bạn")
-                    .font(.subheadline)
-                    .foregroundColor(.gray)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal)
-                
-                VStack(alignment: .leading) {
-                    Text("Email")
-                        .foregroundColor(.gray)
-                        .fontWeight(.semibold)
-                        .font(.footnote)
-                    
-                    HStack {
-                        TextField("name@example.com", text: $email)
-                            .font(.system(size: 14))
-                            .foregroundColor(.white)
-                            .autocapitalization(.none)
-                            .keyboardType(.emailAddress)
-                            .disableAutocorrection(true)
-                        
-                        if !email.isEmpty {
-                            Button(action: {
-                                email = ""
-                            }) {
-                                Image(systemName: "multiply.circle.fill")
-                                    .foregroundColor(.gray)
-                            }
-                        }
-                    }
-                    .padding(.vertical, 8)
-                    .padding(.horizontal, 12)
-                    .background(Color(.systemGray6))
-                    .cornerRadius(8)
-                }
-                .padding(.horizontal)
-                .padding(.top, 20)
-                
-                if !viewModel.errorMessage.isEmpty {
-                    Text(viewModel.errorMessage)
-                        .font(.footnote)
-                        .foregroundColor(.red)
-                        .padding(.horizontal)
-                }
-                
-                Button(action: sendFriendRequest) {
-                    if viewModel.isLoading {
-                        ProgressView()
-                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                            .padding(.vertical, 13)
-                    } else {
-                        Text("Gửi lời mời kết bạn")
-                            .fontWeight(.semibold)
-                            .foregroundColor(.white)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 13)
-                    }
-                }
-                .background(isValidEmail ? Color(.systemBlue) : Color(.systemGray4))
-                .cornerRadius(10)
-                .padding(.horizontal)
-                .padding(.top, 20)
-                .disabled(!isValidEmail || viewModel.isLoading)
-                
+                headerSection
+                instructionSection
+                emailInputSection
+                errorSection
+                actionButton
                 Spacer()
             }
             .padding()
@@ -110,36 +44,246 @@ struct AddFriendView: View {
                 Alert(
                     title: Text(alertTitle),
                     message: Text(alertMessage),
-                    dismissButton: .default(Text("OK"))
+                    dismissButton: .default(Text("OK")) {
+                        if alertTitle == "Thành công" {
+                            dismiss()
+                        }
+                    }
                 )
             }
             .onTapGesture {
                 hideKeyboard()
             }
+            .onReceive(viewModel.$successMessage) { message in
+                if !message.isEmpty {
+                    showSuccessAlert(message: message)
+                }
+            }
+            .onReceive(viewModel.$errorMessage) { message in
+                if !message.isEmpty && showAlert == false {
+                    showErrorAlert(message: message)
+                }
+            }
         }
         .preferredColorScheme(.dark)
     }
     
-    // Check valid email
-    private var isValidEmail: Bool {
-        let emailRegex = "[A-Z0-9a-z._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}"
-        let emailPredicate = NSPredicate(format: "SELF MATCHES %@", emailRegex)
-        return emailPredicate.evaluate(with: email) && email != Auth.auth().currentUser?.email
+    // MARK: - View Components
+    
+    private var headerSection: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "person.crop.circle.badge.plus")
+                .font(.system(size: 60))
+                .foregroundColor(.blue)
+                .padding(.top)
+            
+            Text("Thêm bạn bè")
+                .font(.title)
+                .fontWeight(.bold)
+                .foregroundColor(.white)
+        }
     }
     
-    // Send friend request
-    private func sendFriendRequest() {
-        viewModel.sendFriendRequest(toEmail: email) { success, message in
-            DispatchQueue.main.async {
-                alertTitle = success ? "Thành công" : "Lỗi"
-                alertMessage = message
-                showAlert = true
+    private var instructionSection: some View {
+        VStack(spacing: 8) {
+            Text("Nhập email của người bạn muốn kết bạn")
+                .font(.subheadline)
+                .foregroundColor(.gray)
+                .multilineTextAlignment(.center)
+            
+            Text("Họ sẽ nhận được lời mời kết bạn từ bạn")
+                .font(.caption)
+                .foregroundColor(.gray.opacity(0.8))
+                .multilineTextAlignment(.center)
+        }
+        .padding(.horizontal)
+    }
+    
+    private var emailInputSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Email")
+                    .foregroundColor(.gray)
+                    .fontWeight(.semibold)
+                    .font(.footnote)
                 
-                if success {
-                    email = ""
+                Spacer()
+                
+                if viewModel.isValidEmail {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundColor(.green)
+                        .font(.caption)
                 }
             }
+            
+            HStack {
+                Image(systemName: "envelope")
+                    .foregroundColor(.gray)
+                    .font(.system(size: 16))
+                
+                TextField("name@example.com", text: $viewModel.email)
+                    .font(.system(size: 16))
+                    .foregroundColor(.white)
+                    .autocapitalization(.none)
+                    .keyboardType(.emailAddress)
+                    .disableAutocorrection(true)
+                    .textInputAutocapitalization(.never)
+                
+                if !viewModel.email.isEmpty {
+                    Button(action: {
+                        viewModel.email = ""
+                        viewModel.clearMessages()
+                    }) {
+                        Image(systemName: "multiply.circle.fill")
+                            .foregroundColor(.gray)
+                            .font(.system(size: 16))
+                    }
+                }
+            }
+            .padding(.vertical, 12)
+            .padding(.horizontal, 16)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color(.systemGray6))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12)
+                            .stroke(
+                                viewModel.isValidEmail ? Color.green : Color.clear,
+                                lineWidth: 1
+                            )
+                    )
+            )
         }
+        .padding(.horizontal)
+        .padding(.top, 10)
+    }
+    
+    private var errorSection: some View {
+        Group {
+            if !viewModel.errorMessage.isEmpty {
+                HStack {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundColor(.red)
+                        .font(.caption)
+                    
+                    Text(viewModel.errorMessage)
+                        .font(.footnote)
+                        .foregroundColor(.red)
+                        .multilineTextAlignment(.leading)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color.red.opacity(0.1))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(Color.red.opacity(0.3), lineWidth: 1)
+                        )
+                )
+                .padding(.horizontal)
+                .transition(.opacity.combined(with: .scale))
+            }
+        }
+    }
+    
+    private var actionButton: some View {
+        VStack(spacing: 12) {
+            Button(action: {
+                viewModel.sendFriendRequest()
+            }) {
+                HStack {
+                    if viewModel.isLoading {
+                        ProgressView()
+                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                            .scaleEffect(0.9)
+                    } else {
+                        Image(systemName: "paperplane.fill")
+                            .font(.system(size: 16))
+                        
+                        Text("Gửi lời mời kết bạn")
+                            .fontWeight(.semibold)
+                    }
+                }
+                .foregroundColor(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 16)
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(
+                            viewModel.isValidEmail && !viewModel.isLoading
+                                ? LinearGradient(
+                                    gradient: Gradient(colors: [Color.blue, Color.purple]),
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
+                                : LinearGradient(
+                                    gradient: Gradient(colors: [Color.gray, Color.gray]),
+                                    startPoint: .leading,
+                                    endPoint: .trailing
+                                )
+                        )
+                )
+                .scaleEffect(viewModel.isLoading ? 0.95 : 1.0)
+                .animation(.easeInOut(duration: 0.1), value: viewModel.isLoading)
+            }
+            .disabled(!viewModel.isValidEmail || viewModel.isLoading)
+            .padding(.horizontal)
+            .padding(.top, 10)
+            
+            // Quick add suggestions (if needed)
+            if viewModel.email.isEmpty {
+                VStack(spacing: 8) {
+                    Text("Gợi ý")
+                        .font(.caption)
+                        .foregroundColor(.gray)
+                    
+                    HStack(spacing: 8) {
+                        quickAddButton(title: "Từ danh bạ", icon: "person.crop.circle")
+                        quickAddButton(title: "Quét QR", icon: "qrcode.viewfinder")
+                    }
+                }
+                .padding(.top, 8)
+            }
+        }
+    }
+    
+    private func quickAddButton(title: String, icon: String) -> some View {
+        Button(action: {
+            // TODO: Implement quick add functionality
+        }) {
+            HStack(spacing: 4) {
+                Image(systemName: icon)
+                    .font(.caption)
+                Text(title)
+                    .font(.caption)
+            }
+            .foregroundColor(.blue)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.blue.opacity(0.1))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(Color.blue.opacity(0.3), lineWidth: 1)
+                    )
+            )
+        }
+    }
+    
+    // MARK: - Helper Methods
+    
+    private func showSuccessAlert(message: String) {
+        alertTitle = "Thành công"
+        alertMessage = message
+        showAlert = true
+    }
+    
+    private func showErrorAlert(message: String) {
+        alertTitle = "Lỗi"
+        alertMessage = message
+        showAlert = true
     }
 }
 
