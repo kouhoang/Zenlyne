@@ -2,14 +2,6 @@
 //  UpdatedFriendInfoPanel.swift
 //  Zenlyne
 //
-//  Created by kou on 2/6/25.
-//
-
-
-//
-//  UpdatedFriendInfoPanel.swift
-//  Zenlyne
-//
 //  Created by admin on 19/3/25.
 //
 
@@ -24,12 +16,12 @@ struct UpdatedFriendInfoPanel: View {
     @State private var showChatView = false
     @State private var showCallOptions = false
     
-    // Format coordinates nicely
+    // MARK: - Helper Methods
+    
     private func formatCoordinate(_ coordinate: CLLocationCoordinate2D) -> String {
         return String(format: "%.5f, %.5f", coordinate.latitude, coordinate.longitude)
     }
     
-    // Calculate how old the location data is
     private func locationAge() -> String {
         guard let location = location else {
             return "Không xác định"
@@ -39,14 +31,12 @@ struct UpdatedFriendInfoPanel: View {
         return formatRelativeTime(locationDate)
     }
     
-    // Helper to format relative time
     private func formatRelativeTime(_ date: Date) -> String {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .short
         return formatter.localizedString(for: date, relativeTo: Date())
     }
     
-    // Determine location freshness color
     private var locationFreshnessColor: Color {
         guard let location = location else {
             return .gray
@@ -67,7 +57,7 @@ struct UpdatedFriendInfoPanel: View {
     
     var body: some View {
         VStack(spacing: 12) {
-            // Top section styled like the contact card in the image
+            // Top section styled like the contact card
             VStack(spacing: 8) {
                 HStack {
                     Spacer()
@@ -85,7 +75,7 @@ struct UpdatedFriendInfoPanel: View {
                         .fill(Color.blue.opacity(0.2))
                         .frame(width: 60, height: 60)
                     
-                    if let profileImage = friend.currentAvatarUrl {
+                    if let profileImage = friend.profileImageUrl {
                         AsyncImage(url: URL(string: profileImage)) { image in
                             image
                                 .resizable()
@@ -196,14 +186,10 @@ struct UpdatedFriendInfoPanel: View {
                         title: Text("Gọi cho \(friend.fullName)"),
                         buttons: [
                             .default(Text("Gọi điện thoại")) {
-                                // Handle phone call here
-                                if let url = URL(string: "tel://+84123456789") {
-                                    UIApplication.shared.open(url)
-                                }
+                                handlePhoneCall()
                             },
                             .default(Text("Gọi video")) {
-                                // Handle video call here
-                                // This would connect to your video call implementation
+                                handleVideoCall()
                             },
                             .cancel(Text("Hủy"))
                         ]
@@ -212,12 +198,7 @@ struct UpdatedFriendInfoPanel: View {
                 
                 // Directions button
                 Button(action: {
-                    if let location = location {
-                        let url = URL(string: "maps://?daddr=\(location.latitude),\(location.longitude)")
-                        if let url = url, UIApplication.shared.canOpenURL(url) {
-                            UIApplication.shared.open(url)
-                        }
-                    }
+                    handleDirections()
                 }) {
                     VStack(spacing: 4) {
                         Image(systemName: "arrow.triangle.turn.up.right.diamond.fill")
@@ -240,45 +221,107 @@ struct UpdatedFriendInfoPanel: View {
         )
         .padding(.horizontal)
     }
-}
-
-// Chat view container
-struct ChatViewContainer: View {
-    let friend: User
-    @StateObject private var viewModel = MessagingViewModel()
     
-    var body: some View {
-        Group {
-            if let currentUserId = Auth.auth().currentUser?.uid {
-                ChatView(
-                    viewModel: viewModel,
-                    chatId: getChatId(currentUserId: currentUserId),
-                    otherUserId: friend.id
-                )
-                .onAppear {
-                    setupChat(currentUserId: currentUserId)
-                }
-            } else {
-                Text("Please log in to chat")
-                    .padding()
+    // MARK: - Action Handlers
+    
+    private func handlePhoneCall() {
+        // Handle phone call here - you might want to get actual phone number from friend data
+        if let url = URL(string: "tel://+84123456789") {
+            UIApplication.shared.open(url)
+        }
+    }
+    
+    private func handleVideoCall() {
+        // Handle video call here
+        // This would connect to your video call implementation
+        print("Starting video call with \(friend.fullName)")
+    }
+    
+    private func handleDirections() {
+        guard let location = location else { return }
+        
+        let url = URL(string: "maps://?daddr=\(location.latitude),\(location.longitude)")
+        if let url = url, UIApplication.shared.canOpenURL(url) {
+            UIApplication.shared.open(url)
+        } else {
+            // Fallback to Google Maps web if Apple Maps is not available
+            let webUrl = URL(string: "https://maps.google.com/maps?daddr=\(location.latitude),\(location.longitude)")
+            if let webUrl = webUrl {
+                UIApplication.shared.open(webUrl)
             }
         }
+    }
+}
+
+// MARK: - Chat View Container (Updated for new MVVM architecture)
+
+struct ChatViewContainer: View {
+    let friend: User
+    @Environment(\.presentationMode) var presentationMode
+    
+    var body: some View {
+        NavigationView {
+            Group {
+                if let currentUserId = Auth.auth().currentUser?.uid {
+                    ChatView(
+                        chatId: getChatId(currentUserId: currentUserId),
+                        otherUserId: friend.id
+                    )
+                    .navigationBarTitleDisplayMode(.inline)
+                    .navigationBarBackButtonHidden(true)
+                    .toolbar {
+                        ToolbarItem(placement: .navigationBarLeading) {
+                            Button("Đóng") {
+                                presentationMode.wrappedValue.dismiss()
+                            }
+                        }
+                    }
+                } else {
+                    VStack(spacing: 20) {
+                        Image(systemName: "person.crop.circle.badge.exclamationmark")
+                            .font(.system(size: 60))
+                            .foregroundColor(.gray)
+                        
+                        Text("Vui lòng đăng nhập để chat")
+                            .font(.headline)
+                            .foregroundColor(.primary)
+                        
+                        Text("Bạn cần đăng nhập để có thể gửi tin nhắn")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                        
+                        Button("Đóng") {
+                            presentationMode.wrappedValue.dismiss()
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                    .padding()
+                }
+            }
+        }
+        .preferredColorScheme(.dark)
     }
     
     private func getChatId(currentUserId: String) -> String {
         return [currentUserId, friend.id].sorted().joined(separator: "_")
     }
-    
-    private func setupChat(currentUserId: String) {
-        viewModel.chatUsers[friend.id] = friend
-        FirebaseChatManager.shared.chatService.createChatIfNeeded(with: friend.id) { _ in }
-    }
 }
+
+// MARK: - Extension for UserLocation
+
+//extension UserLocation {
+//    func toCoordinate() -> CLLocationCoordinate2D {
+//        return CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+//    }
+//}
+
+// MARK: - Preview
 
 #Preview {
     UpdatedFriendInfoPanel(
-        friend: User.MOCK_USER,
-        location: UserLocation(latitude: 21.0285, longitude: 105.8542),
+        friend: User(id: "preview_id", fullName: "Nguyễn Văn A", email: "nguyenvana@example.com"),
+        location: UserLocation(latitude: 21.0285, longitude: 105.8542, timestamp: Date().timeIntervalSince1970),
         onClose: {}
     )
 }

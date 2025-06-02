@@ -9,22 +9,43 @@ import SwiftUI
 import UIKit
 
 // MARK: - Icon Container Component
+//struct IconContainer: View {
+//    let systemName: String
+//    
+//    var body: some View {
+//        ZStack {
+//            Image("pink-yellow-plain")
+//                .resizable()
+//                .scaledToFill()
+//                .frame(width: 32, height: 32)
+//                .clipShape(RoundedRectangle(cornerRadius: 8))
+//            
+//            Image(systemName: systemName)
+//                .foregroundColor(.black)
+//                .font(.system(size: 16, weight: .medium))
+//        }
+//        .frame(width: 32, height: 32)
+//    }
+//}
+
 struct IconContainer: View {
     let systemName: String
+    let size: CGFloat
+    let color: Color
+    
+    init(systemName: String, size: CGFloat = 16, color: Color = .white) {
+        self.systemName = systemName
+        self.size = size
+        self.color = color
+    }
     
     var body: some View {
-        ZStack {
-            Image("pink-yellow-plain")
-                .resizable()
-                .scaledToFill()
-                .frame(width: 32, height: 32)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-            
-            Image(systemName: systemName)
-                .foregroundColor(.black)
-                .font(.system(size: 16, weight: .medium))
-        }
-        .frame(width: 32, height: 32)
+        Image(systemName: systemName)
+            .font(.system(size: size))
+            .foregroundColor(color)
+            .frame(width: 32, height: 32)
+            .background(Color.gray.opacity(0.3))
+            .clipShape(Circle())
     }
 }
 

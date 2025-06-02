@@ -10,188 +10,416 @@ import FirebaseFirestore
 import FirebaseAuth
 import Combine
 
-class FirebaseChatService {
+protocol ChatServiceProtocol {
+    func sendMessage(to receiverId: String, content: String) -> AnyPublisher<Message, Error>
+    func getMessages(with userId: String) -> AnyPublisher<[Message], Error>
+    func getUserChats() -> AnyPublisher<[Chat], Error>
+    func createChatIfNeeded(with userId: String) -> AnyPublisher<String, Error>
+    func getTotalUnreadMessagesCount() -> AnyPublisher<Int, Error>
+    func deleteChat(chatId: String) -> AnyPublisher<Bool, Error>
+}
+
+class FirebaseChatService: ChatServiceProtocol {
     private let firestore = Firestore.firestore()
     private var messageListeners: [ListenerRegistration] = []
     private var chatListeners: [ListenerRegistration] = []
     
-    // MARK: - Chat Handling
+    deinit {
+        removeAllObservers()
+    }
     
-    /// Generates a unique chat ID for two users
+    // MARK: - Private Methods
+    
     private func generateChatId(userId1: String, userId2: String) -> String {
         let sortedIds = [userId1, userId2].sorted()
         return sortedIds.joined(separator: "_")
     }
     
-    /// Sends a message to another user
-    func sendMessage(to receiverId: String, content: String, completion: @escaping (Result<Message, Error>) -> Void) {
-        guard let currentUser = Auth.auth().currentUser else {
-            completion(.failure(NSError(domain: "FirestoreChatService", code: 0, userInfo: [NSLocalizedDescriptionKey: "Not logged in"])))
-            return
+    // MARK: - Public Methods
+    
+    func sendMessage(to receiverId: String, content: String) -> AnyPublisher<Message, Error> {
+        return Future<Message, Error> { [weak self] promise in
+            guard let self = self,
+                  let currentUser = Auth.auth().currentUser else {
+                promise(.failure(ChatError.notLoggedIn))
+                return
+            }
+            
+            let senderId = currentUser.uid
+            let chatId = self.generateChatId(userId1: senderId, userId2: receiverId)
+            
+            let messagesRef = self.firestore.collection("chats").document(chatId).collection("messages")
+            let messageRef = messagesRef.document()
+            let messageId = messageRef.documentID
+            let timestamp = Date()
+            
+            let messageData: [String: Any] = [
+                "id": messageId,
+                "senderId": senderId,
+                "receiverId": receiverId,
+                "content": content,
+                "timestamp": timestamp,
+                "isRead": false
+            ]
+            
+            messageRef.setData(messageData) { error in
+                if let error = error {
+                    promise(.failure(error))
+                    return
+                }
+                
+                self.updateChatMetadata(chatId: chatId, messageId: messageId, content: content, timestamp: timestamp, senderId: senderId, receiverId: receiverId)
+                
+                let message = Message(
+                    id: messageId,
+                    senderId: senderId,
+                    receiverId: receiverId,
+                    content: content,
+                    timestamp: timestamp,
+                    isRead: false
+                )
+                
+                promise(.success(message))
+            }
         }
-        
-        let senderId = currentUser.uid
-        let chatId = generateChatId(userId1: senderId, userId2: receiverId)
-        
-        // Create message reference
-        let messagesRef = firestore.collection("chats").document(chatId).collection("messages")
-        let messageRef = messagesRef.document()
-        let messageId = messageRef.documentID
-        let timestamp = Date()
-        
-        let messageData: [String: Any] = [
-            "id": messageId,
-            "senderId": senderId,
-            "receiverId": receiverId,
-            "content": content,
-            "timestamp": timestamp,
-            "isRead": false
+        .eraseToAnyPublisher()
+    }
+    
+    func getMessages(with userId: String) -> AnyPublisher<[Message], Error> {
+        return Future<[Message], Error> { [weak self] promise in
+            guard let self = self,
+                  let currentUser = Auth.auth().currentUser else {
+                promise(.failure(ChatError.notLoggedIn))
+                return
+            }
+            
+            let chatId = self.generateChatId(userId1: currentUser.uid, userId2: userId)
+            
+            self.removeMessageListeners()
+            
+            let listener = self.firestore.collection("chats").document(chatId).collection("messages")
+                .order(by: "timestamp")
+                .addSnapshotListener { snapshot, error in
+                    if let error = error {
+                        promise(.failure(error))
+                        return
+                    }
+                    
+                    guard let documents = snapshot?.documents else {
+                        promise(.success([]))
+                        return
+                    }
+                    
+                    var messages: [Message] = []
+                    var messagesToMarkAsRead: [String] = []
+                    
+                    for document in documents {
+                        let data = document.data()
+                        
+                        guard let id = data["id"] as? String,
+                              let senderId = data["senderId"] as? String,
+                              let receiverId = data["receiverId"] as? String,
+                              let content = data["content"] as? String,
+                              let timestamp = data["timestamp"] as? Timestamp else {
+                            continue
+                        }
+                        
+                        let isRead = data["isRead"] as? Bool ?? false
+                        
+                        let message = Message(
+                            id: id,
+                            senderId: senderId,
+                            receiverId: receiverId,
+                            content: content,
+                            timestamp: timestamp.dateValue(),
+                            isRead: isRead
+                        )
+                        
+                        messages.append(message)
+                        
+                        if receiverId == currentUser.uid && !isRead {
+                            messagesToMarkAsRead.append(id)
+                        }
+                    }
+                    
+                    if !messagesToMarkAsRead.isEmpty {
+                        self.markMessagesAsRead(chatId: chatId, messageIds: messagesToMarkAsRead)
+                        self.resetUnreadCount(chatId: chatId, userId: currentUser.uid)
+                    }
+                    
+                    promise(.success(messages))
+                }
+            
+            self.messageListeners.append(listener)
+        }
+        .eraseToAnyPublisher()
+    }
+    
+    func getUserChats() -> AnyPublisher<[Chat], Error> {
+        return Future<[Chat], Error> { [weak self] promise in
+            guard let self = self,
+                  let currentUser = Auth.auth().currentUser else {
+                promise(.failure(ChatError.notLoggedIn))
+                return
+            }
+            
+            self.removeChatListeners()
+            
+            let listener = self.firestore.collection("user-chats").document(currentUser.uid).collection("chats")
+                .order(by: "lastMessageTimestamp", descending: true)
+                .addSnapshotListener { snapshot, error in
+                    if let error = error {
+                        promise(.failure(error))
+                        return
+                    }
+                    
+                    guard let documents = snapshot?.documents else {
+                        promise(.success([]))
+                        return
+                    }
+                    
+                    var chatInfos: [(chatId: String, otherUserId: String, unreadCount: Int)] = []
+                    
+                    for document in documents {
+                        let data = document.data()
+                        
+                        guard let chatId = data["chatId"] as? String,
+                              let otherUserId = data["otherUserId"] as? String else {
+                            continue
+                        }
+                        
+                        let unreadCount = data["unreadCount"] as? Int ?? 0
+                        chatInfos.append((chatId: chatId, otherUserId: otherUserId, unreadCount: unreadCount))
+                    }
+                    
+                    self.fetchCompleteChatsData(chatInfos: chatInfos, currentUserId: currentUser.uid) { chats in
+                        promise(.success(chats))
+                    }
+                }
+            
+            self.chatListeners.append(listener)
+        }
+        .eraseToAnyPublisher()
+    }
+    
+    func createChatIfNeeded(with userId: String) -> AnyPublisher<String, Error> {
+        return Future<String, Error> { [weak self] promise in
+            guard let self = self,
+                  let currentUser = Auth.auth().currentUser else {
+                promise(.failure(ChatError.notLoggedIn))
+                return
+            }
+            
+            let chatId = self.generateChatId(userId1: currentUser.uid, userId2: userId)
+            
+            self.firestore.collection("chats").document(chatId).getDocument { snapshot, error in
+                if let error = error {
+                    promise(.failure(error))
+                    return
+                }
+                
+                if snapshot?.exists != true {
+                    self.createNewChat(chatId: chatId, currentUserId: currentUser.uid, otherUserId: userId) { result in
+                        promise(result)
+                    }
+                } else {
+                    promise(.success(chatId))
+                }
+            }
+        }
+        .eraseToAnyPublisher()
+    }
+    
+    func getTotalUnreadMessagesCount() -> AnyPublisher<Int, Error> {
+        return Future<Int, Error> { [weak self] promise in
+            guard let self = self,
+                  let currentUser = Auth.auth().currentUser else {
+                promise(.failure(ChatError.notLoggedIn))
+                return
+            }
+            
+            self.firestore.collection("user-chats").document(currentUser.uid).collection("chats")
+                .getDocuments { snapshot, error in
+                    if let error = error {
+                        promise(.failure(error))
+                        return
+                    }
+                    
+                    guard let documents = snapshot?.documents else {
+                        promise(.success(0))
+                        return
+                    }
+                    
+                    let totalCount = documents.reduce(0) { result, document in
+                        let unreadCount = document.data()["unreadCount"] as? Int ?? 0
+                        return result + unreadCount
+                    }
+                    
+                    promise(.success(totalCount))
+                }
+        }
+        .eraseToAnyPublisher()
+    }
+    
+    func deleteChat(chatId: String) -> AnyPublisher<Bool, Error> {
+        return Future<Bool, Error> { [weak self] promise in
+            guard let self = self,
+                  let currentUser = Auth.auth().currentUser else {
+                promise(.failure(ChatError.notLoggedIn))
+                return
+            }
+            
+            let userChatRef = self.firestore.collection("user-chats").document(currentUser.uid).collection("chats").document(chatId)
+            userChatRef.delete { error in
+                if let error = error {
+                    promise(.failure(error))
+                } else {
+                    promise(.success(true))
+                }
+            }
+        }
+        .eraseToAnyPublisher()
+    }
+    
+    // MARK: - Helper Methods
+    
+    private func updateChatMetadata(chatId: String, messageId: String, content: String, timestamp: Date, senderId: String, receiverId: String) {
+        let chatMetadata: [String: Any] = [
+            "lastMessageId": messageId,
+            "lastMessageContent": content,
+            "lastMessageTimestamp": timestamp,
+            "lastMessageSenderId": senderId,
+            "updatedAt": FieldValue.serverTimestamp()
         ]
         
-        // Save the message to the chat
-        messageRef.setData(messageData) { error in
+        firestore.collection("chats").document(chatId).setData(chatMetadata, merge: true)
+        
+        let batch = firestore.batch()
+        
+        let senderChatRef = firestore.collection("user-chats").document(senderId).collection("chats").document(chatId)
+        batch.setData([
+            "chatId": chatId,
+            "otherUserId": receiverId,
+            "lastMessageTimestamp": timestamp,
+            "lastActivity": FieldValue.serverTimestamp()
+        ], forDocument: senderChatRef, merge: true)
+        
+        let receiverChatRef = firestore.collection("user-chats").document(receiverId).collection("chats").document(chatId)
+        firestore.collection("user-chats").document(receiverId).collection("chats").document(chatId).getDocument { snapshot, error in
+            var unreadCount = 0
+            if let data = snapshot?.data(), let currentUnread = data["unreadCount"] as? Int {
+                unreadCount = currentUnread
+            }
+            
+            batch.setData([
+                "chatId": chatId,
+                "otherUserId": senderId,
+                "unreadCount": unreadCount + 1,
+                "lastMessageTimestamp": timestamp,
+                "lastActivity": FieldValue.serverTimestamp()
+            ], forDocument: receiverChatRef, merge: true)
+            
+            batch.commit()
+        }
+    }
+    
+    private func fetchCompleteChatsData(chatInfos: [(chatId: String, otherUserId: String, unreadCount: Int)], currentUserId: String, completion: @escaping ([Chat]) -> Void) {
+        let group = DispatchGroup()
+        var chats: [Chat] = []
+        
+        for chatInfo in chatInfos {
+            group.enter()
+            
+            firestore.collection("chats").document(chatInfo.chatId).getDocument { chatSnapshot, error in
+                defer { group.leave() }
+                
+                guard let chatDoc = chatSnapshot, chatDoc.exists,
+                      let chatData = chatDoc.data() else {
+                    return
+                }
+                
+                var lastMessage: Message?
+                
+                if let lastMessageId = chatData["lastMessageId"] as? String,
+                   let lastMessageContent = chatData["lastMessageContent"] as? String,
+                   let lastMessageSenderId = chatData["lastMessageSenderId"] as? String,
+                   let lastMessageTimestamp = chatData["lastMessageTimestamp"] as? Timestamp {
+                    
+                    let lastMessageReceiverId = lastMessageSenderId == currentUserId ?
+                        chatInfo.otherUserId : currentUserId
+                    
+                    lastMessage = Message(
+                        id: lastMessageId,
+                        senderId: lastMessageSenderId,
+                        receiverId: lastMessageReceiverId,
+                        content: lastMessageContent,
+                        timestamp: lastMessageTimestamp.dateValue(),
+                        isRead: chatInfo.unreadCount == 0 || lastMessageSenderId == currentUserId
+                    )
+                }
+                
+                let chat = Chat(
+                    id: chatInfo.chatId,
+                    participants: [currentUserId, chatInfo.otherUserId],
+                    lastMessage: lastMessage,
+                    unreadCount: chatInfo.unreadCount
+                )
+                
+                chats.append(chat)
+            }
+        }
+        
+        group.notify(queue: .main) {
+            chats.sort { (chat1, chat2) -> Bool in
+                let timestamp1 = chat1.lastMessage?.timestamp ?? Date(timeIntervalSince1970: 0)
+                let timestamp2 = chat2.lastMessage?.timestamp ?? Date(timeIntervalSince1970: 0)
+                return timestamp1 > timestamp2
+            }
+            
+            completion(chats)
+        }
+    }
+    
+    private func createNewChat(chatId: String, currentUserId: String, otherUserId: String, completion: @escaping (Result<String, Error>) -> Void) {
+        let chatData: [String: Any] = [
+            "participants": [currentUserId, otherUserId],
+            "createdAt": FieldValue.serverTimestamp()
+        ]
+        
+        firestore.collection("chats").document(chatId).setData(chatData) { error in
             if let error = error {
                 completion(.failure(error))
                 return
             }
             
-            // Update the chat metadata for both users
-            let chatMetadata: [String: Any] = [
-                "lastMessageId": messageId,
-                "lastMessageContent": content,
-                "lastMessageTimestamp": timestamp,
-                "lastMessageSenderId": senderId,
-                "updatedAt": FieldValue.serverTimestamp()
-            ]
-            
-            // Update the chat document
-            self.firestore.collection("chats").document(chatId).setData(chatMetadata, merge: true)
-            
-            // Update user's chat list
             let batch = self.firestore.batch()
             
-            // Update sender's chat list
-            let senderChatRef = self.firestore.collection("user-chats").document(senderId).collection("chats").document(chatId)
+            let currentUserChatRef = self.firestore.collection("user-chats").document(currentUserId).collection("chats").document(chatId)
             batch.setData([
                 "chatId": chatId,
-                "otherUserId": receiverId,
-                "lastMessageTimestamp": timestamp,
+                "otherUserId": otherUserId,
+                "unreadCount": 0,
                 "lastActivity": FieldValue.serverTimestamp()
-            ], forDocument: senderChatRef, merge: true)
+            ], forDocument: currentUserChatRef)
             
-            // Update receiver's chat list and increment unread count
-            let receiverChatRef = self.firestore.collection("user-chats").document(receiverId).collection("chats").document(chatId)
-            self.firestore.collection("user-chats").document(receiverId).collection("chats").document(chatId).getDocument { snapshot, error in
-                // Start with current unread count or 0
-                var unreadCount = 0
-                if let data = snapshot?.data(), let currentUnread = data["unreadCount"] as? Int {
-                    unreadCount = currentUnread
-                }
-                
-                // Create the document or update it
-                batch.setData([
-                    "chatId": chatId,
-                    "otherUserId": senderId,
-                    "unreadCount": unreadCount + 1,
-                    "lastMessageTimestamp": timestamp,
-                    "lastActivity": FieldValue.serverTimestamp()
-                ], forDocument: receiverChatRef, merge: true)
-                
-                // Commit the batch
-                batch.commit { error in
-                    if let error = error {
-                        print("Error updating chat metadata: \(error.localizedDescription)")
-                    }
-                    
-                    // Create a message object to return
-                    let message = Message(
-                        id: messageId,
-                        senderId: senderId,
-                        receiverId: receiverId,
-                        content: content,
-                        timestamp: timestamp,
-                        isRead: false
-                    )
-                    
-                    completion(.success(message))
-                }
-            }
-        }
-    }
-    
-    /// Retrieves messages for a specific chat with real-time updates
-    func getMessages(with userId: String, completion: @escaping (Result<[Message], Error>) -> Void) {
-        guard let currentUser = Auth.auth().currentUser else {
-            completion(.failure(NSError(domain: "FirestoreChatService", code: 0, userInfo: [NSLocalizedDescriptionKey: "Not logged in"])))
-            return
-        }
-        
-        let chatId = generateChatId(userId1: currentUser.uid, userId2: userId)
-        
-        // Clear previous listeners if any
-        removeMessageListeners()
-        
-        // Add new listener
-        let listener = firestore.collection("chats").document(chatId).collection("messages")
-            .order(by: "timestamp")
-            .addSnapshotListener { snapshot, error in
+            let otherUserChatRef = self.firestore.collection("user-chats").document(otherUserId).collection("chats").document(chatId)
+            batch.setData([
+                "chatId": chatId,
+                "otherUserId": currentUserId,
+                "unreadCount": 0,
+                "lastActivity": FieldValue.serverTimestamp()
+            ], forDocument: otherUserChatRef)
+            
+            batch.commit { error in
                 if let error = error {
                     completion(.failure(error))
-                    return
+                } else {
+                    completion(.success(chatId))
                 }
-                
-                guard let documents = snapshot?.documents else {
-                    completion(.success([]))
-                    return
-                }
-                
-                var messages: [Message] = []
-                let currentUserId = currentUser.uid
-                var messagesToMarkAsRead: [String] = []
-                
-                for document in documents {
-                    let data = document.data()
-                    
-                    guard let id = data["id"] as? String,
-                          let senderId = data["senderId"] as? String,
-                          let receiverId = data["receiverId"] as? String,
-                          let content = data["content"] as? String,
-                          let timestamp = data["timestamp"] as? Timestamp else {
-                        continue
-                    }
-                    
-                    let isRead = data["isRead"] as? Bool ?? false
-                    
-                    let message = Message(
-                        id: id,
-                        senderId: senderId,
-                        receiverId: receiverId,
-                        content: content,
-                        timestamp: timestamp.dateValue(),
-                        isRead: isRead
-                    )
-                    
-                    messages.append(message)
-                    
-                    // Mark as read if current user is the receiver and message is unread
-                    if receiverId == currentUserId && !isRead {
-                        messagesToMarkAsRead.append(id)
-                    }
-                }
-                
-                // Mark messages as read and reset unread count
-                if !messagesToMarkAsRead.isEmpty {
-                    self.markMessagesAsRead(chatId: chatId, messageIds: messagesToMarkAsRead)
-                    self.resetUnreadCount(chatId: chatId, userId: currentUserId)
-                }
-                
-                completion(.success(messages))
             }
-        
-        messageListeners.append(listener)
+        }
     }
     
-    /// Marks multiple messages as read
     private func markMessagesAsRead(chatId: String, messageIds: [String]) {
         let batch = firestore.batch()
         
@@ -200,240 +428,14 @@ class FirebaseChatService {
             batch.updateData(["isRead": true], forDocument: messageRef)
         }
         
-        batch.commit { error in
-            if let error = error {
-                print("Error marking messages as read: \(error.localizedDescription)")
-            }
-        }
+        batch.commit()
     }
     
-    /// Resets unread count for a chat
     private func resetUnreadCount(chatId: String, userId: String) {
         let chatRef = firestore.collection("user-chats").document(userId).collection("chats").document(chatId)
-        chatRef.updateData(["unreadCount": 0]) { error in
-            if let error = error {
-                print("Error resetting unread count: \(error.localizedDescription)")
-            }
-        }
+        chatRef.updateData(["unreadCount": 0])
     }
     
-    /// Gets a list of all user chats with real-time updates
-    func getUserChats(completion: @escaping (Result<[Chat], Error>) -> Void) {
-        guard let currentUser = Auth.auth().currentUser else {
-            completion(.failure(NSError(domain: "FirestoreChatService", code: 0, userInfo: [NSLocalizedDescriptionKey: "Not logged in"])))
-            return
-        }
-        
-        // Clear previous listeners if any
-        removeChatListeners()
-        
-        // Add new listener for user's chats
-        let listener = firestore.collection("user-chats").document(currentUser.uid).collection("chats")
-            .order(by: "lastMessageTimestamp", descending: true)
-            .addSnapshotListener { snapshot, error in
-                if let error = error {
-                    completion(.failure(error))
-                    return
-                }
-                
-                guard let documents = snapshot?.documents else {
-                    completion(.success([]))
-                    return
-                }
-                
-                var chatInfos: [(chatId: String, otherUserId: String, unreadCount: Int)] = []
-                
-                // First, extract basic chat info
-                for document in documents {
-                    let data = document.data()
-                    
-                    guard let chatId = data["chatId"] as? String,
-                          let otherUserId = data["otherUserId"] as? String else {
-                        continue
-                    }
-                    
-                    let unreadCount = data["unreadCount"] as? Int ?? 0
-                    chatInfos.append((chatId: chatId, otherUserId: otherUserId, unreadCount: unreadCount))
-                }
-                
-                // Now fetch complete chat data with last messages
-                let group = DispatchGroup()
-                var chats: [Chat] = []
-                
-                for chatInfo in chatInfos {
-                    group.enter()
-                    
-                    // Get chat metadata
-                    self.firestore.collection("chats").document(chatInfo.chatId).getDocument { chatSnapshot, error in
-                        defer { group.leave() }
-                        
-                        guard let chatDoc = chatSnapshot, chatDoc.exists,
-                              let chatData = chatDoc.data() else {
-                            return
-                        }
-                        
-                        // Get last message if available
-                        var lastMessage: Message?
-                        
-                        if let lastMessageId = chatData["lastMessageId"] as? String,
-                           let lastMessageContent = chatData["lastMessageContent"] as? String,
-                           let lastMessageSenderId = chatData["lastMessageSenderId"] as? String,
-                           let lastMessageTimestamp = chatData["lastMessageTimestamp"] as? Timestamp {
-                            
-                            // Determine receiver ID
-                            let lastMessageReceiverId = lastMessageSenderId == currentUser.uid ?
-                                chatInfo.otherUserId : currentUser.uid
-                            
-                            lastMessage = Message(
-                                id: lastMessageId,
-                                senderId: lastMessageSenderId,
-                                receiverId: lastMessageReceiverId,
-                                content: lastMessageContent,
-                                timestamp: lastMessageTimestamp.dateValue(),
-                                isRead: chatInfo.unreadCount == 0 || lastMessageSenderId == currentUser.uid
-                            )
-                        }
-                        
-                        let chat = Chat(
-                            id: chatInfo.chatId,
-                            participants: [currentUser.uid, chatInfo.otherUserId],
-                            lastMessage: lastMessage,
-                            unreadCount: chatInfo.unreadCount
-                        )
-                        
-                        chats.append(chat)
-                    }
-                }
-                
-                group.notify(queue: .main) {
-                    // Sort chats by last message timestamp (most recent first)
-                    chats.sort { (chat1, chat2) -> Bool in
-                        let timestamp1 = chat1.lastMessage?.timestamp ?? Date(timeIntervalSince1970: 0)
-                        let timestamp2 = chat2.lastMessage?.timestamp ?? Date(timeIntervalSince1970: 0)
-                        return timestamp1 > timestamp2
-                    }
-                    
-                    completion(.success(chats))
-                }
-            }
-        
-        chatListeners.append(listener)
-    }
-    
-    /// Creates a new chat between two users if it doesn't exist
-    func createChatIfNeeded(with userId: String, completion: @escaping (Result<String, Error>) -> Void) {
-        guard let currentUser = Auth.auth().currentUser else {
-            completion(.failure(NSError(domain: "FirestoreChatService", code: 0, userInfo: [NSLocalizedDescriptionKey: "Not logged in"])))
-            return
-        }
-        
-        let chatId = generateChatId(userId1: currentUser.uid, userId2: userId)
-        
-        // Check if chat already exists
-        firestore.collection("chats").document(chatId).getDocument { snapshot, error in
-            if let error = error {
-                completion(.failure(error))
-                return
-            }
-            
-            if snapshot?.exists != true {
-                // Create chat document
-                let chatData: [String: Any] = [
-                    "participants": [currentUser.uid, userId],
-                    "createdAt": FieldValue.serverTimestamp()
-                ]
-                
-                self.firestore.collection("chats").document(chatId).setData(chatData) { error in
-                    if let error = error {
-                        completion(.failure(error))
-                        return
-                    }
-                    
-                    // Create user-chat entries for both users
-                    let batch = self.firestore.batch()
-                    
-                    let currentUserChatRef = self.firestore.collection("user-chats").document(currentUser.uid).collection("chats").document(chatId)
-                    batch.setData([
-                        "chatId": chatId,
-                        "otherUserId": userId,
-                        "unreadCount": 0,
-                        "lastActivity": FieldValue.serverTimestamp()
-                    ], forDocument: currentUserChatRef)
-                    
-                    let otherUserChatRef = self.firestore.collection("user-chats").document(userId).collection("chats").document(chatId)
-                    batch.setData([
-                        "chatId": chatId,
-                        "otherUserId": currentUser.uid,
-                        "unreadCount": 0,
-                        "lastActivity": FieldValue.serverTimestamp()
-                    ], forDocument: otherUserChatRef)
-                    
-                    batch.commit { error in
-                        if let error = error {
-                            completion(.failure(error))
-                        } else {
-                            completion(.success(chatId))
-                        }
-                    }
-                }
-            } else {
-                // Chat already exists
-                completion(.success(chatId))
-            }
-        }
-    }
-    
-    /// Gets the total number of unread messages across all chats
-    func getTotalUnreadMessagesCount(completion: @escaping (Int) -> Void) {
-        guard let currentUser = Auth.auth().currentUser else {
-            completion(0)
-            return
-        }
-        
-        firestore.collection("user-chats").document(currentUser.uid).collection("chats")
-            .getDocuments { snapshot, error in
-                if let error = error {
-                    print("Error getting unread counts: \(error.localizedDescription)")
-                    completion(0)
-                    return
-                }
-                
-                guard let documents = snapshot?.documents else {
-                    completion(0)
-                    return
-                }
-                
-                let totalCount = documents.reduce(0) { result, document in
-                    let unreadCount = document.data()["unreadCount"] as? Int ?? 0
-                    return result + unreadCount
-                }
-                
-                completion(totalCount)
-            }
-    }
-    
-    /// Deletes a chat from the user's list
-    func deleteChat(chatId: String, completion: @escaping (Bool) -> Void) {
-        guard let currentUser = Auth.auth().currentUser else {
-            completion(false)
-            return
-        }
-        
-        // Delete from user-chats collection
-        let userChatRef = firestore.collection("user-chats").document(currentUser.uid).collection("chats").document(chatId)
-        userChatRef.delete { error in
-            if let error = error {
-                print("Error deleting chat: \(error.localizedDescription)")
-                completion(false)
-            } else {
-                completion(true)
-            }
-        }
-    }
-    
-    // MARK: - Listener Cleanup
-    
-    /// Removes message listeners
     private func removeMessageListeners() {
         for listener in messageListeners {
             listener.remove()
@@ -441,7 +443,6 @@ class FirebaseChatService {
         messageListeners.removeAll()
     }
     
-    /// Removes chat listeners
     private func removeChatListeners() {
         for listener in chatListeners {
             listener.remove()
@@ -449,9 +450,27 @@ class FirebaseChatService {
         chatListeners.removeAll()
     }
     
-    /// Removes all listeners
     func removeAllObservers() {
         removeMessageListeners()
         removeChatListeners()
+    }
+}
+
+// MARK: - Error Types
+
+enum ChatError: Error, LocalizedError {
+    case notLoggedIn
+    case invalidData
+    case networkError
+    
+    var errorDescription: String? {
+        switch self {
+        case .notLoggedIn:
+            return "Người dùng chưa đăng nhập"
+        case .invalidData:
+            return "Dữ liệu không hợp lệ"
+        case .networkError:
+            return "Lỗi kết nối mạng"
+        }
     }
 }

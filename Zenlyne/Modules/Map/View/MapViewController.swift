@@ -543,7 +543,7 @@ struct SafeProfileAvatarView: View {
 
 // Message count badge component
 struct MessageCountBadge: View {
-    @StateObject private var viewModel = MessagingViewModel()
+    @StateObject private var viewModel = ConversationListViewModel()
     @State private var showingBadge = false
     
     var body: some View {

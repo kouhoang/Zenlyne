@@ -5,62 +5,76 @@
 //  Created by admin on 6/5/25.
 //
 
+//
+//  Services/FirebaseChatManager.swift
+//  Zenlyne
+//
+
 import Foundation
 import SwiftUI
 import FirebaseAuth
+import Combine
 
-// A globally accessible class to handle chat functionality across the app
-class FirebaseChatManager {
-    // Singleton instance
+class FirebaseChatManager: ObservableObject {
     static let shared = FirebaseChatManager()
     
-    // Service
-    let chatService = FirebaseChatService()
+    @Published var totalUnreadCount: Int = 0
     
-    private init() {}
+    private let chatService: ChatServiceProtocol
+    private var cancellables = Set<AnyCancellable>()
     
-    // MARK: - Helper Methods
-    
-    // Get a shared or new messaging view model
-    func getMessagingViewModel() -> MessagingViewModel {
-        return MessagingViewModel()
+    private init(chatService: ChatServiceProtocol = FirebaseChatService()) {
+        self.chatService = chatService
+        setupUnreadCountMonitoring()
     }
     
-    // Create a chat view for a specific user
+    private func setupUnreadCountMonitoring() {
+        // Monitor unread count every 30 seconds
+        Timer.publish(every: 30, on: .main, in: .common)
+            .autoconnect()
+            .sink { [weak self] _ in
+                self?.updateUnreadCount()
+            }
+            .store(in: &cancellables)
+        
+        // Initial load
+        updateUnreadCount()
+    }
+    
+    private func updateUnreadCount() {
+        chatService.getTotalUnreadMessagesCount()
+            .receive(on: DispatchQueue.main)
+            .sink(
+                receiveCompletion: { _ in },
+                receiveValue: { [weak self] count in
+                    self?.totalUnreadCount = count
+                }
+            )
+            .store(in: &cancellables)
+    }
+    
+    // MARK: - Public Methods
+    
     func createChatView(with user: User) -> some View {
-        let viewModel = getMessagingViewModel()
-        
-        // Preload user info
-        viewModel.chatUsers[user.id] = user
-        
         guard let currentUserId = Auth.auth().currentUser?.uid else {
             return AnyView(Text("Error: User not logged in"))
         }
         
         let chatId = [currentUserId, user.id].sorted().joined(separator: "_")
         
-        // Create chat if needed
-        chatService.createChatIfNeeded(with: user.id) { _ in }
-        
         return AnyView(
             NavigationView {
-                ChatView(
-                    viewModel: viewModel,
-                    chatId: chatId,
-                    otherUserId: user.id
-                )
+                ChatView(chatId: chatId, otherUserId: user.id)
             }
         )
     }
     
-    // Create a conversation list view
     func createConversationListView() -> some View {
         return AnyView(ConversationListView())
     }
     
-    // Get the total number of unread messages
-    func getTotalUnreadCount(completion: @escaping (Int) -> Void) {
-        chatService.getTotalUnreadMessagesCount(completion: completion)
+    func refreshUnreadCount() {
+        updateUnreadCount()
     }
 }
 
