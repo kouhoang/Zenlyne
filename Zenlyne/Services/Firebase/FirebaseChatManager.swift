@@ -5,11 +5,6 @@
 //  Created by admin on 6/5/25.
 //
 
-//
-//  Services/FirebaseChatManager.swift
-//  Zenlyne
-//
-
 import Foundation
 import SwiftUI
 import FirebaseAuth

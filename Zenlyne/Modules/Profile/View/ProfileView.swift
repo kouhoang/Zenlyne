@@ -1,5 +1,5 @@
 //
-//  ProfileViewController.swift
+//  ProfileView.swift
 //  Zenlyne
 //
 //  Created by admin on 14/3/25.
@@ -10,14 +10,11 @@ import PhotosUI
 import FirebaseAuth
 import FirebaseFirestore
 
-struct ProfileViewController: View {
+struct ProfileView: View {
     @EnvironmentObject var authViewModel: AuthViewModel
     @StateObject private var viewModel = ProfileViewModel()
     @State private var selectedItem: PhotosPickerItem?
     @State private var showingPhotoPicker = false
-    @State private var showAlert = false
-    @State private var alertTitle = ""
-    @State private var alertMessage = ""
     @State private var showDeleteConfirmation = false
     @Environment(\.dismiss) private var dismiss
     
@@ -41,13 +38,6 @@ struct ProfileViewController: View {
             .navigationTitle("Hồ sơ")
             .navigationBarTitleDisplayMode(.inline)
             .background(Color.black)
-            .alert(isPresented: $showAlert) {
-                Alert(
-                    title: Text(alertTitle),
-                    message: Text(alertMessage),
-                    dismissButton: .default(Text("OK"))
-                )
-            }
             .actionSheet(isPresented: $showDeleteConfirmation) {
                 ActionSheet(
                     title: Text("Xóa tài khoản"),
@@ -80,48 +70,56 @@ struct ProfileViewController: View {
     }
     
     private func deleteAccount() {
-        guard let user = Auth.auth().currentUser else { return }
-        
-        // 1. Get a reference to database
-        let db = Firestore.firestore()
-        
-        // 2. Delete user data from Firestore
-        db.collection("users").document(user.uid).delete { error in
-            if let error = error {
-                viewModel.errorMessage = "Error deleting user data: \(error.localizedDescription)"
-                return
-            }
-            
-            // 3. Delete friend relationships
-            // Get friends who have this user as a friend
-            db.collection("users").whereField("friendIds", arrayContains: user.uid)
-                .getDocuments { snapshot, error in
-                    if let documents = snapshot?.documents {
-                        // Remove this user from each friend's friendIds array
-                        for document in documents {
-                            let friendId = document.documentID
-                            db.collection("users").document(friendId).updateData([
-                                "friendIds": FieldValue.arrayRemove([user.uid])
-                            ])
-                        }
-                    }
-                    
-                    // 4. Delete user authentication account
-                    user.delete { error in
-                        if let error = error {
-                            viewModel.errorMessage = "Error deleting account: \(error.localizedDescription)"
-                            return
-                        }
-                        
-                        // 5. Sign out and return to login screen
-                        authViewModel.signOut()
-                    }
+        Task {
+            await AccountDeletionService.shared.deleteAccount { result in
+                switch result {
+                case .success:
+                    authViewModel.signOut()
+                case .failure(let error):
+                    viewModel.errorMessage = error.localizedDescription
                 }
+            }
         }
     }
 }
 
-#Preview {
-    ProfileViewController()
-        .environmentObject(AuthViewModel())
+// MARK: - Account Deletion Service
+actor AccountDeletionService {
+    static let shared = AccountDeletionService()
+    
+    func deleteAccount(completion: @escaping (Result<Void, Error>) -> Void) async {
+        guard let user = Auth.auth().currentUser else {
+            completion(.failure(ProfileError.authenticationFailed("No user found")))
+            return
+        }
+        
+        let db = Firestore.firestore()
+        
+        do {
+            // 1. Delete user data from Firestore
+            try await db.collection("users").document(user.uid).delete()
+            
+            // 2. Remove from friends' lists
+            let friendsSnapshot = try await db.collection("users")
+                .whereField("friendIds", arrayContains: user.uid)
+                .getDocuments()
+            
+            for document in friendsSnapshot.documents {
+                try await db.collection("users").document(document.documentID)
+                    .updateData(["friendIds": FieldValue.arrayRemove([user.uid])])
+            }
+            
+            // 3. Delete authentication account
+            try await user.delete()
+            
+            await MainActor.run {
+                completion(.success(()))
+            }
+            
+        } catch {
+            await MainActor.run {
+                completion(.failure(error))
+            }
+        }
+    }
 }

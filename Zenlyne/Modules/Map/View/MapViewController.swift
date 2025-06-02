@@ -108,7 +108,7 @@ struct MapView: View {
         }
         // Sheets for overlays
         .sheet(isPresented: $showProfileView) {
-            ProfileViewController()
+            ProfileView()
                 .environmentObject(authViewModel)
         }
         .sheet(isPresented: $showFriendsListView) {
