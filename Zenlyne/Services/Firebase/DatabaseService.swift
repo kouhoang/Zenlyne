@@ -11,7 +11,7 @@ import FirebaseFirestore
 import Combine
 import CoreLocation
 
-// MARK: - Protocol (Giữ nguyên để tương thích)
+// MARK: - Protocol
 protocol FirebaseServiceProtocol {
     func saveUserLocation(userId: String, location: UserLocation)
     func fetchUserLastLocation(userId: String, completion: @escaping (UserLocation?) -> Void)
@@ -24,7 +24,7 @@ protocol FirebaseServiceProtocol {
     func getPendingFriendRequestsCount(for userId: String, completion: @escaping (Int) -> Void)
     func removeFriend(currentUserId: String, friendId: String, completion: @escaping (Bool) -> Void)
     
-    // New Combine methods
+    // Combine methods
     func userLocationPublisher(userId: String) -> AnyPublisher<UserLocation?, Never>
     func friendLocationsPublisher(userIds: [String]) -> AnyPublisher<[String: UserLocation], Never>
     func userOnlineStatusPublisher(userId: String) -> AnyPublisher<Bool, Never>
@@ -38,6 +38,9 @@ class FirebaseService: FirebaseServiceProtocol {
     private var onlineStatusObservers: [String: DatabaseHandle] = [:]
     private var locationListeners: [String: ListenerRegistration] = [:]
     private var onlineStatusListeners: [String: ListenerRegistration] = [:]
+    
+    // Constants for expiration
+    private let locationExpirationTime: TimeInterval = 72 * 60 * 60 // 72 hours
     
     // Combine subjects for reactive streams
     private var locationSubjects: [String: CurrentValueSubject<UserLocation?, Never>] = [:]
@@ -61,6 +64,11 @@ class FirebaseService: FirebaseServiceProtocol {
         observeFriendLocations(userIds: userIds) { _ in }
         
         return friendLocationsSubject
+            .map { [weak self] locations in
+                // Filter out expired locations
+                guard let self = self else { return locations }
+                return self.filterValidLocations(locations)
+            }
             .removeDuplicates()
             .eraseToAnyPublisher()
     }
@@ -79,7 +87,9 @@ class FirebaseService: FirebaseServiceProtocol {
     func friendsPublisher(forUserId userId: String) -> AnyPublisher<[User], Never> {
         if friendsSubjects[userId] == nil {
             friendsSubjects[userId] = CurrentValueSubject<[User], Never>([])
-            fetchFriends(forUserId: userId) { _ in }
+            
+            // Start observing friends list changes
+            observeFriendsList(userId: userId)
         }
         
         return friendsSubjects[userId]!
@@ -87,66 +97,138 @@ class FirebaseService: FirebaseServiceProtocol {
             .eraseToAnyPublisher()
     }
     
-    // MARK: - Profile Management (Enhanced)
-    func updateUserProfile(userId: String, updates: [String: Any]) -> AnyPublisher<Void, Error> {
-        Future { [weak self] promise in
-            guard let self = self else {
-                promise(.failure(ProfileError.networkError("Service unavailable")))
+    // MARK: - Helper Methods
+    
+    private func filterValidLocations(_ locations: [String: UserLocation]) -> [String: UserLocation] {
+        let currentTime = Date().timeIntervalSince1970
+        
+        return locations.filter { _, location in
+            (currentTime - location.timestamp) < locationExpirationTime
+        }
+    }
+    
+    private func isLocationValid(_ location: UserLocation) -> Bool {
+        let currentTime = Date().timeIntervalSince1970
+        return (currentTime - location.timestamp) < locationExpirationTime
+    }
+    
+    // MARK: - Observe Friends List Changes
+    
+    private func observeFriendsList(userId: String) {
+        let userRef = firestore.collection("users").document(userId)
+        
+        let listener = userRef.addSnapshotListener { [weak self] snapshot, error in
+            guard let self = self else { return }
+            
+            if let error = error {
+                print("DEBUG: Error observing friends list: \(error.localizedDescription)")
                 return
             }
             
-            var updateData = updates
-            updateData["updatedAt"] = FieldValue.serverTimestamp()
-            
-            self.firestore.collection("users").document(userId)
-                .updateData(updateData) { error in
-                    if let error = error {
-                        promise(.failure(error))
-                    } else {
-                        promise(.success(()))
-                    }
-                }
-        }
-        .eraseToAnyPublisher()
-    }
-    
-    func observeUserProfile(userId: String) -> AnyPublisher<[String: Any], Error> {
-        let subject = PassthroughSubject<[String: Any], Error>()
-        
-        let listener = firestore.collection("users").document(userId)
-            .addSnapshotListener { snapshot, error in
-                if let error = error {
-                    subject.send(completion: .failure(error))
-                    return
-                }
-                
-                guard let document = snapshot, document.exists,
-                      let data = document.data() else {
-                    subject.send(completion: .failure(ProfileError.networkError("Document not found")))
-                    return
-                }
-                
-                subject.send(data)
+            guard let document = snapshot, document.exists,
+                  let data = document.data(),
+                  let friendIds = data["friendIds"] as? [String] else {
+                print("DEBUG: No friends found for user \(userId)")
+                self.friendsSubjects[userId]?.send([])
+                return
             }
+            
+            print("DEBUG: Friends list changed, loading \(friendIds.count) friends")
+            self.fetchFriendsDetails(friendIds: friendIds) { friends in
+                self.friendsSubjects[userId]?.send(friends)
+            }
+        }
         
-        return subject
-            .handleEvents(receiveCancel: {
-                listener.remove()
-            })
-            .eraseToAnyPublisher()
+        // Store listener for cleanup
+        locationListeners["friends_\(userId)"] = listener
     }
     
-    // MARK: - Original Methods (Giữ nguyên để tương thích)
+    private func fetchFriendsDetails(friendIds: [String], completion: @escaping ([User]) -> Void) {
+        guard !friendIds.isEmpty else {
+            completion([])
+            return
+        }
+        
+        var friends: [User] = []
+        let group = DispatchGroup()
+        
+        for friendId in friendIds {
+            group.enter()
+            
+            firestore.collection("users").document(friendId).getDocument { document, error in
+                defer { group.leave() }
+                
+                if let error = error {
+                    print("DEBUG: Error fetching friend \(friendId): \(error.localizedDescription)")
+                    return
+                }
+                
+                guard let document = document, document.exists,
+                      let data = document.data() else {
+                    print("DEBUG: Friend document not found: \(friendId)")
+                    return
+                }
+                
+                if let fullName = data["fullName"] as? String,
+                   let email = data["email"] as? String {
+                    var friend = User(id: friendId, fullName: fullName, email: email)
+                    
+                    friend.profileImageUrl = data["profileImageUrl"] as? String
+                    friend.avatarUrl = data["avatarUrl"] as? String
+                    friend.isOnline = data["isOnline"] as? Bool ?? false
+                    
+                    if let lastSeenTimestamp = data["lastSeen"] as? Timestamp {
+                        friend.lastSeen = lastSeenTimestamp.dateValue()
+                    }
+                    
+                    // Check for valid location data
+                    if let locationData = data["lastLocation"] as? [String: Any],
+                       let latitude = locationData["latitude"] as? Double,
+                       let longitude = locationData["longitude"] as? Double,
+                       let timestamp = locationData["timestamp"] as? TimeInterval {
+                        
+                        let location = UserLocation(
+                            latitude: latitude,
+                            longitude: longitude,
+                            timestamp: timestamp
+                        )
+                        
+                        // Only include location if it's not expired
+                        if self.isLocationValid(location) {
+                            friend.lastLocation = location
+                            print("DEBUG: Friend \(fullName) has valid location: \(latitude), \(longitude)")
+                        } else {
+                            print("DEBUG: Friend \(fullName) location expired")
+                        }
+                    } else {
+                        print("DEBUG: Friend \(fullName) has no location data")
+                    }
+                    
+                    friends.append(friend)
+                    print("DEBUG: Added friend: \(fullName) (ID: \(friendId))")
+                }
+            }
+        }
+        
+        group.notify(queue: .main) {
+            completion(friends)
+        }
+    }
+    
+    // MARK: - Original Methods
     
     func saveUserLocation(userId: String, location: UserLocation) {
         print("DEBUG: Attempting to save location for user \(userId): \(location.latitude), \(location.longitude)")
+        
+        let currentTime = Date().timeIntervalSince1970
+        let expirationTime = currentTime + locationExpirationTime
         
         let locationData: [String: Any] = [
             "latitude": location.latitude,
             "longitude": location.longitude,
             "timestamp": location.timestamp,
             "updatedAt": FieldValue.serverTimestamp(),
-            "expiresAt": Date().timeIntervalSince1970 + (72 * 60 * 60)
+            "expiresAt": expirationTime
         ]
         
         firestore.collection("users").document(userId).updateData([
@@ -164,7 +246,7 @@ class FirebaseService: FirebaseServiceProtocol {
     }
     
     func fetchUserLastLocation(userId: String, completion: @escaping (UserLocation?) -> Void) {
-        firestore.collection("users").document(userId).getDocument { snapshot, error in
+        firestore.collection("users").document(userId).getDocument { [weak self] snapshot, error in
             if let error = error {
                 print("DEBUG: Error fetching user document: \(error.localizedDescription)")
                 completion(nil)
@@ -175,13 +257,6 @@ class FirebaseService: FirebaseServiceProtocol {
                   let data = document.data(),
                   let locationData = data["lastLocation"] as? [String: Any] else {
                 print("DEBUG: No location data found for user \(userId)")
-                completion(nil)
-                return
-            }
-            
-            if let expiresAt = locationData["expiresAt"] as? TimeInterval,
-               Date().timeIntervalSince1970 > expiresAt {
-                print("DEBUG: Location for user \(userId) has expired")
                 completion(nil)
                 return
             }
@@ -200,7 +275,13 @@ class FirebaseService: FirebaseServiceProtocol {
                 timestamp: timestamp
             )
             
-            completion(userLocation)
+            // Check if location is still valid
+            if let self = self, self.isLocationValid(userLocation) {
+                completion(userLocation)
+            } else {
+                print("DEBUG: Location for user \(userId) has expired")
+                completion(nil)
+            }
         }
     }
     
@@ -220,9 +301,10 @@ class FirebaseService: FirebaseServiceProtocol {
                 print("DEBUG: Received update for user: \(userId)")
                 
                 self?.fetchAllFriendLocations(userIds: userIds) { locations in
-                    print("DEBUG: Updated friend locations: \(locations.count)")
-                    completion(locations)
-                    self?.friendLocationsSubject.send(locations)
+                    let validLocations = self?.filterValidLocations(locations) ?? [:]
+                    print("DEBUG: Updated friend locations: \(validLocations.count)")
+                    completion(validLocations)
+                    self?.friendLocationsSubject.send(validLocations)
                 }
             }
             
@@ -230,8 +312,9 @@ class FirebaseService: FirebaseServiceProtocol {
         }
         
         fetchAllFriendLocations(userIds: userIds) { [weak self] locations in
-            completion(locations)
-            self?.friendLocationsSubject.send(locations)
+            let validLocations = self?.filterValidLocations(locations) ?? [:]
+            completion(validLocations)
+            self?.friendLocationsSubject.send(validLocations)
         }
     }
     
@@ -340,69 +423,7 @@ class FirebaseService: FirebaseServiceProtocol {
                 return
             }
             
-            var friends: [User] = []
-            let group = DispatchGroup()
-            
-            for friendId in friendIds {
-                group.enter()
-                
-                self.firestore.collection("users").document(friendId).getDocument { document, error in
-                    defer { group.leave() }
-                    
-                    if let error = error {
-                        print("DEBUG: Error fetching friend \(friendId): \(error.localizedDescription)")
-                        return
-                    }
-                    
-                    guard let document = document, document.exists,
-                          let data = document.data() else {
-                        print("DEBUG: Friend document not found: \(friendId)")
-                        return
-                    }
-                    
-                    if let fullName = data["fullName"] as? String,
-                       let email = data["email"] as? String {
-                        var friend = User(id: friendId, fullName: fullName, email: email)
-                        
-                        friend.profileImageUrl = data["profileImageUrl"] as? String
-                        friend.avatarUrl = data["avatarUrl"] as? String
-                        friend.isOnline = data["isOnline"] as? Bool ?? false
-                        
-                        if let lastSeenTimestamp = data["lastSeen"] as? Timestamp {
-                            friend.lastSeen = lastSeenTimestamp.dateValue()
-                        }
-                        
-                        if let locationData = data["lastLocation"] as? [String: Any],
-                           let latitude = locationData["latitude"] as? Double,
-                           let longitude = locationData["longitude"] as? Double,
-                           let timestamp = locationData["timestamp"] as? TimeInterval {
-                            
-                            friend.lastLocation = UserLocation(
-                                latitude: latitude,
-                                longitude: longitude,
-                                timestamp: timestamp
-                            )
-                            
-                            print("DEBUG: Friend \(fullName) has location: \(latitude), \(longitude)")
-                        } else {
-                            print("DEBUG: Friend \(fullName) has no location data")
-                        }
-                        
-                        friends.append(friend)
-                        print("DEBUG: Added friend: \(fullName) (ID: \(friendId))")
-                    }
-                }
-            }
-            
-            group.notify(queue: .main) {
-                completion(friends)
-                
-                if self.friendsSubjects[userId] == nil {
-                    self.friendsSubjects[userId] = CurrentValueSubject<[User], Never>(friends)
-                } else {
-                    self.friendsSubjects[userId]?.send(friends)
-                }
-            }
+            self.fetchFriendsDetails(friendIds: friendIds, completion: completion)
         }
     }
     
@@ -423,12 +444,6 @@ class FirebaseService: FirebaseServiceProtocol {
                     return
                 }
                 
-                if let expiresAt = locationData["expiresAt"] as? TimeInterval,
-                   Date().timeIntervalSince1970 > expiresAt {
-                    self?.locationSubjects[userId]?.send(nil)
-                    return
-                }
-                
                 guard let latitude = locationData["latitude"] as? Double,
                       let longitude = locationData["longitude"] as? Double,
                       let timestamp = locationData["timestamp"] as? TimeInterval else {
@@ -442,7 +457,12 @@ class FirebaseService: FirebaseServiceProtocol {
                     timestamp: timestamp
                 )
                 
-                self?.locationSubjects[userId]?.send(location)
+                // Only send valid (non-expired) locations
+                if let self = self, self.isLocationValid(location) {
+                    self.locationSubjects[userId]?.send(location)
+                } else {
+                    self?.locationSubjects[userId]?.send(nil)
+                }
             }
         
         locationListeners[userId] = listener
@@ -451,7 +471,6 @@ class FirebaseService: FirebaseServiceProtocol {
     private func fetchAllFriendLocations(userIds: [String], completion: @escaping ([String: UserLocation]) -> Void) {
         var friendLocations = [String: UserLocation]()
         let group = DispatchGroup()
-        let currentTime = Date().timeIntervalSince1970
         
         print("DEBUG: Fetching locations for \(userIds.count) friends")
         
@@ -477,13 +496,6 @@ class FirebaseService: FirebaseServiceProtocol {
                     return
                 }
                 
-                if let expiresAt = locationData["expiresAt"] as? TimeInterval {
-                    if currentTime > expiresAt {
-                        print("DEBUG: Location for user \(userId) has expired")
-                        return
-                    }
-                }
-                
                 guard let latitude = locationData["latitude"] as? Double,
                       let longitude = locationData["longitude"] as? Double,
                       let timestamp = locationData["timestamp"] as? TimeInterval else {
@@ -498,12 +510,12 @@ class FirebaseService: FirebaseServiceProtocol {
                 )
                 
                 friendLocations[userId] = location
-                print("DEBUG: Found valid location for user \(userId): \(latitude), \(longitude)")
+                print("DEBUG: Found location for user \(userId): \(latitude), \(longitude)")
             }
         }
         
         group.notify(queue: .main) {
-            print("DEBUG: Completed fetching locations, found \(friendLocations.count) valid locations")
+            print("DEBUG: Completed fetching locations, found \(friendLocations.count) locations")
             completion(friendLocations)
         }
     }
@@ -549,7 +561,7 @@ class FirebaseService: FirebaseServiceProtocol {
         }
     }
     
-    // MARK: - Avatar Management Methods (Giữ nguyên)
+    // MARK: - Avatar Management Methods
     
     func updateUserAvatar(userId: String, avatarUrl: String, completion: @escaping (Bool) -> Void) {
         let userRef = firestore.collection("users").document(userId)
@@ -650,7 +662,7 @@ class FirebaseService: FirebaseServiceProtocol {
     func cleanupExpiredLocations() {
         let currentTime = Date().timeIntervalSince1970
         
-        firestore.collection("users").getDocuments { snapshot, error in
+        firestore.collection("users").getDocuments { [weak self] snapshot, error in
             if let error = error {
                 print("DEBUG: Error fetching users: \(error.localizedDescription)")
                 return
@@ -664,13 +676,31 @@ class FirebaseService: FirebaseServiceProtocol {
                             let userId = document.documentID
                             print("DEBUG: Removing expired location for user \(userId)")
                             
-                            self.firestore.collection("users").document(userId).updateData([
+                            self?.firestore.collection("users").document(userId).updateData([
                                 "lastLocation": FieldValue.delete()
                             ]) { error in
                                 if let error = error {
                                     print("DEBUG: Error removing expired location: \(error.localizedDescription)")
                                 } else {
                                     print("DEBUG: Successfully removed expired location for user \(userId)")
+                                }
+                            }
+                        }
+                    } else {
+                        // If no expiresAt field, check timestamp directly
+                        if let timestamp = locationData["timestamp"] as? TimeInterval {
+                            if (currentTime - timestamp) > self?.locationExpirationTime ?? 0 {
+                                let userId = document.documentID
+                                print("DEBUG: Removing old location for user \(userId)")
+                                
+                                self?.firestore.collection("users").document(userId).updateData([
+                                    "lastLocation": FieldValue.delete()
+                                ]) { error in
+                                    if let error = error {
+                                        print("DEBUG: Error removing old location: \(error.localizedDescription)")
+                                    } else {
+                                        print("DEBUG: Successfully removed old location for user \(userId)")
+                                    }
                                 }
                             }
                         }

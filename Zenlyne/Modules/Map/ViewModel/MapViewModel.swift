@@ -77,7 +77,7 @@ enum LocationTrackingState {
 @MainActor
 class LocationViewModel: NSObject, ObservableObject {
     
-    // MARK: - Published Properties (Giữ nguyên để tương thích)
+    // MARK: - Published Properties
     @Published var currentMapStyle: MapStyle = .streets
     @Published var currentUser: User = User.MOCK_USER
     @Published var friends: [User] = []
@@ -85,6 +85,8 @@ class LocationViewModel: NSObject, ObservableObject {
     @Published var userLocation: CLLocationCoordinate2D?
     @Published var isTrackingLocation: Bool = false
     @Published var cameraOptions: CameraOptions
+    @Published var currentZoomLevel: Double = 14.0
+    @Published var shouldUpdateCamera: Bool = false // Control camera updates
     
     // MARK: - Combine Publishers
     @Published private var locationTrackingState: LocationTrackingState = .idle
@@ -93,11 +95,15 @@ class LocationViewModel: NSObject, ObservableObject {
     // MARK: - Services
     private let locationService: LocationServiceProtocol
     private let firebaseService: FirebaseServiceProtocol
+    private let friendLocationGrouper = FriendLocationGrouper()
     
     // MARK: - Internal State
     private var locationObserversActive = false
     private var onlineStatusObserversActive = false
-    private var clusterState = ClusterState()
+    private var friendsListListener: ListenerRegistration?
+    
+    // Timer for periodic cleanup
+    private var cleanupTimer: Timer?
     
     // MARK: - Initialization
     init(locationService: LocationServiceProtocol = LocationService(),
@@ -122,12 +128,14 @@ class LocationViewModel: NSObject, ObservableObject {
         }
         
         setupCombineBindings()
+        setupPeriodicCleanup()
     }
     
     // MARK: - Private Setup
     private func setupCombineBindings() {
         // Observe location tracking state changes
         $locationTrackingState
+            .receive(on: DispatchQueue.main)
             .sink { [weak self] state in
                 switch state {
                 case .tracking:
@@ -143,7 +151,8 @@ class LocationViewModel: NSObject, ObservableObject {
         // Observe user location changes and update camera if needed
         $userLocation
             .compactMap { $0 }
-            .debounce(for: .milliseconds(500), scheduler: RunLoop.main)
+            .debounce(for: .milliseconds(500), scheduler: DispatchQueue.main)
+            .receive(on: DispatchQueue.main)
             .sink { [weak self] location in
                 self?.handleUserLocationUpdate(location)
             }
@@ -151,10 +160,21 @@ class LocationViewModel: NSObject, ObservableObject {
         
         // Observe friend locations and update clustering
         $friendLocations
-            .combineLatest($friends)
-            .debounce(for: .milliseconds(300), scheduler: RunLoop.main)
-            .sink { [weak self] locations, friends in
-                self?.handleFriendLocationsUpdate(locations: locations, friends: friends)
+            .combineLatest($friends, $currentZoomLevel)
+            .debounce(for: .milliseconds(300), scheduler: DispatchQueue.main)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] locations, friends, zoomLevel in
+                self?.handleFriendLocationsUpdate(locations: locations, friends: friends, zoomLevel: zoomLevel)
+            }
+            .store(in: &cancellables)
+        
+        // Observe zoom level changes for clustering
+        $currentZoomLevel
+            .removeDuplicates { abs($0 - $1) < 0.5 }
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] zoomLevel in
+                self?.friendLocationGrouper.updateZoomLevel(zoomLevel)
+                self?.handleZoomLevelChanged(zoomLevel)
             }
             .store(in: &cancellables)
     }
@@ -163,11 +183,66 @@ class LocationViewModel: NSObject, ObservableObject {
         print("DEBUG: User location updated via Combine: \(location.latitude), \(location.longitude)")
     }
     
-    private func handleFriendLocationsUpdate(locations: [String: UserLocation], friends: [User]) {
-        print("DEBUG: Friend locations updated via Combine: \(locations.count) locations for \(friends.count) friends")
+    private func handleFriendLocationsUpdate(locations: [String: UserLocation], friends: [User], zoomLevel: Double) {
+        // Filter out expired locations (older than 72 hours)
+        let currentTime = Date().timeIntervalSince1970
+        let expirationTime: TimeInterval = 72 * 60 * 60 // 72 hours
+        
+        let validLocations = locations.filter { _, location in
+            (currentTime - location.timestamp) < expirationTime
+        }
+        
+        print("DEBUG: Friend locations updated via Combine: \(validLocations.count) valid locations for \(friends.count) friends")
+        
+        // Update the published property if different
+        if validLocations != friendLocations {
+            friendLocations = validLocations
+        }
     }
     
-    // MARK: - Location Tracking (Giữ nguyên interface)
+    private func handleZoomLevelChanged(_ zoomLevel: Double) {
+        print("DEBUG: Zoom level changed to: \(zoomLevel)")
+        
+        // Auto-expand clusters at high zoom levels
+        if zoomLevel >= 16.0 {
+            friendLocationGrouper.expandAllClusters()
+        } else if zoomLevel < 12.0 {
+            friendLocationGrouper.collapseAllClusters()
+        }
+    }
+    
+    private func setupPeriodicCleanup() {
+        // Clean up expired locations every 30 minutes
+        Task { @MainActor in
+            cleanupTimer = Timer.scheduledTimer(withTimeInterval: 30 * 60, repeats: true) { [weak self] _ in
+                Task { @MainActor in
+                    self?.cleanupExpiredLocations()
+                }
+            }
+        }
+    }
+    
+    private func cleanupExpiredLocations() {
+        let currentTime = Date().timeIntervalSince1970
+        let expirationTime: TimeInterval = 72 * 60 * 60 // 72 hours
+        
+        var updatedLocations = friendLocations
+        var hasChanges = false
+        
+        for (friendId, location) in friendLocations {
+            if (currentTime - location.timestamp) >= expirationTime {
+                updatedLocations.removeValue(forKey: friendId)
+                hasChanges = true
+                print("DEBUG: Removed expired location for friend: \(friendId)")
+            }
+        }
+        
+        if hasChanges {
+            friendLocations = updatedLocations
+        }
+    }
+    
+    // MARK: - Location Tracking
     
     func startTrackingLocation() {
         print("DEBUG: Starting location tracking")
@@ -180,6 +255,9 @@ class LocationViewModel: NSObject, ObservableObject {
         if let userId = Auth.auth().currentUser?.uid {
             firebaseService.setUserOnlineStatus(userId: userId, isOnline: true)
         }
+        
+        // Start monitoring friends
+        startMonitoringFriends()
     }
     
     func stopTrackingLocation() {
@@ -192,21 +270,85 @@ class LocationViewModel: NSObject, ObservableObject {
             firebaseService.setUserOnlineStatus(userId: userId, isOnline: false)
         }
         
-        // Stop all observers
-        if locationObserversActive {
-            firebaseService.stopObservingFriendLocations()
-            locationObserversActive = false
+        stopMonitoringFriends()
+    }
+    
+    // MARK: - Friends Monitoring with Combine
+    
+    private func startMonitoringFriends() {
+        guard let currentUserId = Auth.auth().currentUser?.uid else {
+            print("DEBUG: No current user ID available")
+            return
         }
         
-        if onlineStatusObserversActive {
-            for friend in friends {
-                firebaseService.stopObservingUserOnlineStatus(userId: friend.id)
+        print("DEBUG: Starting to monitor friends for user: \(currentUserId)")
+        
+        // Use Combine to observe friends list
+        firebaseService.friendsPublisher(forUserId: currentUserId)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] friends in
+                guard let self = self else { return }
+                
+                print("DEBUG: Received \(friends.count) friends via Combine")
+                self.friends = friends
+                
+                if !friends.isEmpty {
+                    let friendIds = friends.map { $0.id }
+                    self.startObservingFriendLocations(friendIds: friendIds)
+                    self.startObservingFriendOnlineStatus(friendIds: friendIds)
+                } else {
+                    print("DEBUG: No friends to monitor")
+                }
             }
-            onlineStatusObserversActive = false
+            .store(in: &cancellables)
+        
+        // Also observe friend locations using Combine
+        if !friends.isEmpty {
+            let friendIds = friends.map { $0.id }
+            firebaseService.friendLocationsPublisher(userIds: friendIds)
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] locations in
+                    guard let self = self else { return }
+                    
+                    // Filter expired locations
+                    let currentTime = Date().timeIntervalSince1970
+                    let expirationTime: TimeInterval = 72 * 60 * 60
+                    
+                    let validLocations = locations.filter { _, location in
+                        (currentTime - location.timestamp) < expirationTime
+                    }
+                    
+                    print("DEBUG: Received \(validLocations.count) valid friend locations via Combine")
+                    self.friendLocations = validLocations
+                }
+                .store(in: &cancellables)
         }
     }
     
-    // MARK: - Map Camera Control (Giữ nguyên interface)
+    private nonisolated func stopMonitoringFriends() {
+        Task { @MainActor in
+            // Cancel all Combine subscriptions
+            cancellables.removeAll()
+            
+            // Stop Firebase observers
+            if locationObserversActive {
+                firebaseService.stopObservingFriendLocations()
+                locationObserversActive = false
+            }
+            
+            if onlineStatusObserversActive {
+                for friend in friends {
+                    firebaseService.stopObservingUserOnlineStatus(userId: friend.id)
+                }
+                onlineStatusObserversActive = false
+            }
+            
+            // Re-setup basic Combine bindings
+            setupCombineBindings()
+        }
+    }
+    
+    // MARK: - Map Camera Control
     
     func focusOnUserLocation() {
         guard let userLocation = userLocation else {
@@ -214,13 +356,17 @@ class LocationViewModel: NSObject, ObservableObject {
             return
         }
         
+        // Only update camera when explicitly requested
         cameraOptions = CameraOptions(
             center: userLocation,
-            zoom: 15.0,
+            zoom: 16.0, // Fixed zoom level
             bearing: 0,
             pitch: 0
         )
-        isTrackingLocation = true
+        
+        // Trigger one-time camera update
+        triggerCameraUpdate()
+        
         print("DEBUG: Focused camera on user location: \(userLocation.latitude), \(userLocation.longitude)")
     }
     
@@ -228,7 +374,19 @@ class LocationViewModel: NSObject, ObservableObject {
         currentMapStyle = currentMapStyle.nextStyle()
     }
     
-    // MARK: - Friend Location Observers (Giữ nguyên interface)
+    func updateZoomLevel(_ zoomLevel: Double) {
+        if abs(currentZoomLevel - zoomLevel) > 0.1 {
+            currentZoomLevel = zoomLevel
+        }
+    }
+    
+    // Trigger camera update for specific actions only
+    private func triggerCameraUpdate() {
+        // Set flag to trigger camera update in MapViewRepresentable
+        shouldUpdateCamera = true
+    }
+    
+    // MARK: - Friend Location Observers (Legacy support)
     
     func startObservingFriendLocations(friendIds: [String]) {
         guard !friendIds.isEmpty else {
@@ -247,16 +405,24 @@ class LocationViewModel: NSObject, ObservableObject {
         firebaseService.observeFriendLocations(userIds: friendIds) { [weak self] locations in
             guard let self = self else { return }
             
-            print("DEBUG: Received \(locations.count) friend locations")
+            // Filter expired locations
+            let currentTime = Date().timeIntervalSince1970
+            let expirationTime: TimeInterval = 72 * 60 * 60 // 72 hours
             
-            for (friendId, location) in locations {
+            let validLocations = locations.filter { _, location in
+                (currentTime - location.timestamp) < expirationTime
+            }
+            
+            print("DEBUG: Received \(validLocations.count) valid friend locations")
+            
+            for (friendId, location) in validLocations {
                 let friend = self.friends.first(where: { $0.id == friendId })?.fullName ?? "Unknown"
                 print("DEBUG: Friend \(friend) (\(friendId)) location: \(location.latitude), \(location.longitude)")
             }
             
             // Update friend location in main thread
             Task { @MainActor in
-                self.friendLocations = locations
+                self.friendLocations = validLocations
             }
         }
         
@@ -298,16 +464,41 @@ class LocationViewModel: NSObject, ObservableObject {
         onlineStatusObserversActive = true
     }
     
-    func debugFriendLocations() {
-        print("DEBUG: Current friend locations:")
-        for (friendId, location) in friendLocations {
-            let ageInHours = (Date().timeIntervalSince1970 - location.timestamp) / 3600
-            let friend = friends.first(where: { $0.id == friendId})?.fullName ?? "Unknown"
-            print("DEBUG: Friend: \(friend) (\(friendId)) - Location: \(location.latitude), \(location.longitude) - Age: \(String(format: "%.1f", ageInHours)) hours")
+    // MARK: - Clustering Management
+    
+    func getLocationGroups() -> [LocationGroup] {
+        return friendLocationGrouper.groupFriendLocations(friendLocations)
+    }
+    
+    func toggleClusterExpansion(clusterId: String) -> Bool {
+        return friendLocationGrouper.toggleClusterExpansion(clusterId: clusterId)
+    }
+    
+    func isClusterExpanded(clusterId: String) -> Bool {
+        return friendLocationGrouper.isClusterExpanded(clusterId: clusterId)
+    }
+    
+    func focusOnCluster(clusterId: String, expanded: Bool = true) {
+        let locationGroups = friendLocationGrouper.groupFriendLocations(friendLocations)
+        
+        if let group = locationGroups.first(where: {
+            $0.type == .cluster &&
+            $0.friendIds.sorted().joined(separator: "_") == clusterId
+        }) {
+            if expanded {
+                _ = friendLocationGrouper.toggleClusterExpansion(clusterId: clusterId)
+            }
+            
+            cameraOptions = CameraOptions(
+                center: group.centerCoordinate,
+                zoom: 15.5,
+                bearing: 0,
+                pitch: 0
+            )
         }
     }
     
-    // MARK: - Helper Methods (Giữ nguyên interface)
+    // MARK: - Helper Methods
     
     func getFriend(byId id: String) -> User? {
         return friends.first { $0.id == id }
@@ -323,42 +514,12 @@ class LocationViewModel: NSObject, ObservableObject {
         return formatter.localizedString(for: locationDate, relativeTo: Date())
     }
     
-    func monitorFriendsAndLocations() {
-        guard let currentUserId = Auth.auth().currentUser?.uid else {
-            print("DEBUG: No current user ID available")
-            return
-        }
-        
-        print("DEBUG: Monitoring friends and locations for user: \(currentUserId)")
-        
-        // Load friends list
-        firebaseService.fetchFriends(forUserId: currentUserId) { [weak self] friends in
-            guard let self = self else { return }
-            
-            print("DEBUG: Loaded \(friends.count) friends")
-            
-            Task { @MainActor in
-                self.friends = friends
-                
-                // Start observing your friends' location and status
-                if !friends.isEmpty {
-                    let friendIds = friends.map { $0.id }
-                    self.startObservingFriendLocations(friendIds: friendIds)
-                    self.startObservingFriendOnlineStatus(friendIds: friendIds)
-                } else {
-                    print("DEBUG: No friends to monitor")
-                }
-            }
-        }
-    }
-    
     func focusOnFriendLocation(friendId: String) {
         print("DEBUG: Focusing on friend location for friend ID: \(friendId)")
         
         guard let friendLocation = friendLocations[friendId] else {
             print("DEBUG: No location found for friend with ID: \(friendId)")
             print("DEBUG: Available friend locations: \(friendLocations.keys.joined(separator: ", "))")
-            debugFriendLocationsInDatabase()
             return
         }
         
@@ -376,71 +537,26 @@ class LocationViewModel: NSObject, ObservableObject {
         isTrackingLocation = false
     }
     
-    func debugFriendLocationsInDatabase() {
-        guard let currentUserId = Auth.auth().currentUser?.uid else {
-            print("DEBUG: No current user ID available")
-            return
+    func debugFriendLocations() {
+        print("DEBUG: Current friend locations:")
+        for (friendId, location) in friendLocations {
+            let ageInHours = (Date().timeIntervalSince1970 - location.timestamp) / 3600
+            let friend = friends.first(where: { $0.id == friendId})?.fullName ?? "Unknown"
+            print("DEBUG: Friend: \(friend) (\(friendId)) - Location: \(location.latitude), \(location.longitude) - Age: \(String(format: "%.1f", ageInHours)) hours")
         }
-        
-        let db = Firestore.firestore()
-        
-        // Get friends list
-        db.collection("users").document(currentUserId).getDocument { snapshot, error in
-            guard let document = snapshot, document.exists,
-                  let data = document.data(),
-                  let friendIds = data["friendIds"] as? [String] else {
-                print("DEBUG: No friends found")
-                return
-            }
-            
-            // Check the location of each friend
-            for friendId in friendIds {
-                db.collection("users").document(friendId).getDocument { snapshot, error in
-                    if let error = error {
-                        print("DEBUG: Error fetching friend \(friendId): \(error.localizedDescription)")
-                        return
-                    }
-                    
-                    guard let document = snapshot, document.exists,
-                          let data = document.data() else {
-                        print("DEBUG: Friend document not found: \(friendId)")
-                        return
-                    }
-                    
-                    let name = data["fullName"] as? String ?? "Unknown"
-                    
-                    if let locationData = data["lastLocation"] as? [String: Any] {
-                        if let lat = locationData["latitude"] as? Double,
-                           let lon = locationData["longitude"] as? Double,
-                           let timestamp = locationData["timestamp"] as? TimeInterval {
-                            
-                            let dateFormatter = DateFormatter()
-                            dateFormatter.dateStyle = .medium
-                            dateFormatter.timeStyle = .medium
-                            let date = Date(timeIntervalSince1970: timestamp)
-                            
-                            print("DEBUG: Friend \(name) (\(friendId)) location: \(lat), \(lon), Updated: \(dateFormatter.string(from: date))")
-                            
-                            if let expiresAt = locationData["expiresAt"] as? TimeInterval {
-                                let expiryDate = Date(timeIntervalSince1970: expiresAt)
-                                print("DEBUG:   Expires: \(dateFormatter.string(from: expiryDate))")
-                            }
-                        } else {
-                            print("DEBUG: Friend \(name) (\(friendId)) has invalid location data format")
-                        }
-                    } else {
-                        print("DEBUG: Friend \(name) (\(friendId)) has no location data")
-                    }
-                    
-                    let isOnline = data["isOnline"] as? Bool ?? false
-                    print("DEBUG: Friend \(name) (\(friendId)) is \(isOnline ? "online" : "offline")")
-                }
-            }
+    }
+    
+    // MARK: - Cleanup
+    
+    deinit {
+        Task { @MainActor in
+            cleanupTimer?.invalidate()
         }
+        // Note: stopMonitoringFriends() will be called automatically when cancellables are deallocated
     }
 }
 
-// MARK: - LocationServiceDelegate (Giữ nguyên)
+// MARK: - LocationServiceDelegate
 extension LocationViewModel: LocationServiceDelegate {
     func locationService(_ service: LocationServiceProtocol, didUpdateLocation location: CLLocation) {
         // Update userLocation and tracking state
@@ -475,91 +591,6 @@ extension LocationViewModel: LocationServiceDelegate {
         @unknown default:
             locationTrackingState = .idle
         }
-    }
-}
-
-// MARK: - Cluster Management (Giữ nguyên interface)
-extension LocationViewModel {
-    
-    private struct ClusterState {
-        var expandedClusterIds: Set<String> = []
-        var currentZoomLevel: Double = 14.0
-        var autoExpandThreshold: Double = 16.0
-    }
-    
-    func updateMapZoomLevel(_ zoomLevel: Double) {
-        clusterState.currentZoomLevel = zoomLevel
-        
-        // Auto-expand clusters at high zoom levels
-        if zoomLevel >= clusterState.autoExpandThreshold {
-            expandAllClustersInView()
-        } else if zoomLevel < clusterState.autoExpandThreshold - 1.0 {
-            collapseAllClusters()
-        }
-    }
-    
-    func toggleClusterExpansion(clusterId: String) -> Bool {
-        if clusterState.expandedClusterIds.contains(clusterId) {
-            clusterState.expandedClusterIds.remove(clusterId)
-            return false
-        } else {
-            clusterState.expandedClusterIds.insert(clusterId)
-            return true
-        }
-    }
-    
-    func isClusterExpanded(clusterId: String) -> Bool {
-        return clusterState.expandedClusterIds.contains(clusterId)
-    }
-    
-    private func expandAllClustersInView() {
-        let friendLocationGetter = FriendLocationGrouper()
-        friendLocationGetter.updateZoomLevel(clusterState.currentZoomLevel)
-        
-        let locationGroups = friendLocationGetter.groupFriendLocations(friendLocations)
-        
-        for group in locationGroups {
-            if group.type == .cluster && group.count >= 2 {
-                let clusterId = group.friendIds.sorted().joined(separator: "_")
-                clusterState.expandedClusterIds.insert(clusterId)
-            }
-        }
-        
-        objectWillChange.send()
-    }
-    
-    private func collapseAllClusters() {
-        if !clusterState.expandedClusterIds.isEmpty {
-            clusterState.expandedClusterIds.removeAll()
-            objectWillChange.send()
-        }
-    }
-    
-    func focusOnCluster(clusterId: String, expanded: Bool = true) {
-        let friendLocationGetter = FriendLocationGrouper()
-        let locationGroups = friendLocationGetter.groupFriendLocations(friendLocations)
-        
-        if let group = locationGroups.first(where: {
-            $0.type == .cluster &&
-            $0.friendIds.sorted().joined(separator: "_") == clusterId
-        }) {
-            if expanded {
-                clusterState.expandedClusterIds.insert(clusterId)
-            }
-            
-            cameraOptions = CameraOptions(
-                center: group.centerCoordinate,
-                zoom: 15.5,
-                bearing: 0,
-                pitch: 0
-            )
-            
-            objectWillChange.send()
-        }
-    }
-    
-    func getExpandedClusterIds() -> Set<String> {
-        return clusterState.expandedClusterIds
     }
 }
 
@@ -612,6 +643,31 @@ extension LocationViewModel {
                 return lhs.center?.latitude == rhs.center?.latitude &&
                        lhs.center?.longitude == rhs.center?.longitude &&
                        lhs.zoom == rhs.zoom
+            }
+            .eraseToAnyPublisher()
+    }
+    
+    /// Publisher for zoom level changes
+    var zoomLevelPublisher: AnyPublisher<Double, Never> {
+        $currentZoomLevel
+            .removeDuplicates { abs($0 - $1) < 0.1 }
+            .eraseToAnyPublisher()
+    }
+    
+    /// Publisher for location groups (clusters)
+    var locationGroupsPublisher: AnyPublisher<[LocationGroup], Never> {
+        friendLocationsPublisher
+            .combineLatest(zoomLevelPublisher)
+            .receive(on: DispatchQueue.main)
+            .map { [weak self] locations, zoomLevel in
+                guard let self = self else { return [] }
+                self.friendLocationGrouper.updateZoomLevel(zoomLevel)
+                return self.friendLocationGrouper.groupFriendLocations(locations)
+            }
+            .removeDuplicates { lhs, rhs in
+                return lhs.count == rhs.count &&
+                       lhs.map { "\($0.friendIds.sorted().joined())_\($0.type)" } ==
+                       rhs.map { "\($0.friendIds.sorted().joined())_\($0.type)" }
             }
             .eraseToAnyPublisher()
     }

@@ -54,3 +54,4 @@ struct UserLocation: Codable, Hashable {
         return formatter.localizedString(for: date, relativeTo: Date())
     }
 }
+

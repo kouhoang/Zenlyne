@@ -34,6 +34,7 @@ struct MapView: View {
     
     // Map refresh trigger
     @State private var mapRefreshTrigger = false
+    @State private var locationGroups: [LocationGroup] = []
     
     // Combine
     @State private var cancellables = Set<AnyCancellable>()
@@ -200,7 +201,7 @@ struct MapView: View {
             
             Spacer()
             
-            EnhancedFriendClusterSelectionView(
+            FriendClusterSelectionView(
                 friends: viewModel.friends.filter { selectedClusterFriendIds.contains($0.id) },
                 onFriendSelected: { friendId in
                     withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
@@ -254,9 +255,6 @@ struct MapView: View {
         
         // Start tracking location when app appears
         viewModel.startTrackingLocation()
-        
-        // Load friends and start observing
-        loadFriendsAndStartObserving()
         
         // Set up notification listeners
         setupNotificationListeners()
@@ -322,11 +320,20 @@ struct MapView: View {
             }
             .store(in: &cancellables)
         
-        // Observe friend locations changes
+        // Observe friend locations changes and refresh map
         viewModel.friendLocationsPublisher
             .receive(on: DispatchQueue.main)
-            .sink { locations in
+            .sink { [self] locations in
                 print("DEBUG: Friend locations updated via Combine: \(locations.count) locations")
+                refreshMapMarkers()
+            }
+            .store(in: &cancellables)
+        
+        // Observe friends list changes
+        viewModel.friendsPublisher
+            .receive(on: DispatchQueue.main)
+            .sink { friends in
+                print("DEBUG: Friends list updated via Combine: \(friends.count) friends")
             }
             .store(in: &cancellables)
         
@@ -336,6 +343,37 @@ struct MapView: View {
             .sink { style in
                 print("DEBUG: Map style changed to: \(style.displayName)")
                 refreshMapMarkers()
+            }
+            .store(in: &cancellables)
+        
+        // Observe location groups (clusters) changes
+        viewModel.locationGroupsPublisher
+            .receive(on: DispatchQueue.main)
+            .sink { [self] groups in
+                print("DEBUG: Location groups updated: \(groups.count) groups")
+                locationGroups = groups
+                refreshMapMarkers()
+            }
+            .store(in: &cancellables)
+        
+        // Observe zoom level changes
+        viewModel.zoomLevelPublisher
+            .receive(on: DispatchQueue.main)
+            .sink { zoomLevel in
+                print("DEBUG: Zoom level changed to: \(zoomLevel)")
+            }
+            .store(in: &cancellables)
+        
+        // Observe camera update requests
+        viewModel.$shouldUpdateCamera
+            .receive(on: DispatchQueue.main)
+            .sink { [self] shouldUpdate in
+                if shouldUpdate {
+                    // Trigger map refresh which will update camera
+                    refreshMapMarkers()
+                    // Reset the flag
+                    viewModel.shouldUpdateCamera = false
+                }
             }
             .store(in: &cancellables)
     }
@@ -361,37 +399,6 @@ struct MapView: View {
     private func refreshMapMarkers() {
         mapRefreshTrigger.toggle()
     }
-    
-    private func loadFriendsAndStartObserving() {
-        if let currentUserId = Auth.auth().currentUser?.uid {
-            print("DEBUG: Loading friends for current user: \(currentUserId)")
-            
-            let friendViewModel = FriendViewModel()
-            
-            // Call fetchFriends() and observe reslut by Combine
-            friendViewModel.fetchFriends()
-            
-            // Subscribe to friends changes
-            friendViewModel.$friends
-                .receive(on: DispatchQueue.main)
-                .sink { friends in
-                    print("DEBUG: Loaded \(friends.count) friends from Firebase")
-                    self.viewModel.friends = friends
-                    
-                    if !friends.isEmpty {
-                        let friendIds = friends.map { $0.id }
-                        print("DEBUG: Starting to observe \(friendIds.count) friends")
-                        self.viewModel.startObservingFriendLocations(friendIds: friendIds)
-                        self.viewModel.startObservingFriendOnlineStatus(friendIds: friendIds)
-                    }
-                }
-                .store(in: &cancellables)
-            
-        } else {
-            print("DEBUG: No current user ID available")
-        }
-    }
-
     
     private func setupNotificationListeners() {
         // Set up a listener to select friends on the map
@@ -446,6 +453,39 @@ struct MapView: View {
             }
         }
         
+        // Listen for cluster toggle events
+        NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("ClusterToggled"),
+            object: nil,
+            queue: .main
+        ) { notification in
+            guard let userInfo = notification.userInfo,
+                  let clusterId = userInfo["clusterId"] as? String,
+                  let isExpanded = userInfo["isExpanded"] as? Bool else {
+                return
+            }
+            
+            print("DEBUG: Cluster \(clusterId) toggled to \(isExpanded ? "expanded" : "collapsed")")
+            
+            // If expanded, show cluster selection panel
+            if isExpanded {
+                // Find the cluster friends
+                if let group = self.locationGroups.first(where: {
+                    $0.type == .cluster &&
+                    $0.friendIds.sorted().joined(separator: "_") == clusterId
+                }) {
+                    self.selectedClusterFriendIds = group.friendIds
+                    
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                        self.showClusterSelection = true
+                    }
+                }
+            }
+            
+            // Refresh map to show/hide expanded markers
+            self.refreshMapMarkers()
+        }
+        
         // Listener for closing the info panel when tapping on the map
         NotificationCenter.default.addObserver(
             forName: NSNotification.Name("MapTapped"),
@@ -488,6 +528,8 @@ struct MapView: View {
             viewModel.friends[friendIndex].avatarUrl = avatarUrl
             viewModel.friends[friendIndex].profileImageUrl = avatarUrl
         }
+        
+        refreshMapMarkers()
     }
     
     private func checkPendingFriendRequests() {
@@ -501,7 +543,6 @@ struct MapView: View {
         }
     }
 }
-
 
 // Safe component for showing user avatar
 struct SafeProfileAvatarView: View {

@@ -1,5 +1,5 @@
 //
-//  EnhancedFriendClusterSelectionView.swift
+//  FriendClusterSelectionView.swift
 //  Zenlyne
 //
 //  Created by admin on 20/5/25.
@@ -7,7 +7,7 @@
 
 import SwiftUI
 
-struct EnhancedFriendClusterSelectionView: View {
+struct FriendClusterSelectionView: View {
     let friends: [User]
     let onFriendSelected: (String) -> Void
     let onClose: () -> Void
@@ -67,7 +67,7 @@ struct EnhancedFriendClusterSelectionView: View {
             ScrollView {
                 LazyVStack(spacing: 0) {
                     ForEach(friends) { friend in
-                        EnhancedFriendClusterRow(friend: friend) {
+                        FriendClusterRow(friend: friend) {
                             withAnimation {
                                 self.isExpanded = false
                             }
@@ -143,7 +143,7 @@ struct EnhancedFriendClusterSelectionView: View {
     }
 }
 
-struct EnhancedFriendClusterRow: View {
+struct FriendClusterRow: View {
     let friend: User
     let onTap: () -> Void
     
@@ -222,16 +222,14 @@ struct EnhancedFriendClusterRow: View {
                 
                 Spacer()
                 
-                // Distance (if available)
-                if let _ = friend.lastLocation {
-                    Text("Show")
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundColor(.blue)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .background(Color.blue.opacity(0.1))
-                        .cornerRadius(8)
-                }
+                // Show button
+                Text("Show")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundColor(.blue)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Color.blue.opacity(0.1))
+                    .cornerRadius(8)
             }
             .padding(.vertical, 10)
             .padding(.horizontal, 10)
@@ -268,7 +266,7 @@ struct ScaleButtonStyle: ButtonStyle {
 }
 
 #Preview {
-    EnhancedFriendClusterSelectionView(
+    FriendClusterSelectionView(
         friends: [User.MOCK_USER],
         onFriendSelected: { _ in },
         onClose: {}
