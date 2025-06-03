@@ -5,11 +5,6 @@
 //  Created by admin on 6/5/25.
 //
 
-//
-//  Views/Chat/NewMessageView.swift
-//  Zenlyne
-//
-
 import SwiftUI
 
 struct NewMessageView: View {

@@ -6,12 +6,27 @@
 //
 
 
+//
+//  MessageRow.swift
+//  Zenlyne
+//
+//  Created by admin on 2/6/25.
+//
+
 import SwiftUI
 
 struct MessageRow: View {
     let message: Message
     let otherUser: User?
     let isFromCurrentUser: Bool
+    let showTime: Bool
+    
+    init(message: Message, otherUser: User?, isFromCurrentUser: Bool, showTime: Bool = true) {
+        self.message = message
+        self.otherUser = otherUser
+        self.isFromCurrentUser = isFromCurrentUser
+        self.showTime = showTime
+    }
     
     var body: some View {
         HStack(alignment: .bottom, spacing: 8) {
@@ -39,10 +54,12 @@ struct MessageRow: View {
                     .frame(maxWidth: UIScreen.main.bounds.width * 0.7, alignment: .trailing)
             }
             
-            Text(formatTime(message.timestamp))
-                .font(.caption2)
-                .foregroundColor(.gray)
-                .padding(.trailing, 8)
+            if showTime {
+                Text(formatTime(message.timestamp))
+                    .font(.caption2)
+                    .foregroundColor(.gray)
+                    .padding(.trailing, 8)
+            }
         }
     }
     
@@ -56,16 +73,19 @@ struct MessageRow: View {
                 .cornerRadius(20, corners: [.topLeft, .topRight, .bottomRight])
                 .frame(maxWidth: UIScreen.main.bounds.width * 0.7, alignment: .leading)
             
-            Text(formatTime(message.timestamp))
-                .font(.caption2)
-                .foregroundColor(.gray)
-                .padding(.leading, 8)
+            if showTime {
+                Text(formatTime(message.timestamp))
+                    .font(.caption2)
+                    .foregroundColor(.gray)
+                    .padding(.leading, 8)
+            }
         }
     }
     
     private func formatTime(_ date: Date) -> String {
         let formatter = DateFormatter()
         formatter.timeStyle = .short
+        formatter.locale = Locale(identifier: "vi_VN")
         return formatter.string(from: date)
     }
 }

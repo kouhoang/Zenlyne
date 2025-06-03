@@ -137,3 +137,35 @@ class ChatViewModel: ObservableObject {
         loadMessages()
     }
 }
+
+extension Array where Element == Message {
+    func groupedByDate() -> [(Date, [Message])] {
+        let calendar = Calendar.current
+        let grouped = Dictionary(grouping: self) { message in
+            calendar.startOfDay(for: message.timestamp)
+        }
+        
+        return grouped.sorted { $0.key < $1.key }
+    }
+}
+
+extension Message {
+    func shouldShowTime(in messages: [Message]) -> Bool {
+        guard let messageIndex = messages.firstIndex(where: { $0.id == self.id }) else {
+            return true
+        }
+        
+        if messageIndex == messages.count - 1 {
+            return true
+        }
+        
+        let nextMessage = messages[messageIndex + 1]
+        
+        if nextMessage.senderId != self.senderId {
+            return true
+        }
+        
+        let timeDifference = nextMessage.timestamp.timeIntervalSince(self.timestamp)
+        return timeDifference > 300 // 5 minutes
+    }
+}

@@ -71,14 +71,27 @@ struct ChatView: View {
     private var messagesListView: some View {
         ScrollViewReader { scrollView in
             ScrollView {
-                LazyVStack(spacing: 12) {
-                    ForEach(viewModel.messages) { message in
-                        MessageRow(
-                            message: message,
-                            otherUser: viewModel.otherUser,
-                            isFromCurrentUser: viewModel.isMessageFromCurrentUser(message)
-                        )
-                        .id(message.id)
+                LazyVStack(spacing: 0) {
+                    let groupedMessages = viewModel.messages.groupedByDate()
+                    
+                    ForEach(Array(groupedMessages.enumerated()), id: \.offset) { index, dateGroup in
+                        let (date, messages) = dateGroup
+                        
+                        // Header ngày tháng
+                        DateHeaderView(date: date)
+                            .padding(.top, index == 0 ? 0 : 20)
+                        
+                        // Tin nhắn trong ngày
+                        ForEach(messages) { message in
+                            MessageRow(
+                                message: message,
+                                otherUser: viewModel.otherUser,
+                                isFromCurrentUser: viewModel.isMessageFromCurrentUser(message),
+                                showTime: message.shouldShowTime(in: messages)
+                            )
+                            .id(message.id)
+                            .padding(.vertical, 2)
+                        }
                     }
                     
                     Color.clear
@@ -106,6 +119,22 @@ struct ChatView: View {
             }
         }
     }
+
+    private func shouldShowTime(for message: Message, in messages: [Message]) -> Bool {
+        guard let messageIndex = messages.firstIndex(where: { $0.id == message.id }) else {
+            return true
+        }
+        
+        if messageIndex == messages.count - 1 {
+            return true
+        }
+        
+        let nextMessage = messages[messageIndex + 1]
+        let timeDifference = nextMessage.timestamp.timeIntervalSince(message.timestamp)
+        
+        return timeDifference > 300 // 5 minutes
+    }
+
     
     private var messageInputView: some View {
         HStack(spacing: 12) {
