@@ -120,20 +120,31 @@ struct ConversationRowView: View {
         guard let date = date else { return "" }
         
         let calendar = Calendar.current
+        let now = Date()
+        
         if calendar.isDateInToday(date) {
             let formatter = DateFormatter()
             formatter.timeStyle = .short
+            formatter.locale = Locale(identifier: "vi_VN")
             return formatter.string(from: date)
         } else if calendar.isDateInYesterday(date) {
             return "Hôm qua"
-        } else if calendar.isDate(date, equalTo: Date(), toGranularity: .weekOfYear) {
+        } else if calendar.isDate(date, equalTo: now, toGranularity: .weekOfYear) {
             let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "vi_VN")
             formatter.dateFormat = "EEEE"
+            return formatter.string(from: date)
+        } else if calendar.isDate(date, equalTo: now, toGranularity: .year) {
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "vi_VN")
+            formatter.dateFormat = "dd/MM"
             return formatter.string(from: date)
         } else {
             let formatter = DateFormatter()
-            formatter.dateFormat = "dd/MM/yyyy"
+            formatter.locale = Locale(identifier: "vi_VN")
+            formatter.dateFormat = "dd/MM/yy" 
             return formatter.string(from: date)
         }
     }
+
 }
