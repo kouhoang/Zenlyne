@@ -41,14 +41,15 @@ struct MapViewRepresentable: UIViewRepresentable {
             context.coordinator.setupAnnotations(for: mapView)
         }
         
-        // Add camera change listener to track zoom level and user interaction
         mapView.mapboxMap.onEvery(event: .cameraChanged) { event in
             let newZoom = mapView.cameraState.zoom
+            let newCenter = mapView.cameraState.center
             let isUserInitiated = context.coordinator.isUserInitiatedCameraChange()
             
             Task { @MainActor in
                 context.coordinator.handleCameraChanged(
                     newZoomLevel: newZoom,
+                    newCenter: newCenter,
                     userInitiated: isUserInitiated
                 )
             }
@@ -181,7 +182,7 @@ struct MapViewRepresentable: UIViewRepresentable {
             return timeSinceProgrammatic > 1.0
         }
         
-        @MainActor func handleCameraChanged(newZoomLevel: Double, userInitiated: Bool) {
+        @MainActor func handleCameraChanged(newZoomLevel: Double, newCenter: CLLocationCoordinate2D, userInitiated: Bool) {
             cameraChangeDebounceTimer?.invalidate()
             cameraChangeDebounceTimer = Timer.scheduledTimer(withTimeInterval: cameraChangeDebounceInterval, repeats: false) { [weak self] _ in
                 guard let self = self else { return }
@@ -192,6 +193,11 @@ struct MapViewRepresentable: UIViewRepresentable {
                     
                     Task { @MainActor in
                         self.viewModel.updateZoomLevel(newZoomLevel)
+                        
+                        // Add reverse geocoding integration
+                        if userInitiated {
+                            self.viewModel.updateLocationInfo(for: newCenter)
+                        }
                     }
                     
                     if userInitiated && newZoomLevel < 12.0 {

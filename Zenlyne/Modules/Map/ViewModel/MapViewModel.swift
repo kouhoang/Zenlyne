@@ -96,6 +96,8 @@ class LocationViewModel: NSObject, ObservableObject {
     @Published var isTrackingLocation: Bool = false
     @Published var cameraOptions: CameraOptions
     @Published var currentZoomLevel: Double = 14.0
+    @Published var currentMapCenter: CLLocationCoordinate2D?
+    @Published var reverseGeocodingService = ReverseGeocodingService()
     
     // CRITICAL: Enhanced camera control
     @Published var shouldUpdateCamera: Bool = false
@@ -476,6 +478,10 @@ class LocationViewModel: NSObject, ObservableObject {
         // Start monitoring friends
         startMonitoringFriends()
     }
+    
+    func updateLocationInfo(for coordinate: CLLocationCoordinate2D) {
+            reverseGeocodingService.reverseGeocode(coordinate: coordinate)
+        }
     
     func stopTrackingLocation() {
         print("DEBUG: Stopping location tracking")

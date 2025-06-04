@@ -44,6 +44,7 @@ struct SameLocationUsersPanel: View {
                 )
                 .shadow(color: Color.black.opacity(0.4), radius: 15, x: 0, y: 8)
         )
+        .frame(minHeight: 600)
         .padding(.horizontal, 16)
         .scaleEffect(showingAnimation ? 1.0 : 0.8)
         .opacity(showingAnimation ? 1.0 : 0)

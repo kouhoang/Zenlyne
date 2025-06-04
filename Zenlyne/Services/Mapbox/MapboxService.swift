@@ -8,6 +8,7 @@
 import Foundation
 import CoreLocation
 import Combine
+import SwiftUICore
 
 // MARK: - Location Authorization Status
 enum LocationAuthorizationStatus {
@@ -398,5 +399,63 @@ extension CLLocationCoordinate2D {
     /// Convert to UserLocation
     func toUserLocation(timestamp: TimeInterval = Date().timeIntervalSince1970) -> UserLocation {
         return UserLocation(coordinate: self, timestamp: timestamp)
+    }
+}
+
+// MARK: - CLLocationCoordinate2D Extensions
+extension CLLocationCoordinate2D {
+    
+    /// Get formatted string representation
+    var formattedString: String {
+        return String(format: "%.5f, %.5f", latitude, longitude)
+    }
+}
+
+// MARK: - UserLocation Extensions
+extension UserLocation {
+    
+    /// Check if location is expired
+    func isExpired(expirationTime: TimeInterval = 72 * 60 * 60) -> Bool {
+        let currentTime = Date().timeIntervalSince1970
+        return (currentTime - self.timestamp) >= expirationTime
+    }
+    
+    /// Get formatted age string
+    var ageString: String {
+        let age = self.age
+        
+        if age < 60 {
+            return "Vừa xong"
+        } else if age < 3600 {
+            let minutes = Int(age / 60)
+            return "\(minutes) phút trước"
+        } else if age < 86400 {
+            let hours = Int(age / 3600)
+            return "\(hours) giờ trước"
+        } else {
+            let days = Int(age / 86400)
+            return "\(days) ngày trước"
+        }
+    }
+}
+
+// MARK: - CLLocation Extensions
+extension CLLocation {
+    /// Get formatted coordinate string
+    var coordinateString: String {
+        return coordinate.formattedString
+    }
+    
+    /// Check if location is recent (within specified time)
+    func isRecent(within timeInterval: TimeInterval = 300) -> Bool {
+        return abs(timestamp.timeIntervalSinceNow) <= timeInterval
+    }
+}
+
+// MARK: - View Extensions for Material Effect
+extension View {
+    /// Apply backdrop material effect
+    func backdrop(_ color: Color) -> some View {
+        self.background(color.opacity(0.1))
     }
 }

@@ -73,6 +73,16 @@ struct MapView: View {
             // Overlay Views
             VStack {
                 HStack {
+                    // Location display in top-left corner
+                    VStack(alignment: .leading) {
+                        LocationDisplayView(reverseGeocodingService: viewModel.reverseGeocodingService)
+                            .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .topLeading)))
+                        
+                        Spacer()
+                    }
+                    .padding(.top, 50)
+                    .padding(.leading, 8)
+                    
                     Spacer()
                     
                     VStack(spacing: 10) {
@@ -82,7 +92,7 @@ struct MapView: View {
                         chatButton
                         SmartMapStyleButton(viewModel: viewModel)
                     }
-                    .padding(.top, 70)
+                    .padding(.top, 20)
                     .padding(.trailing, 8)
                 }
                 
