@@ -105,6 +105,33 @@ struct MapView: View {
                     .padding(.bottom, 80)
                 }
                 
+                // Same Location Users Panel - THÊM MỚI
+                if showSameLocationSheet && !sameLocationUsers.isEmpty {
+                    SameLocationUsersPanel(
+                        users: sameLocationUsers,
+                        location: sameLocationCoordinate != nil ? UserLocation(coordinate: sameLocationCoordinate!) : nil,
+                        onUserSelected: { userId in
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                                showSameLocationSheet = false
+                            }
+                            
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                                selectedFriendId = userId
+                                focusOnFriendSafely(friendId: userId)
+                            }
+                        },
+                        onClose: {
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                                showSameLocationSheet = false
+                            }
+                        }
+                    )
+                    .transition(.bottomSlide)
+                    .animation(.spring(response: 0.35, dampingFraction: 0.8), value: showSameLocationSheet)
+                    .zIndex(4)
+                    .padding(.bottom, 80)
+                }
+                
                 // Cluster expansion info overlay
                 if !animatingClusters.isEmpty {
                     ClusterExpansionIndicator(
@@ -154,27 +181,6 @@ struct MapView: View {
         }
         .sheet(isPresented: $showConversationList) {
             ConversationListView()
-        }
-        // NEW: Same location users sheet
-        .sheet(isPresented: $showSameLocationSheet) {
-            if !sameLocationUsers.isEmpty {
-                SameLocationUsersSheet(
-                    users: sameLocationUsers,
-                    location: sameLocationCoordinate != nil ? UserLocation(coordinate: sameLocationCoordinate!) : nil,
-                    onUserSelected: { userId in
-                        // Close same location sheet and show individual user info
-                        showSameLocationSheet = false
-                        
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                            selectedFriendId = userId
-                            focusOnFriendSafely(friendId: userId)
-                        }
-                    },
-                    onClose: {
-                        showSameLocationSheet = false
-                    }
-                )
-            }
         }
         .onAppear {
             setupView()

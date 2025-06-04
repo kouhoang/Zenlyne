@@ -15,6 +15,282 @@ struct UpdatedFriendInfoPanel: View {
     let onClose: () -> Void
     @State private var showChatView = false
     @State private var showCallOptions = false
+    @State private var showingAnimation = false
+    
+    var body: some View {
+        VStack(spacing: 16) {
+            // Header với close button
+            headerSection
+            
+            // Avatar và thông tin chính
+            profileSection
+            
+            // Location details
+            if let location = location {
+                locationSection(location)
+            }
+            
+            // Action buttons
+            actionButtonsSection
+        }
+        .padding(.vertical, 24)
+        .padding(.horizontal, 20)
+        .background(
+            RoundedRectangle(cornerRadius: 20)
+                .fill(Color.black.opacity(0.9))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20)
+                        .stroke(Color.white.opacity(0.2), lineWidth: 1)
+                )
+                .shadow(color: Color.black.opacity(0.4), radius: 15, x: 0, y: 8)
+        )
+        .padding(.horizontal, 16)
+        .scaleEffect(showingAnimation ? 1.0 : 0.8)
+        .opacity(showingAnimation ? 1.0 : 0)
+        .onAppear {
+            withAnimation(.spring(response: 0.6, dampingFraction: 0.8)) {
+                showingAnimation = true
+            }
+        }
+    }
+    
+    // MARK: - Header Section
+    
+    private var headerSection: some View {
+        HStack {
+            Spacer()
+            Button(action: {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    showingAnimation = false
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                    onClose()
+                }
+            }) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 24))
+                    .foregroundColor(.white.opacity(0.7))
+                    .background(
+                        Circle()
+                            .fill(Color.black.opacity(0.3))
+                            .frame(width: 32, height: 32)
+                    )
+            }
+            .buttonStyle(PlainButtonStyle())
+        }
+    }
+    
+    // MARK: - Profile Section
+    
+    private var profileSection: some View {
+        VStack(spacing: 12) {
+            // Avatar với status indicator
+            ZStack(alignment: .bottomTrailing) {
+                if let profileImage = friend.profileImageUrl {
+                    AsyncImage(url: URL(string: profileImage)) { image in
+                        image
+                            .resizable()
+                            .scaledToFill()
+                    } placeholder: {
+                        ZStack {
+                            Circle()
+                                .fill(Color.blue.opacity(0.3))
+                            Text(friend.initials)
+                                .font(.title)
+                                .foregroundColor(.white)
+                        }
+                    }
+                    .frame(width: 80, height: 80)
+                    .clipShape(Circle())
+                    .overlay(
+                        Circle()
+                            .stroke(Color.white.opacity(0.3), lineWidth: 2)
+                    )
+                } else {
+                    ZStack {
+                        Circle()
+                            .fill(Color.blue.opacity(0.3))
+                            .frame(width: 80, height: 80)
+                        Text(friend.initials)
+                            .font(.title)
+                            .foregroundColor(.white)
+                    }
+                    .overlay(
+                        Circle()
+                            .stroke(Color.white.opacity(0.3), lineWidth: 2)
+                    )
+                }
+                
+                // Status indicator
+                Circle()
+                    .fill(friend.isOnline ? Color.green : Color.gray)
+                    .frame(width: 20, height: 20)
+                    .overlay(
+                        Circle()
+                            .stroke(Color.black, lineWidth: 3)
+                    )
+                    .offset(x: 4, y: 4)
+            }
+            
+            // Name
+            Text(friend.fullName)
+                .font(.title2)
+                .fontWeight(.semibold)
+                .foregroundColor(.white)
+            
+            // Online status
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(friend.isOnline ? Color.green : Color.gray)
+                    .frame(width: 8, height: 8)
+                
+                Text(friend.isOnline ? "Đang hoạt động" : "Không hoạt động")
+                    .font(.subheadline)
+                    .foregroundColor(friend.isOnline ? .green : .gray)
+            }
+            
+            // Last active timestamp
+            if let lastSeen = friend.lastSeen {
+                Text("Hoạt động \(formatRelativeTime(lastSeen))")
+                    .font(.caption)
+                    .foregroundColor(.gray)
+            }
+        }
+    }
+    
+    // MARK: - Location Section
+    
+    private func locationSection(_ location: UserLocation) -> some View {
+        VStack(spacing: 12) {
+            HStack {
+                Text("Thông tin vị trí")
+                    .font(.headline)
+                    .foregroundColor(.white)
+                Spacer()
+            }
+            
+            HStack(alignment: .center, spacing: 16) {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "location.fill")
+                            .font(.caption)
+                            .foregroundColor(.blue)
+                        Text("Tọa độ")
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                    }
+                    
+                    Text(formatCoordinate(location.toCoordinate()))
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(.white)
+                }
+                
+                Spacer()
+                
+                VStack(alignment: .trailing, spacing: 6) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "clock.fill")
+                            .font(.caption)
+                            .foregroundColor(.orange)
+                        Text("Cập nhật")
+                            .font(.caption)
+                            .foregroundColor(.gray)
+                    }
+                    
+                    Text(locationAge())
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundColor(locationFreshnessColor)
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color.white.opacity(0.05))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12)
+                        .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                )
+        )
+    }
+    
+    // MARK: - Action Buttons Section
+    
+    private var actionButtonsSection: some View {
+        HStack(spacing: 16) {
+            // Message button
+            actionButton(
+                icon: "message.fill",
+                title: "Nhắn tin",
+                color: .blue
+            ) {
+                showChatView = true
+            }
+            .sheet(isPresented: $showChatView) {
+                ChatViewContainer(friend: friend)
+            }
+            
+            // Call button
+            actionButton(
+                icon: "phone.fill",
+                title: "Gọi điện",
+                color: .green
+            ) {
+                showCallOptions = true
+            }
+            .actionSheet(isPresented: $showCallOptions) {
+                ActionSheet(
+                    title: Text("Gọi cho \(friend.fullName)"),
+                    buttons: [
+                        .default(Text("Gọi điện thoại")) {
+                            handlePhoneCall()
+                        },
+                        .default(Text("Gọi video")) {
+                            handleVideoCall()
+                        },
+                        .cancel(Text("Hủy"))
+                    ]
+                )
+            }
+            
+            // Directions button
+            actionButton(
+                icon: "arrow.triangle.turn.up.right.diamond.fill",
+                title: "Chỉ đường",
+                color: .orange
+            ) {
+                handleDirections()
+            }
+            .disabled(location == nil)
+            .opacity(location == nil ? 0.5 : 1.0)
+        }
+    }
+    
+    private func actionButton(icon: String, title: String, color: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 8) {
+                Image(systemName: icon)
+                    .font(.system(size: 20))
+                    .foregroundColor(.white)
+                    .frame(width: 44, height: 44)
+                    .background(
+                        Circle()
+                            .fill(color.opacity(0.3))
+                            .overlay(
+                                Circle()
+                                    .stroke(color.opacity(0.5), lineWidth: 1)
+                            )
+                    )
+                
+                Text(title)
+                    .font(.caption)
+                    .foregroundColor(.white)
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
     
     // MARK: - Helper Methods
     
@@ -55,185 +331,15 @@ struct UpdatedFriendInfoPanel: View {
         return .red
     }
     
-    var body: some View {
-        VStack(spacing: 12) {
-            // Top section styled like the contact card
-            VStack(spacing: 8) {
-                HStack {
-                    Spacer()
-                    // Close button (X) positioned at top-right
-                    Button(action: onClose) {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 20))
-                            .foregroundColor(.gray)
-                    }
-                }
-                
-                // Avatar/initials with exact styling from the image
-                ZStack {
-                    Circle()
-                        .fill(Color.blue.opacity(0.2))
-                        .frame(width: 60, height: 60)
-                    
-                    if let profileImage = friend.profileImageUrl {
-                        AsyncImage(url: URL(string: profileImage)) { image in
-                            image
-                                .resizable()
-                                .scaledToFill()
-                        } placeholder: {
-                            Text(friend.initials)
-                                .font(.title2)
-                                .foregroundColor(.blue)
-                        }
-                        .frame(width: 56, height: 56)
-                        .clipShape(Circle())
-                    } else {
-                        Text(friend.initials)
-                            .font(.title2)
-                            .foregroundColor(.blue)
-                    }
-                }
-                
-                // Name styled like in the image
-                Text(friend.fullName)
-                    .font(.headline)
-                    .fontWeight(.semibold)
-                
-                // Online status with green dot like in the image
-                HStack(spacing: 4) {
-                    Circle()
-                        .fill(friend.isOnline ? Color.green : Color.gray)
-                        .frame(width: 6, height: 6)
-                    
-                    Text(friend.isOnline ? "Đang hoạt động" : "Không hoạt động")
-                        .font(.subheadline)
-                        .foregroundColor(friend.isOnline ? .green : .gray)
-                }
-                
-                // Last active timestamp
-                if let lastSeen = friend.lastSeen {
-                    Text("Hoạt động \(formatRelativeTime(lastSeen))")
-                        .font(.caption)
-                        .foregroundColor(.gray)
-                }
-            }
-            .padding(.bottom, 8)
-            
-            // Location details
-            if let location = location {
-                HStack(alignment: .top) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Vị trí")
-                            .font(.caption)
-                            .foregroundColor(.gray)
-                        
-                        Text(formatCoordinate(location.toCoordinate()))
-                            .font(.caption)
-                            .fontWeight(.medium)
-                    }
-                    
-                    Spacer()
-                    
-                    VStack(alignment: .trailing, spacing: 4) {
-                        Text("Thời gian")
-                            .font(.caption)
-                            .foregroundColor(.gray)
-                        
-                        Text(locationAge())
-                            .font(.caption)
-                            .fontWeight(.medium)
-                            .foregroundColor(locationFreshnessColor)
-                    }
-                }
-                .padding(.horizontal, 4)
-                .padding(.vertical, 8)
-                .background(Color.gray.opacity(0.1))
-                .cornerRadius(8)
-            }
-            
-            // Action buttons with updated messaging functionality
-            HStack(spacing: 20) {
-                // Message button
-                Button(action: {
-                    showChatView = true
-                }) {
-                    VStack(spacing: 4) {
-                        Image(systemName: "message.fill")
-                            .font(.system(size: 20))
-                        Text("Nhắn tin")
-                            .font(.caption)
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-                .sheet(isPresented: $showChatView) {
-                    ChatViewContainer(friend: friend)
-                }
-                
-                // Call button
-                Button(action: {
-                    showCallOptions = true
-                }) {
-                    VStack(spacing: 4) {
-                        Image(systemName: "phone.fill")
-                            .font(.system(size: 20))
-                        Text("Gọi điện")
-                            .font(.caption)
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-                .actionSheet(isPresented: $showCallOptions) {
-                    ActionSheet(
-                        title: Text("Gọi cho \(friend.fullName)"),
-                        buttons: [
-                            .default(Text("Gọi điện thoại")) {
-                                handlePhoneCall()
-                            },
-                            .default(Text("Gọi video")) {
-                                handleVideoCall()
-                            },
-                            .cancel(Text("Hủy"))
-                        ]
-                    )
-                }
-                
-                // Directions button
-                Button(action: {
-                    handleDirections()
-                }) {
-                    VStack(spacing: 4) {
-                        Image(systemName: "arrow.triangle.turn.up.right.diamond.fill")
-                            .font(.system(size: 20))
-                        Text("Chỉ đường")
-                            .font(.caption)
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-                .disabled(location == nil)
-                .opacity(location == nil ? 0.5 : 1.0)
-            }
-            .foregroundColor(.blue)
-        }
-        .padding()
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(Color.white)
-                .shadow(color: Color.black.opacity(0.2), radius: 10, x: 0, y: 5)
-        )
-        .padding(.horizontal)
-    }
-    
     // MARK: - Action Handlers
     
     private func handlePhoneCall() {
-        // Handle phone call here - you might want to get actual phone number from friend data
         if let url = URL(string: "tel://+84123456789") {
             UIApplication.shared.open(url)
         }
     }
     
     private func handleVideoCall() {
-        // Handle video call here
-        // This would connect to your video call implementation
         print("Starting video call with \(friend.fullName)")
     }
     
@@ -244,7 +350,6 @@ struct UpdatedFriendInfoPanel: View {
         if let url = url, UIApplication.shared.canOpenURL(url) {
             UIApplication.shared.open(url)
         } else {
-            // Fallback to Google Maps web if Apple Maps is not available
             let webUrl = URL(string: "https://maps.google.com/maps?daddr=\(location.latitude),\(location.longitude)")
             if let webUrl = webUrl {
                 UIApplication.shared.open(webUrl)
@@ -253,7 +358,7 @@ struct UpdatedFriendInfoPanel: View {
     }
 }
 
-// MARK: - Chat View Container (Updated for new MVVM architecture)
+// MARK: - Chat View Container (Dark Theme)
 
 struct ChatViewContainer: View {
     let friend: User
@@ -274,6 +379,7 @@ struct ChatViewContainer: View {
                             Button("Đóng") {
                                 presentationMode.wrappedValue.dismiss()
                             }
+                            .foregroundColor(.white)
                         }
                     }
                 } else {
@@ -284,11 +390,11 @@ struct ChatViewContainer: View {
                         
                         Text("Vui lòng đăng nhập để chat")
                             .font(.headline)
-                            .foregroundColor(.primary)
+                            .foregroundColor(.white)
                         
                         Text("Bạn cần đăng nhập để có thể gửi tin nhắn")
                             .font(.subheadline)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(.gray)
                             .multilineTextAlignment(.center)
                         
                         Button("Đóng") {
@@ -297,6 +403,7 @@ struct ChatViewContainer: View {
                         .buttonStyle(.borderedProminent)
                     }
                     .padding()
+                    .background(Color.black)
                 }
             }
         }
@@ -308,14 +415,6 @@ struct ChatViewContainer: View {
     }
 }
 
-// MARK: - Extension for UserLocation
-
-//extension UserLocation {
-//    func toCoordinate() -> CLLocationCoordinate2D {
-//        return CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
-//    }
-//}
-
 // MARK: - Preview
 
 #Preview {
@@ -324,4 +423,5 @@ struct ChatViewContainer: View {
         location: UserLocation(latitude: 21.0285, longitude: 105.8542, timestamp: Date().timeIntervalSince1970),
         onClose: {}
     )
+    .background(Color.blue.opacity(0.3))
 }
