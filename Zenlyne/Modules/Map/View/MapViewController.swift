@@ -1,8 +1,9 @@
 //
-//  MapView.swift
+//  MapViewController.swift
 //  Zenlyne
 //
-//  Created by admin on 19/3/25.
+//  Created by kou on 4/6/25.
+
 //
 
 import SwiftUI
@@ -33,13 +34,23 @@ struct MapView: View {
     @State private var clusterPanelOffset: CGSize = .zero
     @State private var clusterPanelHeight: CGFloat = 400
     
-    // Map refresh trigger
-    @State private var mapRefreshTrigger = false
+    // NEW: Same location support
+    @State private var showSameLocationSheet: Bool = false
+    @State private var sameLocationUsers: [User] = []
+    @State private var sameLocationCoordinate: CLLocationCoordinate2D?
+    
+    // Smart refresh management
+    @State private var needsMapRefresh: Bool = false
+    @State private var lastRefreshTrigger: Date = Date()
     @State private var locationGroups: [LocationGroup] = []
     
     // Animation state
     @State private var expandedClusters: Set<String> = []
     @State private var animatingClusters: Set<String> = []
+    
+    // User interaction tracking
+    @State private var isUserInteractingWithMap: Bool = false
+    @State private var lastUserMapInteraction: Date = Date()
     
     // Combine
     @State private var cancellables = Set<AnyCancellable>()
@@ -49,7 +60,15 @@ struct MapView: View {
             // Base Map View
             MapViewRepresentable(viewModel: viewModel)
                 .ignoresSafeArea()
-                .id(mapRefreshTrigger)
+                .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("UserMapInteractionStarted"))) { _ in
+                    isUserInteractingWithMap = true
+                    lastUserMapInteraction = Date()
+                }
+                .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("UserMapInteractionEnded"))) { _ in
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        isUserInteractingWithMap = false
+                    }
+                }
             
             // Overlay Views
             VStack {
@@ -57,20 +76,11 @@ struct MapView: View {
                     Spacer()
                     
                     VStack(spacing: 10) {
-                        // Profile Button
                         profileButton
-                        
-                        // Friends List Button
                         friendsListButton
-                        
-                        // Add Friend Button
                         addFriendButton
-                        
-                        // Chat button
                         chatButton
-                        
-                        // Map Style Button
-                        MapStyleButton(viewModel: viewModel)
+                        SmartMapStyleButton(viewModel: viewModel)
                     }
                     .padding(.top, 70)
                     .padding(.trailing, 8)
@@ -111,14 +121,9 @@ struct MapView: View {
                 HStack {
                     Spacer()
                     
-                    // Location Focus Button
-                    LocationButton(
-                        action: {
-                            withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
-                                viewModel.focusOnUserLocation()
-                            }
-                        },
-                        isTracking: viewModel.isTrackingLocation
+                    SmartLocationButton(
+                        viewModel: viewModel,
+                        isUserInteracting: isUserInteractingWithMap
                     )
                 }
                 .padding(.bottom, 30)
@@ -149,6 +154,27 @@ struct MapView: View {
         }
         .sheet(isPresented: $showConversationList) {
             ConversationListView()
+        }
+        // NEW: Same location users sheet
+        .sheet(isPresented: $showSameLocationSheet) {
+            if !sameLocationUsers.isEmpty {
+                SameLocationUsersSheet(
+                    users: sameLocationUsers,
+                    location: sameLocationCoordinate != nil ? UserLocation(coordinate: sameLocationCoordinate!) : nil,
+                    onUserSelected: { userId in
+                        // Close same location sheet and show individual user info
+                        showSameLocationSheet = false
+                        
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            selectedFriendId = userId
+                            focusOnFriendSafely(friendId: userId)
+                        }
+                    },
+                    onClose: {
+                        showSameLocationSheet = false
+                    }
+                )
+            }
         }
         .onAppear {
             setupView()
@@ -217,7 +243,6 @@ struct MapView: View {
     
     private var clusterSelectionOverlay: some View {
         VStack {
-            // Semi-transparent background
             Color.black.opacity(0.3)
                 .ignoresSafeArea()
                 .onTapGesture {
@@ -238,7 +263,7 @@ struct MapView: View {
                         
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                             selectedFriendId = friendId
-                            viewModel.focusOnFriendLocation(friendId: friendId)
+                            focusOnFriendSafely(friendId: friendId)
                         }
                     }
                 },
@@ -274,22 +299,17 @@ struct MapView: View {
         }
     }
     
-    // MARK: - Setup Methods
+    // MARK: - Smart Setup Methods
     
     private func setupView() {
-        print("DEBUG: MapView appeared")
+        print("DEBUG: MapView appeared - Smart setup with same-location support")
         
         setupCurrentUser()
-        setupCombineObservers()
+        setupSmartCombineObservers()
         setupClusterAnimationObservers()
         
-        // Start tracking location when app appears
         viewModel.startTrackingLocation()
-        
-        // Set up notification listeners
         setupNotificationListeners()
-        
-        // Check pending friend requests
         checkPendingFriendRequests()
     }
     
@@ -313,14 +333,14 @@ struct MapView: View {
         }
     }
     
-    private func setupCombineObservers() {
+    private func setupSmartCombineObservers() {
         // Observe current user changes from AuthViewModel
         authViewModel.currentUserPublisher
             .compactMap { $0 }
             .receive(on: DispatchQueue.main)
             .sink { [self] user in
                 viewModel.currentUser = user
-                refreshMapMarkers()
+                triggerSmartRefresh(reason: "User changed")
             }
             .store(in: &cancellables)
         
@@ -350,12 +370,15 @@ struct MapView: View {
             }
             .store(in: &cancellables)
         
-        // Observe friend locations changes and refresh map
+        // Observe friend locations changes - SMART refresh only
         viewModel.friendLocationsPublisher
+            .debounce(for: .milliseconds(500), scheduler: DispatchQueue.main)
             .receive(on: DispatchQueue.main)
             .sink { [self] locations in
                 print("DEBUG: Friend locations updated via Combine: \(locations.count) locations")
-                refreshMapMarkers()
+                if shouldRefreshForLocationChanges() {
+                    triggerSmartRefresh(reason: "Friend locations changed")
+                }
             }
             .store(in: &cancellables)
         
@@ -372,17 +395,17 @@ struct MapView: View {
             .receive(on: DispatchQueue.main)
             .sink { style in
                 print("DEBUG: Map style changed to: \(style.displayName)")
-                refreshMapMarkers()
+                triggerSmartRefresh(reason: "Map style changed")
             }
             .store(in: &cancellables)
         
         // Observe location groups (clusters) changes
         viewModel.locationGroupsPublisher
+            .debounce(for: .milliseconds(300), scheduler: DispatchQueue.main)
             .receive(on: DispatchQueue.main)
             .sink { [self] groups in
                 print("DEBUG: Location groups updated: \(groups.count) groups")
                 locationGroups = groups
-                refreshMapMarkers()
             }
             .store(in: &cancellables)
         
@@ -392,8 +415,7 @@ struct MapView: View {
             .sink { zoomLevel in
                 print("DEBUG: Zoom level changed to: \(zoomLevel)")
                 
-                // Auto-collapse expanded clusters on significant zoom out
-                if zoomLevel < 12.0 && !expandedClusters.isEmpty {
+                if zoomLevel < 12.0 && !expandedClusters.isEmpty && !isUserInteractingWithMap {
                     withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
                         collapseAllClusters()
                     }
@@ -405,22 +427,68 @@ struct MapView: View {
         viewModel.$shouldUpdateCamera
             .receive(on: DispatchQueue.main)
             .sink { [self] shouldUpdate in
-                if shouldUpdate {
-                    // Trigger map refresh which will update camera
-                    refreshMapMarkers()
-                    // Reset the flag
+                if shouldUpdate && !isUserInteractingWithMap {
+                    print("DEBUG: Camera update requested and allowed")
+                } else if shouldUpdate && isUserInteractingWithMap {
+                    print("DEBUG: Camera update requested but blocked - user is interacting")
                     viewModel.shouldUpdateCamera = false
                 }
             }
             .store(in: &cancellables)
     }
     
+    // MARK: - Smart Refresh Logic
+    
+    private func shouldRefreshForLocationChanges() -> Bool {
+        if isUserInteractingWithMap {
+            return false
+        }
+        
+        let timeSinceLastRefresh = Date().timeIntervalSince(lastRefreshTrigger)
+        if timeSinceLastRefresh < 2.0 {
+            return false
+        }
+        
+        return true
+    }
+    
+    private func triggerSmartRefresh(reason: String) {
+        guard !isUserInteractingWithMap,
+              Date().timeIntervalSince(lastRefreshTrigger) > 1.0 else {
+            print("DEBUG: Skipped refresh for '\(reason)' - user interacting or too frequent")
+            return
+        }
+        
+        print("DEBUG: Smart refresh triggered for: \(reason)")
+        lastRefreshTrigger = Date()
+        
+        DispatchQueue.main.async {
+            self.needsMapRefresh.toggle()
+        }
+    }
+    
+    private func focusOnFriendSafely(friendId: String) {
+        guard !isUserInteractingWithMap else {
+            print("DEBUG: Skipped focus - user is interacting with map")
+            return
+        }
+        
+        viewModel.focusOnFriendLocation(friendId: friendId)
+    }
+    
+    private func collapseAllClusters() {
+        clusterAnimationManager.cancelAllAnimations()
+        expandedClusters.removeAll()
+        animatingClusters.removeAll()
+        viewModel.friendLocationGrouper.collapseAllClusters()
+        
+        print("DEBUG: Collapsed all clusters")
+    }
+    
     private func setupClusterAnimationObservers() {
-        // Observe cluster animation states
         clusterAnimationManager.animationStatePublisher
             .receive(on: DispatchQueue.main)
             .sink { [self] animationStates in
-                // Update local animation tracking
                 animatingClusters = Set(animationStates.keys)
                 
                 for (clusterId, state) in animationStates {
@@ -430,7 +498,6 @@ struct MapView: View {
                     case .contracted:
                         expandedClusters.remove(clusterId)
                     case .expanding, .contracting, .animating:
-                        // Keep track of animating clusters
                         break
                     case .idle:
                         break
@@ -439,13 +506,11 @@ struct MapView: View {
             }
             .store(in: &cancellables)
         
-        // Observe animation completion
         clusterAnimationManager.animationCompletionPublisher()
             .receive(on: DispatchQueue.main)
             .sink { [self] (clusterId, finalState) in
                 print("DEBUG: Cluster \(clusterId) animation completed with state: \(finalState)")
                 
-                // Update UI based on final state
                 switch finalState {
                 case .expanded:
                     expandedClusters.insert(clusterId)
@@ -454,9 +519,6 @@ struct MapView: View {
                 default:
                     break
                 }
-                
-                // Refresh map to show final state
-                refreshMapMarkers()
             }
             .store(in: &cancellables)
     }
@@ -471,35 +533,11 @@ struct MapView: View {
                     print("DEBUG: Loaded current user avatar: \(avatarUrl)")
                     self.viewModel.currentUser.avatarUrl = avatarUrl
                     self.viewModel.currentUser.profileImageUrl = avatarUrl
-                    self.refreshMapMarkers()
                 } else {
                     print("DEBUG: No avatar found for current user")
                 }
             }
         }
-    }
-    
-    private func refreshMapMarkers() {
-        withAnimation(.easeInOut(duration: 0.2)) {
-            mapRefreshTrigger.toggle()
-        }
-    }
-    
-    private func collapseAllClusters() {
-        // Cancel all cluster animations
-        clusterAnimationManager.cancelAllAnimations()
-        
-        // Clear expanded clusters
-        expandedClusters.removeAll()
-        animatingClusters.removeAll()
-        
-        // Collapse in view model
-        viewModel.friendLocationGrouper.collapseAllClusters()
-        
-        // Refresh map
-        refreshMapMarkers()
-        
-        print("DEBUG: Collapsed all clusters")
     }
     
     private func setupNotificationListeners() {
@@ -514,7 +552,7 @@ struct MapView: View {
                 withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
                     self.selectedFriendId = friendId
                 }
-                self.viewModel.focusOnFriendLocation(friendId: friendId)
+                self.focusOnFriendSafely(friendId: friendId)
             }
         }
         
@@ -531,7 +569,6 @@ struct MapView: View {
                 print("DEBUG: User avatar loaded from database: \(avatarUrl)")
                 self.viewModel.currentUser.avatarUrl = avatarUrl
                 self.viewModel.currentUser.profileImageUrl = avatarUrl
-                self.refreshMapMarkers()
             }
         }
         
@@ -552,8 +589,47 @@ struct MapView: View {
                 }
                 
                 if let firstFriendId = friendIds.first {
-                    self.viewModel.focusOnFriendLocation(friendId: firstFriendId)
+                    self.focusOnFriendSafely(friendId: firstFriendId)
                 }
+            }
+        }
+        
+        // NEW: Listen for same-location group selections
+        NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("SameLocationGroupSelected"),
+            object: nil,
+            queue: .main
+        ) { notification in
+            guard let userInfo = notification.userInfo,
+                  let friendIds = userInfo["friendIds"] as? [String],
+                  let latitude = userInfo["latitude"] as? Double,
+                  let longitude = userInfo["longitude"] as? Double else {
+                return
+            }
+            
+            print("DEBUG: Same-location group selected with \(friendIds.count) friends")
+            
+            // Get the users at this location
+            let usersAtLocation = self.viewModel.friends.filter { friendIds.contains($0.id) }
+            
+            // Set the data for the sheet
+            self.sameLocationUsers = usersAtLocation
+            self.sameLocationCoordinate = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+            
+            // Show the sheet
+            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                self.showSameLocationSheet = true
+            }
+            
+            // Optional: Focus on the location (but don't interrupt user)
+            if !self.isUserInteractingWithMap {
+                self.viewModel.cameraOptions = CameraOptions(
+                    center: CLLocationCoordinate2D(latitude: latitude, longitude: longitude),
+                    zoom: 15.0,
+                    bearing: 0,
+                    pitch: 0
+                )
+                self.viewModel.shouldUpdateCamera = true
             }
         }
         
@@ -576,10 +652,8 @@ struct MapView: View {
             let clusterCenter = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
             
             if isExpanded {
-                // Start expansion animation
                 self.startClusterExpansion(clusterId: clusterId, center: clusterCenter)
             } else {
-                // Start contraction animation
                 self.startClusterContraction(clusterId: clusterId, center: clusterCenter)
             }
         }
@@ -590,7 +664,6 @@ struct MapView: View {
             object: nil,
             queue: .main
         ) { notification in
-            // Handle real-time animation position updates
             guard let userInfo = notification.userInfo,
                   let clusterId = userInfo["clusterId"] as? String,
                   let positions = userInfo["positions"] as? [String: CLLocationCoordinate2D],
@@ -600,21 +673,21 @@ struct MapView: View {
             }
             
             print("DEBUG: Cluster \(clusterId) animation update: \(type) progress \(progress)")
-            // The MapViewRepresentable will handle the actual position updates
         }
         
-        // Listener for closing the info panel when tapping on the map
+        // Listener for closing panels when tapping on the map
         NotificationCenter.default.addObserver(
             forName: NSNotification.Name("MapTapped"),
             object: nil,
             queue: .main
         ) { _ in
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                self.selectedFriendId = nil
-                self.showClusterSelection = false
-                
-                // Collapse all expanded clusters on map tap
-                self.collapseAllClusters()
+            if !self.isUserInteractingWithMap {
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                    self.selectedFriendId = nil
+                    self.showClusterSelection = false
+                    self.showSameLocationSheet = false
+                    self.collapseAllClusters()
+                }
             }
         }
         
@@ -641,10 +714,8 @@ struct MapView: View {
         
         print("DEBUG: Starting cluster expansion for \(clusterId) with \(group.friendIds.count) friends")
         
-        // Mark as animating
         animatingClusters.insert(clusterId)
         
-        // Start the animation through the animation manager
         clusterAnimationManager.animateClusterExpansion(
             clusterId: clusterId,
             friendIds: group.friendIds,
@@ -652,13 +723,11 @@ struct MapView: View {
             targetPositions: group.relativePositions,
             configuration: nil
         ) {
-            // Animation completion
             print("DEBUG: Cluster expansion animation completed for \(clusterId)")
             
             DispatchQueue.main.async {
                 self.animatingClusters.remove(clusterId)
                 self.expandedClusters.insert(clusterId)
-                self.refreshMapMarkers()
             }
         }
     }
@@ -674,10 +743,8 @@ struct MapView: View {
         
         print("DEBUG: Starting cluster contraction for \(clusterId)")
         
-        // Mark as animating
         animatingClusters.insert(clusterId)
         
-        // Start the animation
         clusterAnimationManager.animateClusterContraction(
             clusterId: clusterId,
             friendIds: group.friendIds,
@@ -685,13 +752,11 @@ struct MapView: View {
             targetCenter: center,
             configuration: nil
         ) {
-            // Animation completion
             print("DEBUG: Cluster contraction animation completed for \(clusterId)")
             
             DispatchQueue.main.async {
                 self.animatingClusters.remove(clusterId)
                 self.expandedClusters.remove(clusterId)
-                self.refreshMapMarkers()
             }
         }
     }
@@ -703,21 +768,17 @@ struct MapView: View {
             return
         }
         
-        // Update current user's avatar if it's them
         if userId == Auth.auth().currentUser?.uid {
             print("DEBUG: Updating current user avatar: \(avatarUrl)")
             viewModel.currentUser.avatarUrl = avatarUrl
             viewModel.currentUser.profileImageUrl = avatarUrl
         }
         
-        // Update friend's avatar if it's one of them
         if let friendIndex = viewModel.friends.firstIndex(where: { $0.id == userId }) {
             print("DEBUG: Updating friend avatar for \(viewModel.friends[friendIndex].fullName): \(avatarUrl)")
             viewModel.friends[friendIndex].avatarUrl = avatarUrl
             viewModel.friends[friendIndex].profileImageUrl = avatarUrl
         }
-        
-        refreshMapMarkers()
     }
     
     private func checkPendingFriendRequests() {
@@ -732,47 +793,75 @@ struct MapView: View {
     }
 }
 
-// MARK: - Cluster Expansion Indicator Component
+// MARK: - Smart Components
 
-struct ClusterExpansionIndicator: View {
-    let animatingClusters: [String]
-    let viewModel: LocationViewModel
+struct SmartMapStyleButton: View {
+    @ObservedObject var viewModel: LocationViewModel
+    @State private var isChangingStyle = false
     
     var body: some View {
-        if !animatingClusters.isEmpty {
-            HStack(spacing: 8) {
-                Image(systemName: "arrow.up.and.down.and.arrow.left.and.right")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(.blue)
-                
-                Text("Expanding \(animatingClusters.count) cluster\(animatingClusters.count > 1 ? "s" : "")")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(.primary)
-                
-                Spacer()
-                
-                Button("Collapse All") {
-                    // Collapse all expanded clusters
-                    for clusterId in animatingClusters {
-                        let _ = viewModel.toggleClusterExpansion(clusterId: clusterId)
-                    }
-                }
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(.blue)
+        Button(action: {
+            guard !isChangingStyle else { return }
+            
+            isChangingStyle = true
+            withAnimation(.smooth) {
+                viewModel.toggleMapStyle()
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 20)
-                    .fill(Color.white.opacity(0.9))
-                    .shadow(color: Color.black.opacity(0.1), radius: 4, x: 0, y: 2)
-            )
-            .padding(.horizontal)
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                isChangingStyle = false
+            }
+        }) {
+            Image(systemName: viewModel.currentMapStyle.iconName)
+                .font(.system(size: 20))
+                .foregroundColor(.primary)
+                .frame(width: 40, height: 40)
+                .background(Color.white)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .shadow(radius: 4)
         }
+        .disabled(isChangingStyle)
+        .opacity(isChangingStyle ? 0.6 : 1.0)
     }
 }
 
-// Safe component for showing user avatar
+struct SmartLocationButton: View {
+    @ObservedObject var viewModel: LocationViewModel
+    let isUserInteracting: Bool
+    @State private var isFocusing = false
+    
+    var body: some View {
+        Button(action: {
+            guard !isUserInteracting && !isFocusing else {
+                print("DEBUG: Location focus blocked - user interacting or already focusing")
+                return
+            }
+            
+            isFocusing = true
+            withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                viewModel.focusOnUserLocation()
+            }
+            
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                isFocusing = false
+            }
+        }) {
+            Image(systemName: viewModel.isTrackingLocation ? "location.fill" : "location")
+                .font(.system(size: 20))
+                .foregroundColor(viewModel.isTrackingLocation ? .blue : .gray)
+                .frame(width: 50, height: 50)
+                .background(Color.white)
+                .clipShape(Circle())
+                .shadow(radius: 4)
+                .scaleEffect(isFocusing ? 0.9 : 1.0)
+        }
+        .disabled(!viewModel.isTrackingLocation || isUserInteracting || isFocusing)
+        .opacity((!viewModel.isTrackingLocation || isUserInteracting || isFocusing) ? 0.6 : 1.0)
+    }
+}
+
+// MARK: - Keep all existing components
+
 struct SafeProfileAvatarView: View {
     let user: User
     
@@ -810,7 +899,6 @@ struct SafeProfileAvatarView: View {
     }
 }
 
-// Message count badge component
 struct MessageCountBadge: View {
     @StateObject private var viewModel = ConversationListViewModel()
     @State private var showingBadge = false
@@ -842,25 +930,39 @@ struct MessageCountBadge: View {
     }
 }
 
-// Chat button integration
-struct ChatButtonView: View {
-    let friend: User
-    @State private var showChatView = false
+struct ClusterExpansionIndicator: View {
+    let animatingClusters: [String]
+    let viewModel: LocationViewModel
     
     var body: some View {
-        Button(action: {
-            showChatView = true
-        }) {
-            VStack(spacing: 4) {
-                Image(systemName: "message.fill")
-                    .font(.system(size: 20))
-                Text("Nhắn tin")
-                    .font(.caption)
+        if !animatingClusters.isEmpty {
+            HStack(spacing: 8) {
+                Image(systemName: "arrow.up.and.down.and.arrow.left.and.right")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(.blue)
+                
+                Text("Expanding \(animatingClusters.count) cluster\(animatingClusters.count > 1 ? "s" : "")")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(.primary)
+                
+                Spacer()
+                
+                Button("Collapse All") {
+                    for clusterId in animatingClusters {
+                        let _ = viewModel.toggleClusterExpansion(clusterId: clusterId)
+                    }
+                }
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(.blue)
             }
-            .frame(maxWidth: .infinity)
-        }
-        .sheet(isPresented: $showChatView) {
-            ChatViewContainer(friend: friend)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 20)
+                    .fill(Color.white.opacity(0.9))
+                    .shadow(color: Color.black.opacity(0.1), radius: 4, x: 0, y: 2)
+            )
+            .padding(.horizontal)
         }
     }
 }

@@ -2,7 +2,7 @@
 //  LocationViewModel.swift
 //  Zenlyne
 //
-//  Created by admin on 14/3/25.
+//  Created by kou on 4/6/25.
 //
 
 import Foundation
@@ -14,7 +14,7 @@ import FirebaseFirestore
 import FirebaseDatabase
 import Combine
 
-// MARK: - Map Style Options
+// MARK: - Map Style Options (same as before)
 enum MapStyle {
     case streets
     case satellite
@@ -65,13 +65,23 @@ enum MapStyle {
     }
 }
 
-// MARK: - Location States
+// MARK: - Location States (same as before)
 enum LocationTrackingState {
     case idle
     case requesting
     case tracking
     case denied
     case error(String)
+}
+
+// MARK: - Camera Update Reason
+enum CameraUpdateReason {
+    case userLocation
+    case friendLocation(String)
+    case clusterFocus(String)
+    case userInitiated
+    case initialLoad
+    case none
 }
 
 @MainActor
@@ -86,7 +96,18 @@ class LocationViewModel: NSObject, ObservableObject {
     @Published var isTrackingLocation: Bool = false
     @Published var cameraOptions: CameraOptions
     @Published var currentZoomLevel: Double = 14.0
-    @Published var shouldUpdateCamera: Bool = false // Control camera updates
+    
+    // CRITICAL: Enhanced camera control
+    @Published var shouldUpdateCamera: Bool = false
+    private var lastCameraUpdateReason: CameraUpdateReason = .none
+    private var lastCameraUpdate: Date = Date.distantPast
+    private var isUserInteractingWithMap: Bool = false
+    private var cameraUpdateDebounceTimer: Timer?
+    
+    // MARK: - Location Change Tracking
+    private var lastUserLocationUpdate: Date = Date.distantPast
+    private var lastFriendLocationsUpdate: Date = Date.distantPast
+    private var lastSignificantUserLocation: CLLocationCoordinate2D?
     
     // MARK: - Combine Publishers
     @Published private var locationTrackingState: LocationTrackingState = .idle
@@ -104,6 +125,10 @@ class LocationViewModel: NSObject, ObservableObject {
     
     // Timer for periodic cleanup
     private var cleanupTimer: Timer?
+    
+    // MARK: - Constants
+    private let minimumCameraUpdateInterval: TimeInterval = 2.0
+    private let significantLocationChangeThreshold: Double = 50.0 // meters
     
     // MARK: - Initialization
     init(locationService: LocationServiceProtocol = LocationService(),
@@ -129,6 +154,7 @@ class LocationViewModel: NSObject, ObservableObject {
         
         setupCombineBindings()
         setupPeriodicCleanup()
+        setupUserInteractionTracking()
     }
     
     // MARK: - Private Setup
@@ -148,7 +174,7 @@ class LocationViewModel: NSObject, ObservableObject {
             }
             .store(in: &cancellables)
         
-        // Observe user location changes and update camera if needed
+        // Observe user location changes with smart camera updates
         $userLocation
             .compactMap { $0 }
             .debounce(for: .milliseconds(500), scheduler: DispatchQueue.main)
@@ -158,17 +184,17 @@ class LocationViewModel: NSObject, ObservableObject {
             }
             .store(in: &cancellables)
         
-        // Observe friend locations and update clustering
+        // Observe friend locations with debounced updates
         $friendLocations
             .combineLatest($friends, $currentZoomLevel)
-            .debounce(for: .milliseconds(300), scheduler: DispatchQueue.main)
+            .debounce(for: .milliseconds(500), scheduler: DispatchQueue.main)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] locations, friends, zoomLevel in
                 self?.handleFriendLocationsUpdate(locations: locations, friends: friends, zoomLevel: zoomLevel)
             }
             .store(in: &cancellables)
         
-        // Observe zoom level changes for clustering
+        // Observe zoom level changes for clustering (no camera updates)
         $currentZoomLevel
             .removeDuplicates { abs($0 - $1) < 0.5 }
             .receive(on: DispatchQueue.main)
@@ -179,8 +205,47 @@ class LocationViewModel: NSObject, ObservableObject {
             .store(in: &cancellables)
     }
     
+    private func setupUserInteractionTracking() {
+        // Listen for user interaction notifications
+        NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("UserMapInteractionStarted"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.isUserInteractingWithMap = true
+            print("DEBUG: User interaction with map started")
+        }
+        
+        NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("UserMapInteractionEnded"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            // Delay ending interaction to prevent immediate camera updates
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                self?.isUserInteractingWithMap = false
+                print("DEBUG: User interaction with map ended")
+            }
+        }
+    }
+    
     private func handleUserLocationUpdate(_ location: CLLocationCoordinate2D) {
         print("DEBUG: User location updated via Combine: \(location.latitude), \(location.longitude)")
+        
+        // Check if this is a significant location change
+        let isSignificantChange = isSignificantLocationChange(location)
+        
+        if isSignificantChange {
+            print("DEBUG: Significant user location change detected")
+            lastSignificantUserLocation = location
+            lastUserLocationUpdate = Date()
+            
+            // Only auto-focus on user location for the first few updates or after long gaps
+            let timeSinceLastUpdate = Date().timeIntervalSince(lastUserLocationUpdate)
+            if timeSinceLastUpdate > 300 { // 5 minutes
+                requestCameraUpdate(reason: .userLocation, delay: 1.0)
+            }
+        }
     }
     
     private func handleFriendLocationsUpdate(locations: [String: UserLocation], friends: [User], zoomLevel: Double) {
@@ -197,13 +262,14 @@ class LocationViewModel: NSObject, ObservableObject {
         // Update the published property if different
         if validLocations != friendLocations {
             friendLocations = validLocations
+            lastFriendLocationsUpdate = Date()
         }
     }
     
     private func handleZoomLevelChanged(_ zoomLevel: Double) {
         print("DEBUG: Zoom level changed to: \(zoomLevel)")
         
-        // Auto-expand clusters at high zoom levels
+        // Auto-expand clusters at high zoom levels (without camera changes)
         if zoomLevel >= 16.0 {
             friendLocationGrouper.expandAllClusters()
         } else if zoomLevel < 12.0 {
@@ -212,7 +278,6 @@ class LocationViewModel: NSObject, ObservableObject {
     }
     
     private func setupPeriodicCleanup() {
-        // Clean up expired locations every 30 minutes
         Task { @MainActor in
             cleanupTimer = Timer.scheduledTimer(withTimeInterval: 30 * 60, repeats: true) { [weak self] _ in
                 Task { @MainActor in
@@ -242,7 +307,159 @@ class LocationViewModel: NSObject, ObservableObject {
         }
     }
     
-    // MARK: - Location Tracking
+    // MARK: - Enhanced Camera Control
+    
+    private func isSignificantLocationChange(_ newLocation: CLLocationCoordinate2D) -> Bool {
+        guard let lastLocation = lastSignificantUserLocation else {
+            return true // First location is always significant
+        }
+        
+        let distance = lastLocation.distance(to: newLocation)
+        return distance > significantLocationChangeThreshold
+    }
+    
+    private func requestCameraUpdate(reason: CameraUpdateReason, delay: TimeInterval = 0.0) {
+        // Don't update camera if user is interacting
+        guard !isUserInteractingWithMap else {
+            print("DEBUG: Camera update blocked - user is interacting")
+            return
+        }
+        
+        // Don't update too frequently
+        let timeSinceLastUpdate = Date().timeIntervalSince(lastCameraUpdate)
+        guard timeSinceLastUpdate > minimumCameraUpdateInterval else {
+            print("DEBUG: Camera update blocked - too frequent (last: \(timeSinceLastUpdate)s ago)")
+            return
+        }
+        
+        print("DEBUG: Requesting camera update for reason: \(reason)")
+        
+        // Cancel any pending camera updates
+        cameraUpdateDebounceTimer?.invalidate()
+        
+        cameraUpdateDebounceTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
+            guard let self = self else { return }
+            
+            // Double-check user is not interacting
+            guard !self.isUserInteractingWithMap else {
+                print("DEBUG: Camera update cancelled - user started interacting")
+                return
+            }
+            
+            self.lastCameraUpdateReason = reason
+            self.lastCameraUpdate = Date()
+            self.shouldUpdateCamera = true
+            
+            print("DEBUG: Camera update triggered for reason: \(reason)")
+        }
+    }
+    
+    // MARK: - Public Camera Control Methods (Enhanced)
+    
+    func focusOnUserLocation() {
+        guard let userLocation = userLocation else {
+            print("DEBUG: No user location available to focus")
+            return
+        }
+        
+        print("DEBUG: Focus on user location requested")
+        
+        // Update camera options
+        cameraOptions = CameraOptions(
+            center: userLocation,
+            zoom: 16.0,
+            bearing: 0,
+            pitch: 0
+        )
+        
+        // Request camera update
+        requestCameraUpdate(reason: .userInitiated)
+    }
+    
+    func focusOnFriendLocation(friendId: String) {
+        print("DEBUG: Focusing on friend location for friend ID: \(friendId)")
+        
+        guard let friendLocation = friendLocations[friendId] else {
+            print("DEBUG: No location found for friend with ID: \(friendId)")
+            return
+        }
+        
+        let coordinate = friendLocation.toCoordinate()
+        print("DEBUG: Friend location found: \(coordinate.latitude), \(coordinate.longitude)")
+        
+        // Update camera options
+        cameraOptions = CameraOptions(
+            center: coordinate,
+            zoom: 15.0,
+            bearing: 0,
+            pitch: 0
+        )
+        
+        // Request camera update
+        requestCameraUpdate(reason: .friendLocation(friendId), delay: 0.5)
+    }
+    
+    func focusOnCluster(clusterId: String, expanded: Bool = true) {
+        let locationGroups = friendLocationGrouper.groupFriendLocations(friendLocations)
+        
+        guard let group = locationGroups.first(where: {
+            $0.type == .cluster &&
+            $0.friendIds.sorted().joined(separator: "_") == clusterId
+        }) else {
+            print("DEBUG: Could not find cluster with ID: \(clusterId)")
+            return
+        }
+        
+        print("DEBUG: Focusing on cluster: \(clusterId)")
+        
+        if expanded {
+            _ = friendLocationGrouper.toggleClusterExpansion(clusterId: clusterId)
+        }
+        
+        cameraOptions = CameraOptions(
+            center: group.centerCoordinate,
+            zoom: 15.5,
+            bearing: 0,
+            pitch: 0
+        )
+        
+        requestCameraUpdate(reason: .clusterFocus(clusterId), delay: 0.3)
+    }
+    
+    func toggleMapStyle() {
+        print("DEBUG: Toggling map style from \(currentMapStyle.displayName)")
+        currentMapStyle = currentMapStyle.nextStyle()
+        print("DEBUG: Map style changed to \(currentMapStyle.displayName)")
+    }
+    
+    func updateZoomLevel(_ zoomLevel: Double) {
+        if abs(currentZoomLevel - zoomLevel) > 0.1 {
+            currentZoomLevel = zoomLevel
+        }
+    }
+    
+    // MARK: - Smart Update Control
+    
+    func setUserInteracting(_ interacting: Bool) {
+        isUserInteractingWithMap = interacting
+        
+        if interacting {
+            // Cancel any pending camera updates when user starts interacting
+            cameraUpdateDebounceTimer?.invalidate()
+            shouldUpdateCamera = false
+        }
+    }
+    
+    func canUpdateCamera() -> Bool {
+        return !isUserInteractingWithMap &&
+               Date().timeIntervalSince(lastCameraUpdate) > minimumCameraUpdateInterval
+    }
+    
+    func getLastCameraUpdateReason() -> CameraUpdateReason {
+        return lastCameraUpdateReason
+    }
+    
+    // MARK: - Location Tracking (same as before)
     
     func startTrackingLocation() {
         print("DEBUG: Starting location tracking")
@@ -273,7 +490,7 @@ class LocationViewModel: NSObject, ObservableObject {
         stopMonitoringFriends()
     }
     
-    // MARK: - Friends Monitoring with Combine
+    // MARK: - Friends Monitoring with Combine (same as before)
     
     private func startMonitoringFriends() {
         guard let currentUserId = Auth.auth().currentUser?.uid else {
@@ -348,45 +565,8 @@ class LocationViewModel: NSObject, ObservableObject {
         }
     }
     
-    // MARK: - Map Camera Control
-    
-    func focusOnUserLocation() {
-        guard let userLocation = userLocation else {
-            print("DEBUG: No user location available to focus")
-            return
-        }
-        
-        // Only update camera when explicitly requested
-        cameraOptions = CameraOptions(
-            center: userLocation,
-            zoom: 16.0, // Fixed zoom level
-            bearing: 0,
-            pitch: 0
-        )
-        
-        // Trigger one-time camera update
-        triggerCameraUpdate()
-        
-        print("DEBUG: Focused camera on user location: \(userLocation.latitude), \(userLocation.longitude)")
-    }
-    
-    func toggleMapStyle() {
-        currentMapStyle = currentMapStyle.nextStyle()
-    }
-    
-    func updateZoomLevel(_ zoomLevel: Double) {
-        if abs(currentZoomLevel - zoomLevel) > 0.1 {
-            currentZoomLevel = zoomLevel
-        }
-    }
-    
-    // Trigger camera update for specific actions only
-    private func triggerCameraUpdate() {
-        // Set flag to trigger camera update in MapViewRepresentable
-        shouldUpdateCamera = true
-    }
-    
-    // MARK: - Friend Location Observers (Legacy support)
+    // MARK: - Include all remaining methods from original LocationViewModel
+    // (Copy all the existing methods for friend observations, clustering, etc.)
     
     func startObservingFriendLocations(friendIds: [String]) {
         guard !friendIds.isEmpty else {
@@ -396,16 +576,13 @@ class LocationViewModel: NSObject, ObservableObject {
         
         print("DEBUG: Starting to observe locations for \(friendIds.count) friends: \(friendIds)")
         
-        // Stop current observers if any
         if locationObserversActive {
             firebaseService.stopObservingFriendLocations()
         }
         
-        // Start observing friends location
         firebaseService.observeFriendLocations(userIds: friendIds) { [weak self] locations in
             guard let self = self else { return }
             
-            // Filter expired locations
             let currentTime = Date().timeIntervalSince1970
             let expirationTime: TimeInterval = 72 * 60 * 60 // 72 hours
             
@@ -415,12 +592,6 @@ class LocationViewModel: NSObject, ObservableObject {
             
             print("DEBUG: Received \(validLocations.count) valid friend locations")
             
-            for (friendId, location) in validLocations {
-                let friend = self.friends.first(where: { $0.id == friendId })?.fullName ?? "Unknown"
-                print("DEBUG: Friend \(friend) (\(friendId)) location: \(location.latitude), \(location.longitude)")
-            }
-            
-            // Update friend location in main thread
             Task { @MainActor in
                 self.friendLocations = validLocations
             }
@@ -434,18 +605,15 @@ class LocationViewModel: NSObject, ObservableObject {
         
         print("DEBUG: Starting to observe online status for \(friendIds.count) friends")
         
-        // Observe online status for each friend
         for friendId in friendIds {
             firebaseService.observeUserOnlineStatus(userId: friendId) { [weak self] isOnline in
                 guard let self = self else { return }
                 
-                // Update friend's online status
                 Task { @MainActor in
                     if let index = self.friends.firstIndex(where: { $0.id == friendId }) {
                         self.friends[index].isOnline = isOnline
                         
                         if !isOnline {
-                            // Update last seen time
                             let database = Database.database().reference()
                             database.child("users").child(friendId).child("lastSeen").observeSingleEvent(of: .value) { snapshot in
                                 if let timestamp = snapshot.value as? Double {
@@ -464,7 +632,7 @@ class LocationViewModel: NSObject, ObservableObject {
         onlineStatusObserversActive = true
     }
     
-    // MARK: - Clustering Management
+    // MARK: - Clustering Management (same as before)
     
     func getLocationGroups() -> [LocationGroup] {
         return friendLocationGrouper.groupFriendLocations(friendLocations)
@@ -478,27 +646,7 @@ class LocationViewModel: NSObject, ObservableObject {
         return friendLocationGrouper.isClusterExpanded(clusterId: clusterId)
     }
     
-    func focusOnCluster(clusterId: String, expanded: Bool = true) {
-        let locationGroups = friendLocationGrouper.groupFriendLocations(friendLocations)
-        
-        if let group = locationGroups.first(where: {
-            $0.type == .cluster &&
-            $0.friendIds.sorted().joined(separator: "_") == clusterId
-        }) {
-            if expanded {
-                _ = friendLocationGrouper.toggleClusterExpansion(clusterId: clusterId)
-            }
-            
-            cameraOptions = CameraOptions(
-                center: group.centerCoordinate,
-                zoom: 15.5,
-                bearing: 0,
-                pitch: 0
-            )
-        }
-    }
-    
-    // MARK: - Helper Methods
+    // MARK: - Helper Methods (same as before)
     
     func getFriend(byId id: String) -> User? {
         return friends.first { $0.id == id }
@@ -512,29 +660,6 @@ class LocationViewModel: NSObject, ObservableObject {
         formatter.unitsStyle = .abbreviated
         
         return formatter.localizedString(for: locationDate, relativeTo: Date())
-    }
-    
-    func focusOnFriendLocation(friendId: String) {
-        print("DEBUG: Focusing on friend location for friend ID: \(friendId)")
-        
-        guard let friendLocation = friendLocations[friendId] else {
-            print("DEBUG: No location found for friend with ID: \(friendId)")
-            print("DEBUG: Available friend locations: \(friendLocations.keys.joined(separator: ", "))")
-            return
-        }
-        
-        let coordinate = friendLocation.toCoordinate()
-        print("DEBUG: Friend location found: \(coordinate.latitude), \(coordinate.longitude)")
-        
-        // Animate camera to friend location
-        cameraOptions = CameraOptions(
-            center: coordinate,
-            zoom: 15.0,
-            bearing: 0,
-            pitch: 0
-        )
-        
-        isTrackingLocation = false
     }
     
     func debugFriendLocations() {
@@ -551,21 +676,20 @@ class LocationViewModel: NSObject, ObservableObject {
     deinit {
         Task { @MainActor in
             cleanupTimer?.invalidate()
+            cameraUpdateDebounceTimer?.invalidate()
         }
-        // Note: stopMonitoringFriends() will be called automatically when cancellables are deallocated
+        NotificationCenter.default.removeObserver(self)
     }
 }
 
-// MARK: - LocationServiceDelegate
+// MARK: - LocationServiceDelegate (same as before)
 extension LocationViewModel: LocationServiceDelegate {
     func locationService(_ service: LocationServiceProtocol, didUpdateLocation location: CLLocation) {
-        // Update userLocation and tracking state
         userLocation = location.coordinate
         locationTrackingState = .tracking
         
         print("DEBUG: Updated user location to \(location.coordinate.latitude), \(location.coordinate.longitude)")
         
-        // Save location to Firebase
         if let userId = Auth.auth().currentUser?.uid {
             let userLocation = UserLocation(coordinate: location.coordinate)
             firebaseService.saveUserLocation(userId: userId, location: userLocation)
@@ -594,49 +718,43 @@ extension LocationViewModel: LocationServiceDelegate {
     }
 }
 
-// MARK: - Combine Publishers
+// MARK: - Combine Publishers (enhanced)
 extension LocationViewModel {
     
-    /// Publisher that emits location tracking state changes
     var locationTrackingStatePublisher: Published<LocationTrackingState>.Publisher {
         $locationTrackingState
     }
     
-    /// Publisher for user location changes
     var userLocationPublisher: AnyPublisher<CLLocationCoordinate2D?, Never> {
         $userLocation
             .removeDuplicates { lhs, rhs in
                 guard let lhs = lhs, let rhs = rhs else {
                     return lhs == nil && rhs == nil
                 }
-                return abs(lhs.latitude - rhs.latitude) < 0.0001 &&
-                       abs(lhs.longitude - rhs.longitude) < 0.0001
+                return abs(lhs.latitude - rhs.latitude) < 0.00001 &&
+                       abs(lhs.longitude - rhs.longitude) < 0.00001
             }
             .eraseToAnyPublisher()
     }
     
-    /// Publisher for friend locations changes
     var friendLocationsPublisher: AnyPublisher<[String: UserLocation], Never> {
         $friendLocations
             .removeDuplicates()
             .eraseToAnyPublisher()
     }
     
-    /// Publisher for friends list changes
     var friendsPublisher: AnyPublisher<[User], Never> {
         $friends
             .removeDuplicates { $0.map(\.id) == $1.map(\.id) }
             .eraseToAnyPublisher()
     }
     
-    /// Publisher for map style changes
     var mapStylePublisher: AnyPublisher<MapStyle, Never> {
         $currentMapStyle
             .removeDuplicates()
             .eraseToAnyPublisher()
     }
     
-    /// Publisher for camera option changes
     var cameraOptionsPublisher: AnyPublisher<CameraOptions, Never> {
         $cameraOptions
             .removeDuplicates { lhs, rhs in
@@ -647,14 +765,12 @@ extension LocationViewModel {
             .eraseToAnyPublisher()
     }
     
-    /// Publisher for zoom level changes
     var zoomLevelPublisher: AnyPublisher<Double, Never> {
         $currentZoomLevel
             .removeDuplicates { abs($0 - $1) < 0.1 }
             .eraseToAnyPublisher()
     }
     
-    /// Publisher for location groups (clusters)
     var locationGroupsPublisher: AnyPublisher<[LocationGroup], Never> {
         friendLocationsPublisher
             .combineLatest(zoomLevelPublisher)
@@ -670,5 +786,18 @@ extension LocationViewModel {
                        rhs.map { "\($0.friendIds.sorted().joined())_\($0.type)" }
             }
             .eraseToAnyPublisher()
+    }
+    
+    // New publisher for camera update permissions
+    var cameraUpdateAllowedPublisher: AnyPublisher<Bool, Never> {
+        return Publishers.CombineLatest(
+            $shouldUpdateCamera,
+            Just(!isUserInteractingWithMap)
+        )
+        .map { shouldUpdate, userNotInteracting in
+            return shouldUpdate && userNotInteracting
+        }
+        .removeDuplicates()
+        .eraseToAnyPublisher()
     }
 }
