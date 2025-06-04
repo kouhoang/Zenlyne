@@ -13,6 +13,7 @@ import Combine
 
 struct MapView: View {
     @StateObject private var viewModel = LocationViewModel()
+    @StateObject private var clusterAnimationManager = ClusterAnimationManager()
     @EnvironmentObject var authViewModel: AuthViewModel
     
     // UI State
@@ -35,6 +36,10 @@ struct MapView: View {
     // Map refresh trigger
     @State private var mapRefreshTrigger = false
     @State private var locationGroups: [LocationGroup] = []
+    
+    // Animation state
+    @State private var expandedClusters: Set<String> = []
+    @State private var animatingClusters: Set<String> = []
     
     // Combine
     @State private var cancellables = Set<AnyCancellable>()
@@ -78,12 +83,28 @@ struct MapView: View {
                     UpdatedFriendInfoPanel(
                         friend: friend,
                         location: viewModel.friendLocations[friendId],
-                        onClose: { selectedFriendId = nil }
+                        onClose: {
+                            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                                selectedFriendId = nil
+                            }
+                        }
                     )
                     .transition(.bottomSlide)
                     .animation(.spring(response: 0.35, dampingFraction: 0.8), value: selectedFriendId != nil)
                     .zIndex(1)
                     .padding(.bottom, 80)
+                }
+                
+                // Cluster expansion info overlay
+                if !animatingClusters.isEmpty {
+                    ClusterExpansionIndicator(
+                        animatingClusters: Array(animatingClusters),
+                        viewModel: viewModel
+                    )
+                    .transition(.opacity)
+                    .animation(.easeInOut(duration: 0.3), value: animatingClusters.isEmpty)
+                    .zIndex(2)
+                    .padding(.bottom, 120)
                 }
                 
                 // Bottom Row Buttons
@@ -93,7 +114,9 @@ struct MapView: View {
                     // Location Focus Button
                     LocationButton(
                         action: {
-                            viewModel.focusOnUserLocation()
+                            withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                                viewModel.focusOnUserLocation()
+                            }
                         },
                         isTracking: viewModel.isTrackingLocation
                     )
@@ -136,7 +159,9 @@ struct MapView: View {
     
     private var profileButton: some View {
         Button(action: {
-            showProfileView.toggle()
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                showProfileView.toggle()
+            }
         }) {
             SafeProfileAvatarView(user: viewModel.currentUser)
                 .frame(width: 50, height: 50)
@@ -148,7 +173,9 @@ struct MapView: View {
     
     private var friendsListButton: some View {
         Button(action: {
-            showFriendsListView.toggle()
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                showFriendsListView.toggle()
+            }
         }) {
             Image("friends")
                 .resizable()
@@ -160,7 +187,9 @@ struct MapView: View {
     
     private var addFriendButton: some View {
         Button(action: {
-            showAddFriendView.toggle()
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                showAddFriendView.toggle()
+            }
         }) {
             Image("add-friend")
                 .resizable()
@@ -252,6 +281,7 @@ struct MapView: View {
         
         setupCurrentUser()
         setupCombineObservers()
+        setupClusterAnimationObservers()
         
         // Start tracking location when app appears
         viewModel.startTrackingLocation()
@@ -361,6 +391,13 @@ struct MapView: View {
             .receive(on: DispatchQueue.main)
             .sink { zoomLevel in
                 print("DEBUG: Zoom level changed to: \(zoomLevel)")
+                
+                // Auto-collapse expanded clusters on significant zoom out
+                if zoomLevel < 12.0 && !expandedClusters.isEmpty {
+                    withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                        collapseAllClusters()
+                    }
+                }
             }
             .store(in: &cancellables)
         
@@ -374,6 +411,52 @@ struct MapView: View {
                     // Reset the flag
                     viewModel.shouldUpdateCamera = false
                 }
+            }
+            .store(in: &cancellables)
+    }
+    
+    private func setupClusterAnimationObservers() {
+        // Observe cluster animation states
+        clusterAnimationManager.animationStatePublisher
+            .receive(on: DispatchQueue.main)
+            .sink { [self] animationStates in
+                // Update local animation tracking
+                animatingClusters = Set(animationStates.keys)
+                
+                for (clusterId, state) in animationStates {
+                    switch state {
+                    case .expanded:
+                        expandedClusters.insert(clusterId)
+                    case .contracted:
+                        expandedClusters.remove(clusterId)
+                    case .expanding, .contracting, .animating:
+                        // Keep track of animating clusters
+                        break
+                    case .idle:
+                        break
+                    }
+                }
+            }
+            .store(in: &cancellables)
+        
+        // Observe animation completion
+        clusterAnimationManager.animationCompletionPublisher()
+            .receive(on: DispatchQueue.main)
+            .sink { [self] (clusterId, finalState) in
+                print("DEBUG: Cluster \(clusterId) animation completed with state: \(finalState)")
+                
+                // Update UI based on final state
+                switch finalState {
+                case .expanded:
+                    expandedClusters.insert(clusterId)
+                case .contracted:
+                    expandedClusters.remove(clusterId)
+                default:
+                    break
+                }
+                
+                // Refresh map to show final state
+                refreshMapMarkers()
             }
             .store(in: &cancellables)
     }
@@ -397,7 +480,26 @@ struct MapView: View {
     }
     
     private func refreshMapMarkers() {
-        mapRefreshTrigger.toggle()
+        withAnimation(.easeInOut(duration: 0.2)) {
+            mapRefreshTrigger.toggle()
+        }
+    }
+    
+    private func collapseAllClusters() {
+        // Cancel all cluster animations
+        clusterAnimationManager.cancelAllAnimations()
+        
+        // Clear expanded clusters
+        expandedClusters.removeAll()
+        animatingClusters.removeAll()
+        
+        // Collapse in view model
+        viewModel.friendLocationGrouper.collapseAllClusters()
+        
+        // Refresh map
+        refreshMapMarkers()
+        
+        print("DEBUG: Collapsed all clusters")
     }
     
     private func setupNotificationListeners() {
@@ -409,7 +511,9 @@ struct MapView: View {
         ) { notification in
             if let friendId = notification.userInfo?["friendId"] as? String {
                 print("DEBUG: Friend selected: \(friendId)")
-                self.selectedFriendId = friendId
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                    self.selectedFriendId = friendId
+                }
                 self.viewModel.focusOnFriendLocation(friendId: friendId)
             }
         }
@@ -453,7 +557,7 @@ struct MapView: View {
             }
         }
         
-        // Listen for cluster toggle events
+        // Listen for cluster toggle events with smooth animation
         NotificationCenter.default.addObserver(
             forName: NSNotification.Name("ClusterToggled"),
             object: nil,
@@ -461,29 +565,42 @@ struct MapView: View {
         ) { notification in
             guard let userInfo = notification.userInfo,
                   let clusterId = userInfo["clusterId"] as? String,
-                  let isExpanded = userInfo["isExpanded"] as? Bool else {
+                  let isExpanded = userInfo["isExpanded"] as? Bool,
+                  let latitude = userInfo["latitude"] as? Double,
+                  let longitude = userInfo["longitude"] as? Double else {
                 return
             }
             
             print("DEBUG: Cluster \(clusterId) toggled to \(isExpanded ? "expanded" : "collapsed")")
             
-            // If expanded, show cluster selection panel
+            let clusterCenter = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+            
             if isExpanded {
-                // Find the cluster friends
-                if let group = self.locationGroups.first(where: {
-                    $0.type == .cluster &&
-                    $0.friendIds.sorted().joined(separator: "_") == clusterId
-                }) {
-                    self.selectedClusterFriendIds = group.friendIds
-                    
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                        self.showClusterSelection = true
-                    }
-                }
+                // Start expansion animation
+                self.startClusterExpansion(clusterId: clusterId, center: clusterCenter)
+            } else {
+                // Start contraction animation
+                self.startClusterContraction(clusterId: clusterId, center: clusterCenter)
+            }
+        }
+        
+        // Listen for cluster animation updates
+        NotificationCenter.default.addObserver(
+            forName: NSNotification.Name("ClusterAnimationUpdate"),
+            object: nil,
+            queue: .main
+        ) { notification in
+            // Handle real-time animation position updates
+            guard let userInfo = notification.userInfo,
+                  let clusterId = userInfo["clusterId"] as? String,
+                  let positions = userInfo["positions"] as? [String: CLLocationCoordinate2D],
+                  let progress = userInfo["progress"] as? Double,
+                  let type = userInfo["type"] as? String else {
+                return
             }
             
-            // Refresh map to show/hide expanded markers
-            self.refreshMapMarkers()
+            print("DEBUG: Cluster \(clusterId) animation update: \(type) progress \(progress)")
+            // The MapViewRepresentable will handle the actual position updates
         }
         
         // Listener for closing the info panel when tapping on the map
@@ -495,6 +612,9 @@ struct MapView: View {
             withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
                 self.selectedFriendId = nil
                 self.showClusterSelection = false
+                
+                // Collapse all expanded clusters on map tap
+                self.collapseAllClusters()
             }
         }
         
@@ -505,6 +625,74 @@ struct MapView: View {
             queue: .main
         ) { notification in
             self.handleAvatarUpdate(notification)
+        }
+    }
+    
+    // MARK: - Cluster Animation Helpers
+    
+    private func startClusterExpansion(clusterId: String, center: CLLocationCoordinate2D) {
+        guard let group = locationGroups.first(where: {
+            $0.type == .cluster &&
+            $0.friendIds.sorted().joined(separator: "_") == clusterId
+        }) else {
+            print("DEBUG: Could not find group for cluster \(clusterId)")
+            return
+        }
+        
+        print("DEBUG: Starting cluster expansion for \(clusterId) with \(group.friendIds.count) friends")
+        
+        // Mark as animating
+        animatingClusters.insert(clusterId)
+        
+        // Start the animation through the animation manager
+        clusterAnimationManager.animateClusterExpansion(
+            clusterId: clusterId,
+            friendIds: group.friendIds,
+            clusterCenter: center,
+            targetPositions: group.relativePositions,
+            configuration: nil
+        ) {
+            // Animation completion
+            print("DEBUG: Cluster expansion animation completed for \(clusterId)")
+            
+            DispatchQueue.main.async {
+                self.animatingClusters.remove(clusterId)
+                self.expandedClusters.insert(clusterId)
+                self.refreshMapMarkers()
+            }
+        }
+    }
+    
+    private func startClusterContraction(clusterId: String, center: CLLocationCoordinate2D) {
+        guard let group = locationGroups.first(where: {
+            $0.type == .cluster &&
+            $0.friendIds.sorted().joined(separator: "_") == clusterId
+        }) else {
+            print("DEBUG: Could not find group for cluster \(clusterId)")
+            return
+        }
+        
+        print("DEBUG: Starting cluster contraction for \(clusterId)")
+        
+        // Mark as animating
+        animatingClusters.insert(clusterId)
+        
+        // Start the animation
+        clusterAnimationManager.animateClusterContraction(
+            clusterId: clusterId,
+            friendIds: group.friendIds,
+            startPositions: group.relativePositions,
+            targetCenter: center,
+            configuration: nil
+        ) {
+            // Animation completion
+            print("DEBUG: Cluster contraction animation completed for \(clusterId)")
+            
+            DispatchQueue.main.async {
+                self.animatingClusters.remove(clusterId)
+                self.expandedClusters.remove(clusterId)
+                self.refreshMapMarkers()
+            }
         }
     }
     
@@ -540,6 +728,46 @@ struct MapView: View {
             DispatchQueue.main.async {
                 self.pendingRequestsCount = count
             }
+        }
+    }
+}
+
+// MARK: - Cluster Expansion Indicator Component
+
+struct ClusterExpansionIndicator: View {
+    let animatingClusters: [String]
+    let viewModel: LocationViewModel
+    
+    var body: some View {
+        if !animatingClusters.isEmpty {
+            HStack(spacing: 8) {
+                Image(systemName: "arrow.up.and.down.and.arrow.left.and.right")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(.blue)
+                
+                Text("Expanding \(animatingClusters.count) cluster\(animatingClusters.count > 1 ? "s" : "")")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(.primary)
+                
+                Spacer()
+                
+                Button("Collapse All") {
+                    // Collapse all expanded clusters
+                    for clusterId in animatingClusters {
+                        let _ = viewModel.toggleClusterExpansion(clusterId: clusterId)
+                    }
+                }
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(.blue)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 20)
+                    .fill(Color.white.opacity(0.9))
+                    .shadow(color: Color.black.opacity(0.1), radius: 4, x: 0, y: 2)
+            )
+            .padding(.horizontal)
         }
     }
 }

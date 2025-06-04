@@ -87,7 +87,7 @@ struct MapViewRepresentable: UIViewRepresentable {
             )
         }
 
-        // Update friend annotations with clustering
+        // Update friend annotations with clustering and expansion
         context.coordinator.updateFriendAnnotations(
             for: mapView,
             viewModel: viewModel
@@ -107,8 +107,6 @@ struct MapViewRepresentable: UIViewRepresentable {
         private var friendIdByAnnotationId: [String: String] = [:]
         private var clusterIdByAnnotationId: [String: [String]] = [:]
         private var expandedClusterAnnotations: [String: [PointAnnotation]] = [:]
-        private var markerAnimationManager = MarkerAnimationManager()
-        private var clusterAnimationManager = ClusterAnimationManager()
         private var currentMapZoomLevel: Double = 14.0
         
         // Keep track of current location groups for reference
@@ -116,6 +114,10 @@ struct MapViewRepresentable: UIViewRepresentable {
         
         // Image cache for async loading
         private var imageCache: [String: UIImage] = [:]
+        
+        // Animation management
+        private var expansionTimers: [String: Timer] = [:]
+        private var animationProgress: [String: Double] = [:]
         
         init(viewModel: LocationViewModel) {
             self.viewModel = viewModel
@@ -133,6 +135,9 @@ struct MapViewRepresentable: UIViewRepresentable {
                 // When the user taps on the map (not on a marker),
                 // send a notification to close the friend info panel if it's displayed
                 NotificationCenter.default.post(name: NSNotification.Name("MapTapped"), object: nil)
+                
+                // Also collapse all expanded clusters
+                collapseAllClusters()
             }
         }
         
@@ -144,7 +149,32 @@ struct MapViewRepresentable: UIViewRepresentable {
                 
                 // Update view model zoom level (but don't trigger camera updates)
                 viewModel.updateZoomLevel(newZoomLevel)
+                
+                // Auto-collapse clusters on zoom out
+                if newZoomLevel < 12.0 {
+                    collapseAllClusters()
+                }
             }
+        }
+        
+        // MARK: - Cluster Management
+        
+        private func collapseAllClusters() {
+            // Stop all expansion animations
+            for timer in expansionTimers.values {
+                timer.invalidate()
+            }
+            expansionTimers.removeAll()
+            animationProgress.removeAll()
+            
+            // Clear expanded annotations
+            expandedClusterAnnotationManager?.annotations = []
+            expandedClusterAnnotations.removeAll()
+            
+            // Collapse all clusters in view model
+            viewModel.friendLocationGrouper.collapseAllClusters()
+            
+            print("DEBUG: Collapsed all clusters")
         }
         
         // MARK: - Async Image Loading
@@ -330,26 +360,27 @@ struct MapViewRepresentable: UIViewRepresentable {
             print("DEBUG: Updated user annotation at \(coordinate.latitude), \(coordinate.longitude)")
         }
         
-        // Create an annotation for a single friend (now looks like user annotation)
-        private func createFriendAnnotation(for friend: User, at coordinate: CLLocationCoordinate2D, mapView: MapboxMaps.MapView) -> PointAnnotation {
+        // Create an annotation for a single friend with avatar
+        private func createFriendAnnotation(for friend: User, at coordinate: CLLocationCoordinate2D, mapView: MapboxMaps.MapView, isExpanded: Bool = false) -> PointAnnotation {
             let isOnline = friend.isOnline
             
-            // Create marker image for this friend with their avatar (same style as user)
+            // Create marker image for this friend with their avatar
             createFriendMarkerImage(
                 for: mapView,
                 friendId: friend.id,
                 name: friend.fullName,
                 isOnline: isOnline,
-                profileImageUrl: friend.currentAvatarUrl
+                profileImageUrl: friend.currentAvatarUrl,
+                isExpanded: isExpanded
             )
             
             // Create annotation
             var annotation = PointAnnotation(coordinate: coordinate)
             annotation.iconAnchor = .center
             
-            let markerIconId = "friend-marker-\(friend.id)"
+            let markerIconId = "friend-marker-\(friend.id)\(isExpanded ? "-expanded" : "")"
             annotation.iconImage = markerIconId
-            annotation.iconSize = 1.0
+            annotation.iconSize = isExpanded ? 0.8 : 1.0 // Slightly smaller when expanded
             
             // Save mapping between annotation ID and friend ID
             friendIdByAnnotationId[annotation.id] = friend.id
@@ -393,9 +424,9 @@ struct MapViewRepresentable: UIViewRepresentable {
             return annotation
         }
 
-        // Updated method to load friend avatars asynchronously (same style as user)
-        func createFriendMarkerImage(for mapView: MapboxMaps.MapView, friendId: String? = nil, name: String? = nil, isOnline: Bool = false, profileImageUrl: String? = nil) {
-            let size: CGFloat = 55 // Slightly smaller than user
+        // Updated method to load friend avatars asynchronously
+        func createFriendMarkerImage(for mapView: MapboxMaps.MapView, friendId: String? = nil, name: String? = nil, isOnline: Bool = false, profileImageUrl: String? = nil, isExpanded: Bool = false) {
+            let size: CGFloat = isExpanded ? 50 : 55 // Slightly different size for expanded
             
             if let avatarUrlString = profileImageUrl {
                 // Load image asynchronously
@@ -404,12 +435,13 @@ struct MapViewRepresentable: UIViewRepresentable {
                         size: size,
                         name: name,
                         isOnline: isOnline,
-                        avatarImage: avatarImage
+                        avatarImage: avatarImage,
+                        isExpanded: isExpanded
                     )
                     
                     guard let image = markerImage else { return }
                     
-                    let markerId = friendId != nil ? "friend-marker-\(friendId!)" : "friend-marker-default"
+                    let markerId = friendId != nil ? "friend-marker-\(friendId!)\(isExpanded ? "-expanded" : "")" : "friend-marker-default"
                     
                     do {
                         try mapView.mapboxMap.style.addImage(image, id: markerId)
@@ -424,10 +456,11 @@ struct MapViewRepresentable: UIViewRepresentable {
                     size: size,
                     name: name,
                     isOnline: isOnline,
-                    avatarImage: nil
+                    avatarImage: nil,
+                    isExpanded: isExpanded
                 )
                 
-                let markerId = friendId != nil ? "friend-marker-\(friendId!)" : "friend-marker-default"
+                let markerId = friendId != nil ? "friend-marker-\(friendId!)\(isExpanded ? "-expanded" : "")" : "friend-marker-default"
                 
                 do {
                     try mapView.mapboxMap.style.addImage(markerImage, id: markerId)
@@ -438,7 +471,7 @@ struct MapViewRepresentable: UIViewRepresentable {
             }
         }
         
-        private func generateFriendMarkerImage(size: CGFloat, name: String?, isOnline: Bool, avatarImage: UIImage?) -> UIImage {
+        private func generateFriendMarkerImage(size: CGFloat, name: String?, isOnline: Bool, avatarImage: UIImage?, isExpanded: Bool = false) -> UIImage {
             let renderer = UIGraphicsImageRenderer(size: CGSize(width: size, height: size))
             
             return renderer.image { ctx in
@@ -519,13 +552,13 @@ struct MapViewRepresentable: UIViewRepresentable {
                 // Reset clipping path for border and status dot
                 ctx.cgContext.resetClip()
                 
-                // Draw border around the circle
+                // Draw border around the circle - different style for expanded
                 let borderPath = UIBezierPath(
                     roundedRect: rectangle.insetBy(dx: 2, dy: 2),
                     cornerRadius: cornerRadius - 2
                 )
                 ctx.cgContext.setStrokeColor(UIColor.white.cgColor)
-                ctx.cgContext.setLineWidth(3.0)
+                ctx.cgContext.setLineWidth(isExpanded ? 2.0 : 3.0)
                 ctx.cgContext.addPath(borderPath.cgPath)
                 ctx.cgContext.strokePath()
                 
@@ -536,9 +569,21 @@ struct MapViewRepresentable: UIViewRepresentable {
                 )
                 let statusColor = isOnline ? UIColor.systemGreen : UIColor.systemGray
                 ctx.cgContext.setStrokeColor(statusColor.cgColor)
-                ctx.cgContext.setLineWidth(2.0)
+                ctx.cgContext.setLineWidth(isExpanded ? 1.5 : 2.0)
                 ctx.cgContext.addPath(statusPath.cgPath)
                 ctx.cgContext.strokePath()
+                
+                // Add subtle glow for expanded markers
+                if isExpanded {
+                    let glowPath = UIBezierPath(
+                        roundedRect: rectangle.insetBy(dx: -1, dy: -1),
+                        cornerRadius: cornerRadius + 1
+                    )
+                    ctx.cgContext.setStrokeColor(UIColor.systemBlue.withAlphaComponent(0.3).cgColor)
+                    ctx.cgContext.setLineWidth(1.0)
+                    ctx.cgContext.addPath(glowPath.cgPath)
+                    ctx.cgContext.strokePath()
+                }
             }
         }
         
@@ -561,7 +606,7 @@ struct MapViewRepresentable: UIViewRepresentable {
             }
         }
         
-        // MARK: - Friend Annotations Update with Clustering
+        // MARK: - Friend Annotations Update with Clustering and Animation
         
         @MainActor func updateFriendAnnotations(for mapView: MapboxMaps.MapView, viewModel: LocationViewModel) {
             guard let annotationManager = friendAnnotationManager,
@@ -569,20 +614,13 @@ struct MapViewRepresentable: UIViewRepresentable {
             
             print("DEBUG: Updating friend annotations with \(viewModel.friendLocations.count) locations")
             
-            // Delete all current annotations
-            annotationManager.annotations = []
-            expandedAnnotationManager.annotations = []
-            friendIdByAnnotationId.removeAll()
-            clusterIdByAnnotationId.removeAll()
-            expandedClusterAnnotations.removeAll()
-            
             // Get location groups from viewModel
             let locationGroups = viewModel.getLocationGroups()
             currentLocationGroups = locationGroups
             
             print("DEBUG: Generated \(locationGroups.count) location groups")
             
-            // Create annotations based on group type
+            // Clear existing annotations except expanded ones that are animating
             var standardAnnotations: [PointAnnotation] = []
             var expandedAnnotations: [PointAnnotation] = []
             
@@ -612,36 +650,32 @@ struct MapViewRepresentable: UIViewRepresentable {
                     
                 case .cluster:
                     if isClusterExpanded {
-                        // Create individual annotations for each friend in the expanded cluster
-                        var clusterFriendAnnotations: [PointAnnotation] = []
-                        
-                        // Generate relative positions for expansion
-                        var expandedGroup = group
-                        expandedGroup.generateRelativePositions(radius: 30.0)
-                        
-                        for friendId in group.friendIds {
-                            if let friend = viewModel.friends.first(where: { $0.id == friendId }),
-                               let position = expandedGroup.relativePositions[friendId] {
-                                
-                                let annotation = createFriendAnnotation(
-                                    for: friend,
-                                    at: position,
-                                    mapView: mapView
-                                )
-                                
-                                // Add to the expanded annotations
-                                expandedAnnotations.append(annotation)
-                                clusterFriendAnnotations.append(annotation)
-                                
-                                // Store friend ID mapping
-                                friendIdByAnnotationId[annotation.id] = friendId
-                                
-                                print("DEBUG: Added expanded annotation for \(friend.fullName)")
+                        // Start expansion animation if not already expanded
+                        if expandedClusterAnnotations[clusterId] == nil {
+                            startClusterExpansionAnimation(
+                                clusterId: clusterId,
+                                group: group,
+                                mapView: mapView,
+                                expandedAnnotationManager: expandedAnnotationManager
+                            )
+                        } else {
+                            // Already expanded, just update positions
+                            let clusterFriends = viewModel.friends.filter { group.friendIds.contains($0.id) }
+                            
+                            for friend in clusterFriends {
+                                if let position = group.relativePositions[friend.id] {
+                                    let annotation = createFriendAnnotation(
+                                        for: friend,
+                                        at: position,
+                                        mapView: mapView,
+                                        isExpanded: true
+                                    )
+                                    expandedAnnotations.append(annotation)
+                                    friendIdByAnnotationId[annotation.id] = friend.id
+                                }
                             }
+                            expandedClusterAnnotations[clusterId] = expandedAnnotations
                         }
-                        
-                        // Store the expanded annotations for this cluster
-                        expandedClusterAnnotations[clusterId] = clusterFriendAnnotations
                         
                     } else {
                         // Show regular cluster marker
@@ -657,20 +691,187 @@ struct MapViewRepresentable: UIViewRepresentable {
                         clusterIdByAnnotationId[clusterAnnotation.id] = group.friendIds
                         
                         print("DEBUG: Added cluster annotation with \(group.friendIds.count) friends")
+                        
+                        // If this cluster was expanded before, start contraction animation
+                        if let expandedAnnotations = expandedClusterAnnotations[clusterId] {
+                            startClusterContractionAnimation(
+                                clusterId: clusterId,
+                                targetCenter: group.centerCoordinate,
+                                expandedAnnotationManager: expandedAnnotationManager
+                            )
+                        }
                     }
                 }
             }
             
-            // Add all annotations to appropriate managers
+            // Update annotation managers
             annotationManager.annotations = standardAnnotations
-            expandedAnnotationManager.annotations = expandedAnnotations
             
-            print("DEBUG: Added \(standardAnnotations.count) standard annotations and \(expandedAnnotations.count) expanded annotations")
+            // Update expanded annotations if not animating
+            for (clusterId, annotations) in expandedClusterAnnotations {
+                if expansionTimers[clusterId] == nil {
+                    expandedAnnotationManager.annotations = Array(expandedClusterAnnotations.values.flatMap { $0 })
+                }
+            }
+            
+            print("DEBUG: Added \(standardAnnotations.count) standard annotations and \(expandedClusterAnnotations.count) expanded clusters")
             
             // Make sure user annotation is updated last so it stays on top
             if let userLocation = viewModel.userLocation {
                 updateUserAnnotation(for: mapView, at: userLocation, userName: viewModel.currentUser.fullName)
             }
+        }
+        
+        // MARK: - Cluster Animation Methods
+        
+        @MainActor private func startClusterExpansionAnimation(
+            clusterId: String,
+            group: LocationGroup,
+            mapView: MapboxMaps.MapView,
+            expandedAnnotationManager: PointAnnotationManager
+        ) {
+            print("DEBUG: Starting expansion animation for cluster \(clusterId)")
+            
+            // Stop any existing animation for this cluster
+            expansionTimers[clusterId]?.invalidate()
+            
+            let friends = viewModel.friends.filter { group.friendIds.contains($0.id) }
+            let animationDuration: TimeInterval = 0.4
+            let frameInterval: TimeInterval = 0.016 // ~60fps
+            
+            // Create initial annotations at cluster center
+            var animatingAnnotations: [PointAnnotation] = []
+            
+            for friend in friends {
+                let annotation = createFriendAnnotation(
+                    for: friend,
+                    at: group.centerCoordinate,
+                    mapView: mapView,
+                    isExpanded: true
+                )
+                animatingAnnotations.append(annotation)
+                friendIdByAnnotationId[annotation.id] = friend.id
+            }
+            
+            // Store the annotations
+            expandedClusterAnnotations[clusterId] = animatingAnnotations
+            expandedAnnotationManager.annotations = Array(expandedClusterAnnotations.values.flatMap { $0 })
+            
+            // Start animation timer
+            animationProgress[clusterId] = 0.0
+            
+            let timer = Timer.scheduledTimer(withTimeInterval: frameInterval, repeats: true) { [weak self] timer in
+                guard let self = self else {
+                    timer.invalidate()
+                    return
+                }
+                
+                let currentProgress = self.animationProgress[clusterId] ?? 0.0
+                let newProgress = min(1.0, currentProgress + frameInterval / animationDuration)
+                
+                // Update positions using eased progress
+                let keyframes = group.getExpansionKeyframes(progress: newProgress)
+                self.updateExpandedAnnotationPositions(
+                    clusterId: clusterId,
+                    keyframes: keyframes,
+                    expandedAnnotationManager: expandedAnnotationManager
+                )
+                
+                self.animationProgress[clusterId] = newProgress
+                
+                // Complete animation
+                if newProgress >= 1.0 {
+                    timer.invalidate()
+                    self.expansionTimers.removeValue(forKey: clusterId)
+                    self.animationProgress.removeValue(forKey: clusterId)
+                    print("DEBUG: Completed expansion animation for cluster \(clusterId)")
+                }
+            }
+            
+            expansionTimers[clusterId] = timer
+        }
+        
+        private func startClusterContractionAnimation(
+            clusterId: String,
+            targetCenter: CLLocationCoordinate2D,
+            expandedAnnotationManager: PointAnnotationManager
+        ) {
+            print("DEBUG: Starting contraction animation for cluster \(clusterId)")
+            
+            // Stop any existing animation
+            expansionTimers[clusterId]?.invalidate()
+            
+            guard let group = currentLocationGroups.first(where: {
+                $0.type == .cluster &&
+                $0.friendIds.sorted().joined(separator: "_") == clusterId
+            }) else {
+                // Remove expanded annotations immediately if no group found
+                expandedClusterAnnotations.removeValue(forKey: clusterId)
+                expandedAnnotationManager.annotations = Array(expandedClusterAnnotations.values.flatMap { $0 })
+                return
+            }
+            
+            let animationDuration: TimeInterval = 0.3
+            let frameInterval: TimeInterval = 0.016
+            
+            animationProgress[clusterId] = 0.0
+            
+            let timer = Timer.scheduledTimer(withTimeInterval: frameInterval, repeats: true) { [weak self] timer in
+                guard let self = self else {
+                    timer.invalidate()
+                    return
+                }
+                
+                let currentProgress = self.animationProgress[clusterId] ?? 0.0
+                let newProgress = min(1.0, currentProgress + frameInterval / animationDuration)
+                
+                // Update positions using contraction keyframes
+                let keyframes = group.getContractionKeyframes(progress: newProgress)
+                self.updateExpandedAnnotationPositions(
+                    clusterId: clusterId,
+                    keyframes: keyframes,
+                    expandedAnnotationManager: expandedAnnotationManager
+                )
+                
+                self.animationProgress[clusterId] = newProgress
+                
+                // Complete animation
+                if newProgress >= 1.0 {
+                    timer.invalidate()
+                    self.expansionTimers.removeValue(forKey: clusterId)
+                    self.animationProgress.removeValue(forKey: clusterId)
+                    
+                    // Remove expanded annotations
+                    self.expandedClusterAnnotations.removeValue(forKey: clusterId)
+                    expandedAnnotationManager.annotations = Array(self.expandedClusterAnnotations.values.flatMap { $0 })
+                    
+                    print("DEBUG: Completed contraction animation for cluster \(clusterId)")
+                }
+            }
+            
+            expansionTimers[clusterId] = timer
+        }
+        
+        private func updateExpandedAnnotationPositions(
+            clusterId: String,
+            keyframes: [String: CLLocationCoordinate2D],
+            expandedAnnotationManager: PointAnnotationManager
+        ) {
+            guard var annotations = expandedClusterAnnotations[clusterId] else { return }
+            
+            // Update positions
+            for i in 0..<annotations.count {
+                let friendId = friendIdByAnnotationId[annotations[i].id]
+                if let friendId = friendId, let newPosition = keyframes[friendId] {
+                    annotations[i].point = Point(newPosition)
+                }
+            }
+            
+            // Update stored annotations
+            expandedClusterAnnotations[clusterId] = annotations
+            
+            // Update annotation manager
+            expandedAnnotationManager.annotations = Array(expandedClusterAnnotations.values.flatMap { $0 })
         }
         
         // MARK: - Annotation Setup
@@ -725,9 +926,15 @@ struct MapViewRepresentable: UIViewRepresentable {
         // MARK: - Memory Management
         
         deinit {
-            // Clean up observers and caches
+            // Clean up observers, caches, and timers
             NotificationCenter.default.removeObserver(self)
             imageCache.removeAll()
+            
+            for timer in expansionTimers.values {
+                timer.invalidate()
+            }
+            expansionTimers.removeAll()
+            animationProgress.removeAll()
         }
     }
 }

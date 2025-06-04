@@ -95,7 +95,7 @@ class LocationViewModel: NSObject, ObservableObject {
     // MARK: - Services
     private let locationService: LocationServiceProtocol
     private let firebaseService: FirebaseServiceProtocol
-    private let friendLocationGrouper = FriendLocationGrouper()
+    let friendLocationGrouper = FriendLocationGrouper()
     
     // MARK: - Internal State
     private var locationObserversActive = false

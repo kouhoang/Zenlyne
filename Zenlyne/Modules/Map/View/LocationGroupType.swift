@@ -23,29 +23,76 @@ struct LocationGroup {
     let count: Int
     var relativePositions: [String: CLLocationCoordinate2D] = [:]
     
-    mutating func generateRelativePositions(radius: Double) {
+    // Original positions of friends
+    var originalPositions: [String: CLLocationCoordinate2D] = [:]
+    
+    mutating func generateRelativePositions(radius: Double, friendLocations: [String: UserLocation] = [:]) {
         guard count > 1 else {
-            // Single friend, just use center
+            // Single friend, just use center or original position
             if let friendId = friendIds.first {
-                relativePositions[friendId] = centerCoordinate
+                if let location = friendLocations[friendId] {
+                    relativePositions[friendId] = location.toCoordinate()
+                    originalPositions[friendId] = location.toCoordinate()
+                } else {
+                    relativePositions[friendId] = centerCoordinate
+                    originalPositions[friendId] = centerCoordinate
+                }
             }
             return
         }
         
-        let positions = calculateOffsetPositions(
-            center: centerCoordinate,
-            count: count,
-            radius: radius
-        )
-        
-        for (index, friendId) in friendIds.enumerated() {
-            if index < positions.count {
-                relativePositions[friendId] = positions[index]
+        // Store original positions
+        for friendId in friendIds {
+            if let location = friendLocations[friendId] {
+                originalPositions[friendId] = location.toCoordinate()
+            } else {
+                originalPositions[friendId] = centerCoordinate
             }
+        }
+        
+        // Check if original positions are far enough apart
+        let minDistance = radius * 1.5 // Minimum distance to consider positions separated
+        var positionsAreSeparated = true
+        
+        if friendIds.count >= 2 {
+            for i in 0..<friendIds.count {
+                for j in (i+1)..<friendIds.count {
+                    let pos1 = originalPositions[friendIds[i]] ?? centerCoordinate
+                    let pos2 = originalPositions[friendIds[j]] ?? centerCoordinate
+                    let distance = pos1.distance(to: pos2)
+                    
+                    if distance < minDistance {
+                        positionsAreSeparated = false
+                        break
+                    }
+                }
+                if !positionsAreSeparated { break }
+            }
+        }
+        
+        if positionsAreSeparated {
+            // Use original positions as they are far enough apart
+            relativePositions = originalPositions
+            print("DEBUG: Using original positions for cluster - positions are separated")
+        } else {
+            // Generate circular/fan arrangement around center
+            let positions = calculateExpandedPositions(
+                center: centerCoordinate,
+                count: count,
+                radius: radius
+            )
+            
+            for (index, friendId) in friendIds.enumerated() {
+                if index < positions.count {
+                    relativePositions[friendId] = positions[index]
+                }
+            }
+            
+            print("DEBUG: Generated circular arrangement for cluster - positions were too close")
         }
     }
     
-    private func calculateOffsetPositions(center: CLLocationCoordinate2D, count: Int, radius: Double) -> [CLLocationCoordinate2D] {
+    private func calculateExpandedPositions(center: CLLocationCoordinate2D, count: Int, radius: Double) -> [CLLocationCoordinate2D] {
         guard count > 0 else { return [] }
         
         var positions: [CLLocationCoordinate2D] = []
@@ -56,45 +103,48 @@ struct LocationGroup {
         }
         
         if count == 2 {
+            // Side by side arrangement
             let lonFactor = cos(center.latitude * Double.pi / 180.0)
-            let lonOffset1 = -radius / (111111.0 * lonFactor)
-            let lonOffset2 = radius / (111111.0 * lonFactor)
+            let lonOffset = radius / (111111.0 * lonFactor)
             
             positions.append(CLLocationCoordinate2D(
                 latitude: center.latitude,
-                longitude: center.longitude + lonOffset1
+                longitude: center.longitude - lonOffset
             ))
             positions.append(CLLocationCoordinate2D(
                 latitude: center.latitude,
-                longitude: center.longitude + lonOffset2
+                longitude: center.longitude + lonOffset
             ))
         } else if count == 3 {
-            // Triangle formation for 3 friends
+            // Triangle formation
             let lonFactor = cos(center.latitude * Double.pi / 180.0)
+            let latOffset = radius / 111111.0
+            let lonOffset = radius / (111111.0 * lonFactor)
             
             // Top
             positions.append(CLLocationCoordinate2D(
-                latitude: center.latitude + radius / 111111.0,
+                latitude: center.latitude + latOffset * 0.7,
                 longitude: center.longitude
             ))
             
             // Bottom left
             positions.append(CLLocationCoordinate2D(
-                latitude: center.latitude - radius / (2 * 111111.0),
-                longitude: center.longitude - radius / (111111.0 * lonFactor)
+                latitude: center.latitude - latOffset * 0.4,
+                longitude: center.longitude - lonOffset * 0.7
             ))
             
             // Bottom right
             positions.append(CLLocationCoordinate2D(
-                latitude: center.latitude - radius / (2 * 111111.0),
-                longitude: center.longitude + radius / (111111.0 * lonFactor)
+                latitude: center.latitude - latOffset * 0.4,
+                longitude: center.longitude + lonOffset * 0.7
             ))
         } else {
             // Circle formation for 4+ friends
             let angleStep = (2.0 * Double.pi) / Double(count)
+            let startAngle = -Double.pi / 2 // Start from top
             
             for i in 0..<count {
-                let angle = Double(i) * angleStep
+                let angle = startAngle + Double(i) * angleStep
                 let latOffset = (radius * sin(angle)) / 111111.0
                 let lonFactor = cos(center.latitude * Double.pi / 180.0)
                 let lonOffset = (radius * cos(angle)) / (111111.0 * lonFactor)
@@ -108,6 +158,54 @@ struct LocationGroup {
         
         return positions
     }
+    
+    // Get animation keyframes for smooth expansion
+    func getExpansionKeyframes(progress: Double) -> [String: CLLocationCoordinate2D] {
+        var keyframes: [String: CLLocationCoordinate2D] = [:]
+        
+        for friendId in friendIds {
+            let startPos = centerCoordinate
+            let endPos = relativePositions[friendId] ?? centerCoordinate
+            
+            // Smooth interpolation with easing
+            let easedProgress = easeOutCubic(progress)
+            
+            let lat = startPos.latitude + (endPos.latitude - startPos.latitude) * easedProgress
+            let lon = startPos.longitude + (endPos.longitude - startPos.longitude) * easedProgress
+            
+            keyframes[friendId] = CLLocationCoordinate2D(latitude: lat, longitude: lon)
+        }
+        
+        return keyframes
+    }
+    
+    // Get animation keyframes for smooth contraction
+    func getContractionKeyframes(progress: Double) -> [String: CLLocationCoordinate2D] {
+        var keyframes: [String: CLLocationCoordinate2D] = [:]
+        
+        for friendId in friendIds {
+            let startPos = relativePositions[friendId] ?? centerCoordinate
+            let endPos = centerCoordinate
+            
+            // Smooth interpolation with easing
+            let easedProgress = easeInCubic(progress)
+            
+            let lat = startPos.latitude + (endPos.latitude - startPos.latitude) * easedProgress
+            let lon = startPos.longitude + (endPos.longitude - startPos.longitude) * easedProgress
+            
+            keyframes[friendId] = CLLocationCoordinate2D(latitude: lat, longitude: lon)
+        }
+        
+        return keyframes
+    }
+    
+    private func easeOutCubic(_ t: Double) -> Double {
+        return 1 - pow(1 - t, 3)
+    }
+    
+    private func easeInCubic(_ t: Double) -> Double {
+        return t * t * t
+    }
 }
 
 // MARK: - Grouping Configuration
@@ -115,7 +213,7 @@ struct GroupingConfiguration {
     var clusterRadiusMeters: Double = 200.0
     var minFriendsForCluster: Int = 2
     var maxFriendsPerCluster: Int = 10
-    var expansionRadius: Double = 30.0
+    var expansionRadius: Double = 35.0
     
     static let `default` = GroupingConfiguration()
     
@@ -123,14 +221,14 @@ struct GroupingConfiguration {
         clusterRadiusMeters: 500.0,
         minFriendsForCluster: 2,
         maxFriendsPerCluster: 15,
-        expansionRadius: 40.0
+        expansionRadius: 50.0
     )
     
     static let precise = GroupingConfiguration(
         clusterRadiusMeters: 100.0,
         minFriendsForCluster: 3,
         maxFriendsPerCluster: 8,
-        expansionRadius: 20.0
+        expansionRadius: 25.0
     )
 }
 
@@ -145,6 +243,7 @@ class FriendLocationGrouper: ObservableObject {
     private var currentZoomLevel: Double = 14.0
     private var configuration: GroupingConfiguration = .default
     private var cancellables = Set<AnyCancellable>()
+    private var currentFriendLocations: [String: UserLocation] = [:]
     
     // MARK: - Combine Publishers
     private let groupsSubject = CurrentValueSubject<[LocationGroup], Never>([])
@@ -187,7 +286,7 @@ class FriendLocationGrouper: ObservableObject {
             .store(in: &cancellables)
     }
     
-    // MARK: - Public Methods (Giữ nguyên interface)
+    // MARK: - Public Methods
     
     func updateZoomLevel(_ zoomLevel: Double) {
         currentZoomLevel = zoomLevel
@@ -196,11 +295,14 @@ class FriendLocationGrouper: ObservableObject {
         configuration = getConfigurationForZoomLevel(zoomLevel)
         
         print("DEBUG: FriendLocationGrouper zoom level updated to: \(zoomLevel)")
-        print("DEBUG: Using cluster radius: \(configuration.clusterRadiusMeters)m")
+        print("DEBUG: Using cluster radius: \(configuration.clusterRadiusMeters)m, expansion radius: \(configuration.expansionRadius)m")
     }
     
     func groupFriendLocations(_ friendLocations: [String: UserLocation]) -> [LocationGroup] {
         print("DEBUG: Grouping \(friendLocations.count) friend locations at zoom level \(currentZoomLevel)")
+        
+        // Store current friend locations for expansion calculations
+        currentFriendLocations = friendLocations
         
         let groups = performGrouping(friendLocations)
         
@@ -222,6 +324,10 @@ class FriendLocationGrouper: ObservableObject {
         } else {
             expandedClusterIds.insert(clusterId)
             print("DEBUG: Expanded cluster: \(clusterId)")
+            
+            // Regenerate relative positions for this cluster
+            regenerateClusterPositions(clusterId: clusterId)
+            
             return true
         }
     }
@@ -237,11 +343,33 @@ class FriendLocationGrouper: ObservableObject {
         
         expandedClusterIds.formUnion(clusterIds)
         print("DEBUG: Expanded all clusters: \(clusterIds.count)")
+        
+        // Regenerate positions for all clusters
+        for clusterId in clusterIds {
+            regenerateClusterPositions(clusterId: clusterId)
+        }
     }
     
     func collapseAllClusters() {
         expandedClusterIds.removeAll()
         print("DEBUG: Collapsed all clusters")
+    }
+    
+    private func regenerateClusterPositions(clusterId: String) {
+        // Find the cluster and regenerate its relative positions
+        if let index = currentGroups.firstIndex(where: {
+            $0.type == .cluster &&
+            $0.friendIds.sorted().joined(separator: "_") == clusterId
+        }) {
+            var group = currentGroups[index]
+            group.generateRelativePositions(
+                radius: configuration.expansionRadius,
+                friendLocations: currentFriendLocations
+            )
+            currentGroups[index] = group
+            
+            print("DEBUG: Regenerated positions for cluster \(clusterId) with \(group.friendIds.count) friends")
+        }
     }
     
     // MARK: - Configuration Management
@@ -258,21 +386,21 @@ class FriendLocationGrouper: ObservableObject {
                 clusterRadiusMeters: 5000.0,
                 minFriendsForCluster: 2,
                 maxFriendsPerCluster: 20,
-                expansionRadius: 50.0
+                expansionRadius: 60.0
             )
         case 8...10:
             return GroupingConfiguration(
                 clusterRadiusMeters: 2000.0,
                 minFriendsForCluster: 2,
                 maxFriendsPerCluster: 15,
-                expansionRadius: 40.0
+                expansionRadius: 50.0
             )
         case 10...12:
             return GroupingConfiguration(
                 clusterRadiusMeters: 1000.0,
                 minFriendsForCluster: 2,
                 maxFriendsPerCluster: 12,
-                expansionRadius: 35.0
+                expansionRadius: 45.0
             )
         case 12...14:
             return configuration // Use default
@@ -281,21 +409,21 @@ class FriendLocationGrouper: ObservableObject {
                 clusterRadiusMeters: 200.0,
                 minFriendsForCluster: 2,
                 maxFriendsPerCluster: 8,
-                expansionRadius: 25.0
+                expansionRadius: 30.0
             )
         case 16...18:
             return GroupingConfiguration(
                 clusterRadiusMeters: 100.0,
                 minFriendsForCluster: 3,
                 maxFriendsPerCluster: 6,
-                expansionRadius: 20.0
+                expansionRadius: 25.0
             )
         default:
             return GroupingConfiguration(
                 clusterRadiusMeters: 50.0,
                 minFriendsForCluster: 3,
                 maxFriendsPerCluster: 5,
-                expansionRadius: 15.0
+                expansionRadius: 20.0
             )
         }
     }
@@ -358,10 +486,16 @@ class FriendLocationGrouper: ObservableObject {
             
             // Generate relative positions for cluster members
             if groupType == .cluster {
-                group.generateRelativePositions(radius: configuration.expansionRadius)
+                group.generateRelativePositions(
+                    radius: configuration.expansionRadius,
+                    friendLocations: friendLocations
+                )
                 print("DEBUG: Created cluster with \(nearbyFriends.count) friends at \(centerCoordinate.latitude), \(centerCoordinate.longitude)")
             } else {
-                group.generateRelativePositions(radius: 0) // Single friend at center
+                group.generateRelativePositions(
+                    radius: 0,
+                    friendLocations: friendLocations
+                )
                 print("DEBUG: Created single friend group for \(friendId)")
             }
             
@@ -393,42 +527,6 @@ class FriendLocationGrouper: ObservableObject {
     func shouldAutoCollapse() -> Bool {
         return currentZoomLevel <= 12.0
     }
-    
-    // MARK: - Debugging Methods
-    
-    func debugPrintGroups(_ groups: [LocationGroup]) {
-        print("DEBUG: === Location Groups Debug ===")
-        for (index, group) in groups.enumerated() {
-            print("DEBUG: Group \(index + 1):")
-            print("  Type: \(group.type)")
-            print("  Count: \(group.count)")
-            print("  Center: \(group.centerCoordinate.latitude), \(group.centerCoordinate.longitude)")
-            print("  Friends: \(group.friendIds.joined(separator: ", "))")
-            
-            if group.type == .cluster {
-                let clusterId = group.friendIds.sorted().joined(separator: "_")
-                print("  Cluster ID: \(clusterId)")
-                print("  Expanded: \(isClusterExpanded(clusterId: clusterId))")
-                
-                if !group.relativePositions.isEmpty {
-                    print("  Relative Positions:")
-                    for (friendId, position) in group.relativePositions {
-                        print("    \(friendId): \(position.latitude), \(position.longitude)")
-                    }
-                }
-            }
-        }
-        print("DEBUG: === End Groups Debug ===")
-    }
-    
-    func printCurrentState() {
-        print("DEBUG: === FriendLocationGrouper State ===")
-        print("  Zoom Level: \(currentZoomLevel)")
-        print("  Cluster Radius: \(configuration.clusterRadiusMeters)m")
-        print("  Current Groups: \(currentGroups.count)")
-        print("  Expanded Clusters: \(expandedClusterIds.count)")
-        print("================================")
-    }
 }
 
 // MARK: - Extensions
@@ -438,31 +536,5 @@ extension CLLocationCoordinate2D {
         let location1 = CLLocation(latitude: self.latitude, longitude: self.longitude)
         let location2 = CLLocation(latitude: coordinate.latitude, longitude: coordinate.longitude)
         return location1.distance(from: location2)
-    }
-}
-
-// MARK: - Convenience Extensions for Combine
-
-extension FriendLocationGrouper {
-    
-    /// Publisher that emits when clustering should be updated based on zoom level changes
-    func clusteringUpdatePublisher(zoomLevelPublisher: AnyPublisher<Double, Never>) -> AnyPublisher<Void, Never> {
-        zoomLevelPublisher
-            .removeDuplicates { abs($0 - $1) < 0.5 } // Only update on significant zoom changes
-            .map { [weak self] zoomLevel in
-                self?.updateZoomLevel(zoomLevel)
-                return ()
-            }
-            .eraseToAnyPublisher()
-    }
-    
-    /// Publisher that emits cluster expansion recommendations based on zoom level
-    func autoExpansionPublisher(zoomLevelPublisher: AnyPublisher<Double, Never>) -> AnyPublisher<Bool, Never> {
-        zoomLevelPublisher
-            .map { zoomLevel in
-                return zoomLevel >= 16.0 // Auto-expand at high zoom levels
-            }
-            .removeDuplicates()
-            .eraseToAnyPublisher()
     }
 }

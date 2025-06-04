@@ -16,6 +16,7 @@ enum ClusterMarkerStyle {
     case detailed
     case modern
     case glassmorphism
+    case avatar
     
     var baseSize: CGFloat {
         switch self {
@@ -25,6 +26,8 @@ enum ClusterMarkerStyle {
             return 70
         case .glassmorphism:
             return 65
+        case .avatar:
+            return 75
         }
     }
 }
@@ -71,25 +74,27 @@ struct ClusterTheme {
         shadowRadius: 6.0
     )
     
-    static let minimal = ClusterTheme(
+    static let avatar = ClusterTheme(
         onlineColors: [
-            UIColor(red: 0.2, green: 0.8, blue: 0.4, alpha: 0.85)
+            UIColor(red: 0.2, green: 0.8, blue: 0.4, alpha: 0.95),
+            UIColor(red: 0.1, green: 0.7, blue: 0.3, alpha: 0.95)
         ],
         offlineColors: [
-            UIColor(red: 0.6, green: 0.6, blue: 0.6, alpha: 0.85)
+            UIColor(red: 0.6, green: 0.6, blue: 0.6, alpha: 0.9),
+            UIColor(red: 0.5, green: 0.5, blue: 0.5, alpha: 0.9)
         ],
-        borderColor: .clear,
+        borderColor: .white,
         textColor: .white,
-        shadowColor: .clear,
-        shadowOpacity: 0.0,
-        shadowRadius: 0.0
+        shadowColor: .black,
+        shadowOpacity: 0.25,
+        shadowRadius: 8.0
     )
 }
 
 // MARK: - Cluster Marker Cache
 class ClusterMarkerCache {
     private var cache: [String: UIImage] = [:]
-    private let maxCacheSize = 100
+    private let maxCacheSize = 150
     private var accessOrder: [String] = []
     
     func get(key: String) -> UIImage? {
@@ -137,7 +142,7 @@ class ClusterMarkerGenerator: ObservableObject {
     
     // MARK: - Published Properties
     @Published var currentTheme: ClusterTheme = .default
-    @Published var currentStyle: ClusterMarkerStyle = .standard
+    @Published var currentStyle: ClusterMarkerStyle = .avatar
     @Published private(set) var cacheHitRate: Double = 0.0
     
     // MARK: - Private Properties
@@ -162,7 +167,6 @@ class ClusterMarkerGenerator: ObservableObject {
             self.averageGenerationTime = 0.0
         }
         
-        // Add this initializer to fix the compilation error
         init(cacheSize: Int, hitRate: Double, totalGenerations: Int, averageGenerationTime: Double) {
             self.cacheSize = cacheSize
             self.hitRate = hitRate
@@ -194,7 +198,7 @@ class ClusterMarkerGenerator: ObservableObject {
             .store(in: &cancellables)
     }
     
-    // MARK: - Public Methods (Giữ nguyên interface)
+    // MARK: - Public Methods
     
     static func generateClusterMarker(
         count: Int,
@@ -205,8 +209,22 @@ class ClusterMarkerGenerator: ObservableObject {
             count: count,
             friendInitials: friendInitials,
             isOnline: isOnline,
-            style: .standard,
-            theme: .default
+            style: .avatar,
+            theme: .avatar
+        )
+    }
+    
+    static func generateAvatarClusterMarker(
+        count: Int,
+        friendInitials: [String] = [],
+        isOnline: Bool = false,
+        primaryAvatarImage: UIImage? = nil
+    ) -> UIImage {
+        return ClusterMarkerGenerator.shared.generateAvatarStyleMarker(
+            count: count,
+            friendInitials: friendInitials,
+            isOnline: isOnline,
+            primaryAvatarImage: primaryAvatarImage
         )
     }
     
@@ -262,6 +280,48 @@ class ClusterMarkerGenerator: ObservableObject {
         return image
     }
     
+    func generateAvatarStyleMarker(
+        count: Int,
+        friendInitials: [String] = [],
+        isOnline: Bool = false,
+        primaryAvatarImage: UIImage? = nil
+    ) -> UIImage {
+        let size: CGFloat = 75
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: size, height: size))
+        
+        return renderer.image { ctx in
+            let rectangle = CGRect(x: 0, y: 0, width: size, height: size)
+            
+            // Draw shadow
+            ctx.cgContext.setShadow(
+                offset: CGSize(width: 0, height: 3),
+                blur: 8.0,
+                color: UIColor.black.withAlphaComponent(0.25).cgColor
+            )
+            
+            if count <= 4 && !friendInitials.isEmpty {
+                // Draw multiple small avatar circles for small clusters
+                drawMultipleAvatarCircles(
+                    ctx: ctx,
+                    count: count,
+                    friendInitials: friendInitials,
+                    isOnline: isOnline,
+                    size: size,
+                    primaryImage: primaryAvatarImage
+                )
+            } else {
+                // Draw single large circle with count for larger clusters
+                drawLargeClusterCircle(
+                    ctx: ctx,
+                    count: count,
+                    isOnline: isOnline,
+                    size: size,
+                    primaryImage: primaryAvatarImage
+                )
+            }
+        }
+    }
+    
     // MARK: - Private Generation Methods
     
     private func generateMarkerImage(
@@ -276,6 +336,8 @@ class ClusterMarkerGenerator: ObservableObject {
         
         return renderer.image { ctx in
             switch style {
+            case .avatar:
+                drawAvatarStyleMarker(ctx: ctx, count: count, friendInitials: friendInitials, isOnline: isOnline, theme: theme, size: size)
             case .standard:
                 drawStandardMarker(ctx: ctx, count: count, friendInitials: friendInitials, isOnline: isOnline, theme: theme, size: size)
             case .minimal:
@@ -289,6 +351,484 @@ class ClusterMarkerGenerator: ObservableObject {
             }
         }
     }
+    
+    private func drawAvatarStyleMarker(
+        ctx: UIGraphicsImageRendererContext,
+        count: Int,
+        friendInitials: [String],
+        isOnline: Bool,
+        theme: ClusterTheme,
+        size: CGFloat
+    ) {
+        let rectangle = CGRect(x: 0, y: 0, width: size, height: size)
+        
+        // Draw shadow
+        ctx.cgContext.setShadow(
+            offset: CGSize(width: 0, height: 3),
+            blur: theme.shadowRadius,
+            color: theme.shadowColor.withAlphaComponent(CGFloat(theme.shadowOpacity)).cgColor
+        )
+        
+        if count <= 3 && !friendInitials.isEmpty {
+            // Draw overlapping avatar circles for small clusters
+            drawOverlappingAvatarCircles(
+                ctx: ctx,
+                count: count,
+                friendInitials: friendInitials,
+                isOnline: isOnline,
+                size: size,
+                theme: theme
+            )
+        } else {
+            // Draw single avatar-style circle with count for larger clusters
+            drawSingleAvatarCircle(
+                ctx: ctx,
+                count: count,
+                isOnline: isOnline,
+                size: size,
+                theme: theme
+            )
+        }
+    }
+    
+    private func drawOverlappingAvatarCircles(
+        ctx: UIGraphicsImageRendererContext,
+        count: Int,
+        friendInitials: [String],
+        isOnline: Bool,
+        size: CGFloat,
+        theme: ClusterTheme
+    ) {
+        let circleSize: CGFloat = size * 0.6
+        let positions = calculateOverlapPositions(count: count, containerSize: size, circleSize: circleSize)
+        
+        for (index, initial) in friendInitials.prefix(count).enumerated() {
+            guard index < positions.count else { break }
+            
+            let position = positions[index]
+            let circleRect = CGRect(
+                x: position.x - circleSize/2,
+                y: position.y - circleSize/2,
+                width: circleSize,
+                height: circleSize
+            )
+            
+            // Draw individual avatar circle
+            drawSingleAvatarAtPosition(
+                ctx: ctx,
+                rect: circleRect,
+                initial: String(initial.prefix(1)),
+                isOnline: isOnline,
+                theme: theme,
+                zIndex: index
+            )
+        }
+        
+        // Add cluster indicator
+        if count > 1 {
+            drawClusterIndicator(ctx: ctx, count: count, size: size, isOnline: isOnline)
+        }
+    }
+    
+    private func drawSingleAvatarAtPosition(
+        ctx: UIGraphicsImageRendererContext,
+        rect: CGRect,
+        initial: String,
+        isOnline: Bool,
+        theme: ClusterTheme,
+        zIndex: Int
+    ) {
+        // Apply clipping for circle
+        let path = UIBezierPath(ovalIn: rect)
+        ctx.cgContext.addPath(path.cgPath)
+        ctx.cgContext.clip()
+        
+        // Draw gradient background
+        let colors = isOnline ? theme.onlineColors : theme.offlineColors
+        let gradient = CGGradient(
+            colorsSpace: CGColorSpaceCreateDeviceRGB(),
+            colors: colors.map { $0.cgColor } as CFArray,
+            locations: colors.count == 1 ? [0.0] : [0.0, 1.0]
+        )!
+        
+        ctx.cgContext.drawLinearGradient(
+            gradient,
+            start: rect.origin,
+            end: CGPoint(x: rect.maxX, y: rect.maxY),
+            options: []
+        )
+        
+        // Reset clipping
+        ctx.cgContext.resetClip()
+        
+        // Draw border with depth effect
+        let borderWidth: CGFloat = 3.0
+        let borderRect = rect.insetBy(dx: borderWidth/2, dy: borderWidth/2)
+        
+        // Outer border (white)
+        ctx.cgContext.setStrokeColor(UIColor.white.cgColor)
+        ctx.cgContext.setLineWidth(borderWidth)
+        ctx.cgContext.strokeEllipse(in: borderRect)
+        
+        // Inner border (status color)
+        let innerBorderRect = rect.insetBy(dx: borderWidth + 1, dy: borderWidth + 1)
+        let statusColor = isOnline ? UIColor.systemGreen : UIColor.systemGray
+        ctx.cgContext.setStrokeColor(statusColor.withAlphaComponent(0.7).cgColor)
+        ctx.cgContext.setLineWidth(1.5)
+        ctx.cgContext.strokeEllipse(in: innerBorderRect)
+        
+        // Draw initial
+        let fontSize = rect.width * 0.35
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.alignment = .center
+        
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: UIFont.systemFont(ofSize: fontSize, weight: .bold),
+            .foregroundColor: theme.textColor,
+            .paragraphStyle: paragraphStyle
+        ]
+        
+        let attributedString = NSAttributedString(string: initial, attributes: attributes)
+        let textRect = CGRect(
+            x: rect.minX,
+            y: rect.midY - fontSize/2,
+            width: rect.width,
+            height: fontSize
+        )
+        
+        attributedString.draw(in: textRect)
+    }
+    
+    private func drawSingleAvatarCircle(
+        ctx: UIGraphicsImageRendererContext,
+        count: Int,
+        isOnline: Bool,
+        size: CGFloat,
+        theme: ClusterTheme
+    ) {
+        let rectangle = CGRect(x: 0, y: 0, width: size, height: size)
+        
+        // Apply clipping for circle
+        let path = UIBezierPath(ovalIn: rectangle)
+        ctx.cgContext.addPath(path.cgPath)
+        ctx.cgContext.clip()
+        
+        // Draw gradient background
+        let colors = isOnline ? theme.onlineColors : theme.offlineColors
+        let gradient = CGGradient(
+            colorsSpace: CGColorSpaceCreateDeviceRGB(),
+            colors: colors.map { $0.cgColor } as CFArray,
+            locations: colors.count == 1 ? [0.0] : [0.0, 1.0]
+        )!
+        
+        ctx.cgContext.drawRadialGradient(
+            gradient,
+            startCenter: CGPoint(x: size/2, y: size/2),
+            startRadius: 0,
+            endCenter: CGPoint(x: size/2, y: size/2),
+            endRadius: size/2,
+            options: []
+        )
+        
+        // Reset clipping
+        ctx.cgContext.resetClip()
+        
+        // Draw borders
+        let borderWidth: CGFloat = 4.0
+        
+        // Outer border (white)
+        ctx.cgContext.setStrokeColor(UIColor.white.cgColor)
+        ctx.cgContext.setLineWidth(borderWidth)
+        ctx.cgContext.strokeEllipse(in: rectangle.insetBy(dx: borderWidth/2, dy: borderWidth/2))
+        
+        // Status border
+        let statusColor = isOnline ? UIColor.systemGreen : UIColor.systemGray
+        ctx.cgContext.setStrokeColor(statusColor.cgColor)
+        ctx.cgContext.setLineWidth(2.0)
+        ctx.cgContext.strokeEllipse(in: rectangle.insetBy(dx: borderWidth + 1, dy: borderWidth + 1))
+        
+        // Draw count
+        drawCountText(ctx: ctx, count: count, size: size, textColor: theme.textColor)
+        
+        // Add expansion indicator
+        drawExpansionIndicator(ctx: ctx, size: size, isOnline: isOnline)
+    }
+    
+    private func drawMultipleAvatarCircles(
+        ctx: UIGraphicsImageRendererContext,
+        count: Int,
+        friendInitials: [String],
+        isOnline: Bool,
+        size: CGFloat,
+        primaryImage: UIImage?
+    ) {
+        let circleSize: CGFloat = size * 0.5
+        let positions = calculateStackedPositions(count: count, containerSize: size, circleSize: circleSize)
+        
+        for (index, initial) in friendInitials.prefix(count).enumerated() {
+            guard index < positions.count else { break }
+            
+            let position = positions[index]
+            let circleRect = CGRect(
+                x: position.x - circleSize/2,
+                y: position.y - circleSize/2,
+                width: circleSize,
+                height: circleSize
+            )
+            
+            // Draw circle with depth
+            drawAvatarCircleWithDepth(
+                ctx: ctx,
+                rect: circleRect,
+                initial: String(initial.prefix(1)),
+                isOnline: isOnline,
+                index: index,
+                avatarImage: index == 0 ? primaryImage : nil
+            )
+        }
+    }
+    
+    private func drawLargeClusterCircle(
+        ctx: UIGraphicsImageRendererContext,
+        count: Int,
+        isOnline: Bool,
+        size: CGFloat,
+        primaryImage: UIImage?
+    ) {
+        let rectangle = CGRect(x: 0, y: 0, width: size, height: size)
+        
+        // Draw main circle with avatar or gradient
+        if let avatarImage = primaryImage {
+            // Clip to circle
+            let path = UIBezierPath(ovalIn: rectangle)
+            ctx.cgContext.addPath(path.cgPath)
+            ctx.cgContext.clip()
+            
+            // Draw avatar
+            avatarImage.draw(in: rectangle)
+            
+            // Draw overlay
+            let overlayColor = isOnline ?
+                UIColor.systemGreen.withAlphaComponent(0.3) :
+                UIColor.systemGray.withAlphaComponent(0.3)
+            ctx.cgContext.setFillColor(overlayColor.cgColor)
+            ctx.cgContext.fillEllipse(in: rectangle)
+            
+            ctx.cgContext.resetClip()
+        } else {
+            // Draw gradient background
+            let colors = isOnline ? [
+                UIColor.systemGreen.cgColor,
+                UIColor.systemGreen.withAlphaComponent(0.8).cgColor
+            ] : [
+                UIColor.systemGray.cgColor,
+                UIColor.systemGray.withAlphaComponent(0.8).cgColor
+            ]
+            
+            let gradient = CGGradient(
+                colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                colors: colors as CFArray,
+                locations: [0.0, 1.0]
+            )!
+            
+            let path = UIBezierPath(ovalIn: rectangle)
+            ctx.cgContext.addPath(path.cgPath)
+            ctx.cgContext.clip()
+            
+            ctx.cgContext.drawRadialGradient(
+                gradient,
+                startCenter: CGPoint(x: size/2, y: size/2),
+                startRadius: 0,
+                endCenter: CGPoint(x: size/2, y: size/2),
+                endRadius: size/2,
+                options: []
+            )
+            
+            ctx.cgContext.resetClip()
+        }
+        
+        // Draw borders
+        ctx.cgContext.setStrokeColor(UIColor.white.cgColor)
+        ctx.cgContext.setLineWidth(4.0)
+        ctx.cgContext.strokeEllipse(in: rectangle.insetBy(dx: 2, dy: 2))
+        
+        // Draw count badge
+        drawCountBadge(ctx: ctx, count: count, size: size)
+    }
+    
+    private func drawAvatarCircleWithDepth(
+        ctx: UIGraphicsImageRendererContext,
+        rect: CGRect,
+        initial: String,
+        isOnline: Bool,
+        index: Int,
+        avatarImage: UIImage?
+    ) {
+        // Draw shadow for depth
+        ctx.cgContext.setShadow(
+            offset: CGSize(width: 1, height: 2),
+            blur: 3.0,
+            color: UIColor.black.withAlphaComponent(0.3).cgColor
+        )
+        
+        // Draw circle
+        if let image = avatarImage {
+            let path = UIBezierPath(ovalIn: rect)
+            ctx.cgContext.addPath(path.cgPath)
+            ctx.cgContext.clip()
+            
+            image.draw(in: rect)
+            ctx.cgContext.resetClip()
+        } else {
+            // Gradient background
+            let colors = isOnline ? [
+                UIColor.systemBlue.cgColor,
+                UIColor.systemBlue.withAlphaComponent(0.8).cgColor
+            ] : [
+                UIColor.systemGray.cgColor,
+                UIColor.systemGray.withAlphaComponent(0.8).cgColor
+            ]
+            
+            let gradient = CGGradient(
+                colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                colors: colors as CFArray,
+                locations: [0.0, 1.0]
+            )!
+            
+            ctx.cgContext.fillEllipse(in: rect)
+        }
+        
+        ctx.cgContext.setShadow(offset: .zero, blur: 0, color: nil)
+        
+        // Draw border
+        ctx.cgContext.setStrokeColor(UIColor.white.cgColor)
+        ctx.cgContext.setLineWidth(2.0)
+        ctx.cgContext.strokeEllipse(in: rect.insetBy(dx: 1, dy: 1))
+        
+        // Draw initial if no image
+        if avatarImage == nil {
+            let fontSize = rect.width * 0.4
+            let paragraphStyle = NSMutableParagraphStyle()
+            paragraphStyle.alignment = .center
+            
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: UIFont.systemFont(ofSize: fontSize, weight: .bold),
+                .foregroundColor: UIColor.white,
+                .paragraphStyle: paragraphStyle
+            ]
+            
+            let attributedString = NSAttributedString(string: initial, attributes: attributes)
+            let textRect = CGRect(
+                x: rect.minX,
+                y: rect.midY - fontSize/2,
+                width: rect.width,
+                height: fontSize
+            )
+            
+            attributedString.draw(in: textRect)
+        }
+    }
+    
+    private func drawCountBadge(ctx: UIGraphicsImageRendererContext, count: Int, size: CGFloat) {
+        let badgeSize: CGFloat = size * 0.35
+        let badgeRect = CGRect(
+            x: size - badgeSize - 5,
+            y: 5,
+            width: badgeSize,
+            height: badgeSize
+        )
+        
+        // Draw badge background
+        ctx.cgContext.setFillColor(UIColor.red.cgColor)
+        ctx.cgContext.fillEllipse(in: badgeRect)
+        
+        // Draw badge border
+        ctx.cgContext.setStrokeColor(UIColor.white.cgColor)
+        ctx.cgContext.setLineWidth(2.0)
+        ctx.cgContext.strokeEllipse(in: badgeRect.insetBy(dx: 1, dy: 1))
+        
+        // Draw count text
+        let countText = count > 99 ? "99+" : "\(count)"
+        let fontSize = badgeSize * 0.5
+        
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.alignment = .center
+        
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: UIFont.systemFont(ofSize: fontSize, weight: .bold),
+            .foregroundColor: UIColor.white,
+            .paragraphStyle: paragraphStyle
+        ]
+        
+        let attributedString = NSAttributedString(string: countText, attributes: attributes)
+        let textRect = CGRect(
+            x: badgeRect.minX,
+            y: badgeRect.midY - fontSize/2,
+            width: badgeRect.width,
+            height: fontSize
+        )
+        
+        attributedString.draw(in: textRect)
+    }
+    
+    // MARK: - Position Calculation Helpers
+    
+    private func calculateOverlapPositions(count: Int, containerSize: CGFloat, circleSize: CGFloat) -> [CGPoint] {
+        let center = CGPoint(x: containerSize/2, y: containerSize/2)
+        let overlap: CGFloat = circleSize * 0.3 // 30% overlap
+        
+        switch count {
+        case 1:
+            return [center]
+        case 2:
+            let offset = (circleSize - overlap) / 2
+            return [
+                CGPoint(x: center.x - offset, y: center.y),
+                CGPoint(x: center.x + offset, y: center.y)
+            ]
+        case 3:
+            let radius = (circleSize - overlap) / 2
+            return [
+                CGPoint(x: center.x, y: center.y - radius),
+                CGPoint(x: center.x - radius * 0.866, y: center.y + radius * 0.5),
+                CGPoint(x: center.x + radius * 0.866, y: center.y + radius * 0.5)
+            ]
+        default:
+            return [center]
+        }
+    }
+    
+    private func calculateStackedPositions(count: Int, containerSize: CGFloat, circleSize: CGFloat) -> [CGPoint] {
+        let center = CGPoint(x: containerSize/2, y: containerSize/2)
+        let stackOffset: CGFloat = circleSize * 0.25
+        
+        switch count {
+        case 1:
+            return [center]
+        case 2:
+            return [
+                CGPoint(x: center.x - stackOffset, y: center.y - stackOffset),
+                CGPoint(x: center.x + stackOffset, y: center.y + stackOffset)
+            ]
+        case 3:
+            return [
+                CGPoint(x: center.x - stackOffset, y: center.y - stackOffset),
+                CGPoint(x: center.x + stackOffset, y: center.y - stackOffset),
+                CGPoint(x: center.x, y: center.y + stackOffset)
+            ]
+        case 4:
+            return [
+                CGPoint(x: center.x - stackOffset, y: center.y - stackOffset),
+                CGPoint(x: center.x + stackOffset, y: center.y - stackOffset),
+                CGPoint(x: center.x - stackOffset, y: center.y + stackOffset),
+                CGPoint(x: center.x + stackOffset, y: center.y + stackOffset)
+            ]
+        default:
+            return [center]
+        }
+    }
+    
+    // MARK: - Legacy Methods (for compatibility)
     
     private func drawStandardMarker(
         ctx: UIGraphicsImageRendererContext,
@@ -611,6 +1151,49 @@ class ClusterMarkerGenerator: ObservableObject {
         ctx.cgContext.strokePath()
     }
     
+    private func drawClusterIndicator(ctx: UIGraphicsImageRendererContext, count: Int, size: CGFloat, isOnline: Bool) {
+        // Small indicator showing this is a cluster
+        let indicatorSize: CGFloat = size * 0.25
+        let indicatorRect = CGRect(
+            x: size - indicatorSize - 3,
+            y: 3,
+            width: indicatorSize,
+            height: indicatorSize
+        )
+        
+        // Background
+        ctx.cgContext.setFillColor(UIColor.black.withAlphaComponent(0.7).cgColor)
+        ctx.cgContext.fillEllipse(in: indicatorRect)
+        
+        // Border
+        ctx.cgContext.setStrokeColor(UIColor.white.cgColor)
+        ctx.cgContext.setLineWidth(1.0)
+        ctx.cgContext.strokeEllipse(in: indicatorRect.insetBy(dx: 0.5, dy: 0.5))
+        
+        // Count text
+        let fontSize = indicatorSize * 0.6
+        let countText = count > 9 ? "9+" : "\(count)"
+        
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.alignment = .center
+        
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: UIFont.systemFont(ofSize: fontSize, weight: .bold),
+            .foregroundColor: UIColor.white,
+            .paragraphStyle: paragraphStyle
+        ]
+        
+        let attributedString = NSAttributedString(string: countText, attributes: attributes)
+        let textRect = CGRect(
+            x: indicatorRect.minX,
+            y: indicatorRect.midY - fontSize/2,
+            width: indicatorRect.width,
+            height: fontSize
+        )
+        
+        attributedString.draw(in: textRect)
+    }
+    
     // MARK: - Cache Management
     
     private func generateCacheKey(
@@ -671,7 +1254,7 @@ class ClusterMarkerGenerator: ObservableObject {
     }
 }
 
-// MARK: - Static Convenience Methods (Giữ nguyên để tương thích)
+// MARK: - Static Convenience Methods
 
 extension ClusterMarkerGenerator {
     
