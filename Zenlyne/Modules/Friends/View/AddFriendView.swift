@@ -40,17 +40,6 @@ struct AddFriendView: View {
             }
             .toolbarBackground(Color.black, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
-            .alert(isPresented: $showAlert) {
-                Alert(
-                    title: Text(alertTitle),
-                    message: Text(alertMessage),
-                    dismissButton: .default(Text("OK")) {
-                        if alertTitle == "Thành công" {
-                            dismiss()
-                        }
-                    }
-                )
-            }
             .onTapGesture {
                 hideKeyboard()
             }

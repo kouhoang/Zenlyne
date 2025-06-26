@@ -1,5 +1,5 @@
 //
-//  UpdatedFriendInfoPanel.swift
+//  FriendInfoPanel.swift
 //  Zenlyne
 //
 //  Created by admin on 19/3/25.
@@ -9,7 +9,7 @@ import SwiftUI
 import CoreLocation
 import FirebaseAuth
 
-struct UpdatedFriendInfoPanel: View {
+struct FriendInfoPanel: View {
     let friend: User
     let location: UserLocation?
     let onClose: () -> Void
@@ -418,7 +418,7 @@ struct ChatViewContainer: View {
 // MARK: - Preview
 
 #Preview {
-    UpdatedFriendInfoPanel(
+    FriendInfoPanel(
         friend: User(id: "preview_id", fullName: "Nguyễn Văn A", email: "nguyenvana@example.com"),
         location: UserLocation(latitude: 21.0285, longitude: 105.8542, timestamp: Date().timeIntervalSince1970),
         onClose: {}

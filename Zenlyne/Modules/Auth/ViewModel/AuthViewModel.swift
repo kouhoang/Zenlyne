@@ -15,40 +15,6 @@ protocol AuthentiicationFormProtocol {
     var formIsValid: Bool { get }
 }
 
-// MARK: - Auth States
-enum AuthState {
-    case idle
-    case loading
-    case authenticated(User)
-    case unauthenticated
-    case error(String)
-}
-
-enum AuthError: Error {
-    case userNotFound
-    case emailInUse
-    case weakPassword
-    case invalidEmail
-    case wrongPassword
-    case unknownError
-    
-    var localizedDescription: String {
-        switch self {
-        case .userNotFound:
-            return "User not found"
-        case .emailInUse:
-            return "Email already in use"
-        case .weakPassword:
-            return "Password too weak"
-        case .invalidEmail:
-            return "Invalid email"
-        case .wrongPassword:
-            return "Wrong password"
-        case .unknownError:
-            return "Unknown error occurred"
-        }
-    }
-}
 
 @MainActor
 class AuthViewModel: ObservableObject {

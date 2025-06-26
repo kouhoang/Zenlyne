@@ -5,14 +5,6 @@
 //  Created by admin on 2/6/25.
 //
 
-
-//
-//  MessageRow.swift
-//  Zenlyne
-//
-//  Created by admin on 2/6/25.
-//
-
 import SwiftUI
 
 struct MessageRow: View {

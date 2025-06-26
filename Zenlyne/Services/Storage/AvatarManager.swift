@@ -134,7 +134,7 @@ class AvatarManager: ObservableObject {
     }
     
     func stopObservingUserAvatar(userId: String) {
-        if let listener = avatarObservers[userId] as? Any {
+        if avatarObservers[userId] != nil {
             // Remove the listener (implementation depends on Firebase SDK)
             avatarObservers.removeValue(forKey: userId)
         }

@@ -21,7 +21,7 @@ struct FriendsListView: View {
     
     var body: some View {
         VStack(spacing: 0) {
-            // Header với các nút chức năng
+            // Header 
             HStack {
                 Text("Bạn bè")
                     .font(.title)
@@ -192,7 +192,7 @@ struct FriendsListView: View {
                 } else {
                     List {
                         ForEach(friendViewModel.filteredFriends) { friend in
-                            EnhancedFriendRow(
+                            FriendRow(
                                 friend: friend,
                                 hasLocation: locationViewModel.friendLocations[friend.id] != nil,
                                 isOnline: friend.isOnline,
@@ -246,7 +246,7 @@ struct FriendsListView: View {
         }
     }
     
-    // MARK: - Private Methods (giữ nguyên logic để tương thích)
+    // MARK: - Private Methods
     
     private func setupCurrentUser() {
         if let currentUser = Auth.auth().currentUser {

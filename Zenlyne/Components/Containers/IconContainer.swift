@@ -8,26 +8,6 @@
 import SwiftUI
 import UIKit
 
-// MARK: - Icon Container Component
-//struct IconContainer: View {
-//    let systemName: String
-//    
-//    var body: some View {
-//        ZStack {
-//            Image("pink-yellow-plain")
-//                .resizable()
-//                .scaledToFill()
-//                .frame(width: 32, height: 32)
-//                .clipShape(RoundedRectangle(cornerRadius: 8))
-//            
-//            Image(systemName: systemName)
-//                .foregroundColor(.black)
-//                .font(.system(size: 16, weight: .medium))
-//        }
-//        .frame(width: 32, height: 32)
-//    }
-//}
-
 struct IconContainer: View {
     let systemName: String
     let size: CGFloat

@@ -6,7 +6,7 @@
 //
 
 import SwiftUI
-import MapboxMaps
+@preconcurrency import MapboxMaps
 import CoreLocation
 import FirebaseAuth
 import FirebaseFirestoreInternal
@@ -42,8 +42,8 @@ struct MapViewRepresentable: UIViewRepresentable {
         }
         
         mapView.mapboxMap.onEvery(event: .cameraChanged) { event in
-            let newZoom = mapView.cameraState.zoom
-            let newCenter = mapView.cameraState.center
+            let newZoom = mapView.mapboxMap.cameraState.zoom
+            let newCenter = mapView.mapboxMap.cameraState.center
             let isUserInitiated = context.coordinator.isUserInitiatedCameraChange()
             
             Task { @MainActor in

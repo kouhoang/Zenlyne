@@ -15,6 +15,7 @@ struct FriendRequestsView: View {
     @State private var alertMessage = ""
     @State private var processingRequestId: String? = nil
     @State private var selectedRequest: FriendRequest? = nil
+    @State private var showAddFriendSheet = false
     @State private var showingActionSheet = false
     @EnvironmentObject var authViewModel: AuthViewModel
     @Environment(\.dismiss) private var dismiss
@@ -50,11 +51,20 @@ struct FriendRequestsView: View {
                 }
                 
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Đóng") {
-                        dismiss()
+                    HStack(spacing: 16) {
+                        Button(action: {
+                            showAddFriendSheet = true
+                        }) {
+                            Image(systemName: "person.crop.circle.badge.plus")
+                                .foregroundColor(.blue)
+                        }
+                        
+                        Button("Đóng") {
+                            dismiss()
+                        }
+                        .foregroundColor(.white)
+                        .disabled(processingRequestId != nil)
                     }
-                    .foregroundColor(.white)
-                    .disabled(processingRequestId != nil)
                 }
             }
             .toolbarBackground(Color.black, for: .navigationBar)
@@ -191,7 +201,7 @@ struct FriendRequestsView: View {
             
             VStack(spacing: 12) {
                 Button(action: {
-                    dismiss()
+                    showAddFriendSheet = true
                 }) {
                     HStack {
                         Image(systemName: "person.crop.circle.badge.plus")

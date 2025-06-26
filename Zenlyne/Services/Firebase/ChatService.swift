@@ -455,22 +455,3 @@ class FirebaseChatService: ChatServiceProtocol {
         removeChatListeners()
     }
 }
-
-// MARK: - Error Types
-
-enum ChatError: Error, LocalizedError {
-    case notLoggedIn
-    case invalidData
-    case networkError
-    
-    var errorDescription: String? {
-        switch self {
-        case .notLoggedIn:
-            return "Người dùng chưa đăng nhập"
-        case .invalidData:
-            return "Dữ liệu không hợp lệ"
-        case .networkError:
-            return "Lỗi kết nối mạng"
-        }
-    }
-}

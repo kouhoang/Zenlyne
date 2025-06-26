@@ -10,56 +10,6 @@ import CoreLocation
 import Combine
 import SwiftUICore
 
-// MARK: - Location Authorization Status
-enum LocationAuthorizationStatus {
-    case notDetermined
-    case restricted
-    case denied
-    case authorizedWhenInUse
-    case authorizedAlways
-    
-    init(from clStatus: CLAuthorizationStatus) {
-        switch clStatus {
-        case .notDetermined:
-            self = .notDetermined
-        case .restricted:
-            self = .restricted
-        case .denied:
-            self = .denied
-        case .authorizedWhenInUse:
-            self = .authorizedWhenInUse
-        case .authorizedAlways:
-            self = .authorizedAlways
-        @unknown default:
-            self = .notDetermined
-        }
-    }
-}
-
-// MARK: - Location Error
-enum LocationError: Error, LocalizedError {
-    case permissionDenied
-    case locationUnavailable
-    case timeout
-    case accuracyTooLow
-    case unknown(Error)
-    
-    var errorDescription: String? {
-        switch self {
-        case .permissionDenied:
-            return "Location permission denied"
-        case .locationUnavailable:
-            return "Location services unavailable"
-        case .timeout:
-            return "Location request timed out"
-        case .accuracyTooLow:
-            return "Location accuracy too low"
-        case .unknown(let error):
-            return "Unknown location error: \(error.localizedDescription)"
-        }
-    }
-}
-
 // MARK: - Protocol (Giữ nguyên để tương thích)
 protocol LocationServiceProtocol {
     var delegate: LocationServiceDelegate? { get set }
@@ -72,6 +22,7 @@ protocol LocationServiceProtocol {
     var locationPublisher: AnyPublisher<CLLocation, LocationError> { get }
     var authorizationStatusPublisher: AnyPublisher<LocationAuthorizationStatus, Never> { get }
     var isUpdatingLocationPublisher: AnyPublisher<Bool, Never> { get }
+    var isLocationServicesEnabledPublisher: AnyPublisher<Bool, Never> { get } // ✅ Thêm mới
 }
 
 protocol LocationServiceDelegate: AnyObject {
@@ -90,12 +41,14 @@ class LocationService: NSObject, LocationServiceProtocol, CLLocationManagerDeleg
     private let locationSubject = PassthroughSubject<CLLocation, LocationError>()
     private let authorizationSubject = CurrentValueSubject<LocationAuthorizationStatus, Never>(.notDetermined)
     private let isUpdatingSubject = CurrentValueSubject<Bool, Never>(false)
+    private let isLocationServicesEnabledSubject = CurrentValueSubject<Bool, Never>(false) // ✅ Thêm mới
     
     // Internal state
     private var isRequestingLocation = false
     private var lastKnownLocation: CLLocation?
     private var locationTimeout: Timer?
     private let timeoutInterval: TimeInterval = 15.0
+    private var pendingLocationRequest = false
     
     // MARK: - Combine Publishers
     var locationPublisher: AnyPublisher<CLLocation, LocationError> {
@@ -120,13 +73,24 @@ class LocationService: NSObject, LocationServiceProtocol, CLLocationManagerDeleg
             .eraseToAnyPublisher()
     }
     
+    // Add publisher to check location services status
+    var isLocationServicesEnabledPublisher: AnyPublisher<Bool, Never> {
+        isLocationServicesEnabledSubject
+            .removeDuplicates()
+            .eraseToAnyPublisher()
+    }
+    
     // MARK: - Initialization
     override init() {
         super.init()
         setupLocationManager()
         
         // Set initial authorization status
-        authorizationSubject.send(LocationAuthorizationStatus(from: locationManager.authorizationStatus))
+        let initialStatus = locationManager.authorizationStatus
+        authorizationSubject.send(LocationAuthorizationStatus(from: initialStatus))
+        
+        // Check initial location services status safely
+        updateLocationServicesStatus(for: initialStatus)
     }
     
     // MARK: - Setup
@@ -137,13 +101,32 @@ class LocationService: NSObject, LocationServiceProtocol, CLLocationManagerDeleg
         
         // Configure for background updates if permission allows
         if Bundle.main.object(forInfoDictionaryKey: "NSLocationAlwaysAndWhenInUseUsageDescription") != nil {
-            locationManager.allowsBackgroundLocationUpdates = true
+            locationManager.allowsBackgroundLocationUpdates = false // ✅ Set to false initially
         }
         
         locationManager.pausesLocationUpdatesAutomatically = false
     }
     
-    // MARK: - Public Methods (Giữ nguyên interface)
+    // Add method yo update location services status based on authorization
+    private func updateLocationServicesStatus(for authStatus: CLAuthorizationStatus) {
+        let isEnabled: Bool
+        
+        switch authStatus {
+        case .authorizedWhenInUse, .authorizedAlways:
+            // Only check when authorized
+            isEnabled = true
+        case .denied, .restricted:
+            isEnabled = false
+        case .notDetermined:
+            isEnabled = false
+        @unknown default:
+            isEnabled = false
+        }
+        
+        isLocationServicesEnabledSubject.send(isEnabled)
+    }
+    
+    // MARK: - Public Methods (Refactored)
     
     func requestLocationPermission() {
         locationManager.requestWhenInUseAuthorization()
@@ -154,33 +137,42 @@ class LocationService: NSObject, LocationServiceProtocol, CLLocationManagerDeleg
     }
     
     func startUpdatingLocation() {
-        guard CLLocationManager.locationServicesEnabled() else {
-            print("DEBUG: Location services not enabled")
-            locationSubject.send(completion: .failure(.locationUnavailable))
-            return
-        }
         
         let status = locationManager.authorizationStatus
-        guard status == .authorizedWhenInUse || status == .authorizedAlways else {
-            print("DEBUG: Location not authorized")
+        
+        // Check authorization status thay vì direct locationServicesEnabled
+        switch status {
+        case .authorizedWhenInUse, .authorizedAlways:
+            print("DEBUG: Starting location updates")
+            isRequestingLocation = true
+            isUpdatingSubject.send(true)
+            
+            locationManager.startUpdatingLocation()
+            setupLocationTimeout()
+            
+        case .denied, .restricted:
+            print("DEBUG: Location permission denied")
+            locationSubject.send(completion: .failure(.permissionDenied))
+            return
+            
+        case .notDetermined:
+            print("DEBUG: Location permission not determined, requesting...")
+            pendingLocationRequest = true
+            requestLocationPermission()
+            return
+            
+        @unknown default:
+            print("DEBUG: Unknown authorization status")
             locationSubject.send(completion: .failure(.permissionDenied))
             return
         }
-        
-        print("DEBUG: Starting location updates")
-        isRequestingLocation = true
-        isUpdatingSubject.send(true)
-        
-        locationManager.startUpdatingLocation()
-        
-        // Set timeout for location updates
-        setupLocationTimeout()
     }
     
     func stopUpdatingLocation() {
         print("DEBUG: Stopping location updates")
         locationManager.stopUpdatingLocation()
         isRequestingLocation = false
+        pendingLocationRequest = false
         isUpdatingSubject.send(false)
         
         cancelLocationTimeout()
@@ -230,12 +222,15 @@ class LocationService: NSObject, LocationServiceProtocol, CLLocationManagerDeleg
     
     /// Check if location services are available and authorized
     func checkLocationAvailability() -> AnyPublisher<Bool, Never> {
-        return authorizationStatusPublisher
-            .map { status in
-                return CLLocationManager.locationServicesEnabled() &&
-                       (status == .authorizedWhenInUse || status == .authorizedAlways)
-            }
-            .eraseToAnyPublisher()
+        // Combine both 2 publishers without direct check
+        return Publishers.CombineLatest(
+            authorizationStatusPublisher,
+            isLocationServicesEnabledPublisher
+        )
+        .map { authStatus, isEnabled in
+            return isEnabled && (authStatus == .authorizedWhenInUse || authStatus == .authorizedAlways)
+        }
+        .eraseToAnyPublisher()
     }
     
     /// Get current authorization status
@@ -351,18 +346,33 @@ class LocationService: NSObject, LocationServiceProtocol, CLLocationManagerDeleg
         // Send to Combine subscribers
         authorizationSubject.send(authStatus)
         
+        // Update location services status based on authorization
+        updateLocationServicesStatus(for: status)
+        
         // Handle authorization changes
         switch status {
         case .authorizedWhenInUse, .authorizedAlways:
-            if isRequestingLocation {
+            // Enable background location updates if authorized always
+            if status == .authorizedAlways {
+                locationManager.allowsBackgroundLocationUpdates = true
+            }
+            
+            // Auto-start if there was a pending request
+            if pendingLocationRequest {
+                pendingLocationRequest = false
+                startUpdatingLocation()
+            } else if isRequestingLocation {
                 locationManager.startUpdatingLocation()
             }
+            
         case .denied, .restricted:
             stopUpdatingLocation()
             locationSubject.send(completion: .failure(.permissionDenied))
+            
         case .notDetermined:
             // Wait for user decision
             break
+            
         @unknown default:
             break
         }
@@ -385,42 +395,27 @@ class LocationService: NSObject, LocationServiceProtocol, CLLocationManagerDeleg
     }
 }
 
+// MARK: - Extensions (Giữ nguyên)
 extension CLLocationCoordinate2D {
-    /// Calculate distance to another coordinate
-//    func distance(to coordinate: CLLocationCoordinate2D) -> CLLocationDistance {
-//        return LocationService.distance(from: self, to: coordinate)
-//    }
-    
-    /// Check if coordinate is valid
     var isValid: Bool {
         return LocationService.isValidCoordinate(self)
     }
     
-    /// Convert to UserLocation
     func toUserLocation(timestamp: TimeInterval = Date().timeIntervalSince1970) -> UserLocation {
         return UserLocation(coordinate: self, timestamp: timestamp)
     }
-}
-
-// MARK: - CLLocationCoordinate2D Extensions
-extension CLLocationCoordinate2D {
     
-    /// Get formatted string representation
     var formattedString: String {
         return String(format: "%.5f, %.5f", latitude, longitude)
     }
 }
 
-// MARK: - UserLocation Extensions
 extension UserLocation {
-    
-    /// Check if location is expired
     func isExpired(expirationTime: TimeInterval = 72 * 60 * 60) -> Bool {
         let currentTime = Date().timeIntervalSince1970
         return (currentTime - self.timestamp) >= expirationTime
     }
     
-    /// Get formatted age string
     var ageString: String {
         let age = self.age
         
@@ -439,22 +434,17 @@ extension UserLocation {
     }
 }
 
-// MARK: - CLLocation Extensions
 extension CLLocation {
-    /// Get formatted coordinate string
     var coordinateString: String {
         return coordinate.formattedString
     }
     
-    /// Check if location is recent (within specified time)
     func isRecent(within timeInterval: TimeInterval = 300) -> Bool {
         return abs(timestamp.timeIntervalSinceNow) <= timeInterval
     }
 }
 
-// MARK: - View Extensions for Material Effect
 extension View {
-    /// Apply backdrop material effect
     func backdrop(_ color: Color) -> some View {
         self.background(color.opacity(0.1))
     }

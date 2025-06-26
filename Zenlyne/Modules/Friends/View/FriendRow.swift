@@ -10,7 +10,7 @@ import FirebaseFirestore
 import FirebaseAuth
 import Combine
 
-struct EnhancedFriendRow: View {
+struct FriendRow: View {
     let friend: User
     let hasLocation: Bool
     let isOnline: Bool
@@ -446,7 +446,7 @@ struct EnhancedFriendRow: View {
 
 // MARK: - Convenience Initializers
 
-extension EnhancedFriendRow {
+extension FriendRow {
     // Initializer without remove callback for backward compatibility
     init(
         friend: User,
@@ -477,7 +477,7 @@ struct EnhancedFriendRow_Previews: PreviewProvider {
         )
         
         List {
-            EnhancedFriendRow(
+            FriendRow(
                 friend: sampleFriend,
                 hasLocation: true,
                 isOnline: true,
@@ -491,7 +491,7 @@ struct EnhancedFriendRow_Previews: PreviewProvider {
                 }
             )
             
-            EnhancedFriendRow(
+            FriendRow(
                 friend: sampleFriend,
                 hasLocation: false,
                 isOnline: false,

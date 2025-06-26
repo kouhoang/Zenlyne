@@ -2,7 +2,7 @@
 //  FriendLocationGrouper.swift
 //  Zenlyne
 //
-//  Updated with smart clustering and same-location handling
+//  Created by kou on 4/6/25.
 //
 
 import Foundation
@@ -13,7 +13,7 @@ import Combine
 enum LocationGroupType {
     case single
     case cluster
-    case sameLocation // New type for users at same/very close coordinates
+    case sameLocation
 }
 
 // MARK: - Location Group Model
@@ -26,7 +26,7 @@ struct LocationGroup {
     var originalPositions: [String: CLLocationCoordinate2D] = [:]
     
     // For same location groups
-    var representativeUserId: String? // The user whose avatar represents the group
+    var representativeUserId: String?
     var sameLocationRadius: Double = 5.0 // meters
     
     mutating func generateRelativePositions(radius: Double, friendLocations: [String: UserLocation] = [:]) {

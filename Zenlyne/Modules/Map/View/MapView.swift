@@ -100,7 +100,7 @@ struct MapView: View {
                 
                 // Friend info panel
                 if let friendId = selectedFriendId, let friend = viewModel.getFriend(byId: friendId) {
-                    UpdatedFriendInfoPanel(
+                    FriendInfoPanel(
                         friend: friend,
                         location: viewModel.friendLocations[friendId],
                         onClose: {
@@ -115,7 +115,7 @@ struct MapView: View {
                     .padding(.bottom, 80)
                 }
                 
-                // Same Location Users Panel - THÊM MỚI
+                // Same Location Users Panel
                 if showSameLocationSheet && !sameLocationUsers.isEmpty {
                     SameLocationUsersPanel(
                         users: sameLocationUsers,
