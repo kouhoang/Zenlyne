@@ -28,7 +28,7 @@ struct LocationDisplayView: View {
         )
         .onTapGesture {
             withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                if let locationInfo = reverseGeocodingService.currentLocationInfo {
+                if reverseGeocodingService.currentLocationInfo != nil {
                     showFullAddress.toggle()
                     isExpanded = showFullAddress
                 }

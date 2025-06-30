@@ -93,9 +93,9 @@ struct ProfileAvatarView: View {
             .padding(.top, 10)
         }
         .photosPicker(isPresented: $showingPhotoPicker, selection: $selectedItem, matching: .images)
-        .onChange(of: selectedItem) { newItem in
+        .onChange(of: selectedItem) { oldValue, newValue in
             Task {
-                if let data = try? await newItem?.loadTransferable(type: Data.self),
+                if let data = try? await newValue?.loadTransferable(type: Data.self),
                    let image = UIImage(data: data) {
                     await MainActor.run {
                         viewModel.profileImage = image

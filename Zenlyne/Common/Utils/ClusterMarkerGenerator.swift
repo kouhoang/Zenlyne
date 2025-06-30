@@ -290,7 +290,7 @@ class ClusterMarkerGenerator: ObservableObject {
         let renderer = UIGraphicsImageRenderer(size: CGSize(width: size, height: size))
         
         return renderer.image { ctx in
-            let rectangle = CGRect(x: 0, y: 0, width: size, height: size)
+            _ = CGRect(x: 0, y: 0, width: size, height: size)
             
             // Draw shadow
             ctx.cgContext.setShadow(
@@ -360,7 +360,7 @@ class ClusterMarkerGenerator: ObservableObject {
         theme: ClusterTheme,
         size: CGFloat
     ) {
-        let rectangle = CGRect(x: 0, y: 0, width: size, height: size)
+        _ = CGRect(x: 0, y: 0, width: size, height: size)
         
         // Draw shadow
         ctx.cgContext.setShadow(
@@ -689,7 +689,7 @@ class ClusterMarkerGenerator: ObservableObject {
                 UIColor.systemGray.withAlphaComponent(0.8).cgColor
             ]
             
-            let gradient = CGGradient(
+            _ = CGGradient(
                 colorsSpace: CGColorSpaceCreateDeviceRGB(),
                 colors: colors as CFArray,
                 locations: [0.0, 1.0]

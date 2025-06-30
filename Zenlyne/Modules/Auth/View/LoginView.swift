@@ -58,14 +58,9 @@ struct LoginView: View {
                 if isLoading {
                     loadingOverlay
                 }
-                
-                // Navigation to ForgotPasswordView
-                NavigationLink(
-                    destination: ForgotPasswordView().navigationBarBackButtonHidden(false),
-                    isActive: $showForgotPassword
-                ) {
-                    EmptyView()
-                }
+            }
+            .navigationDestination(isPresented: $showForgotPassword) {
+                ForgotPasswordView()
             }
         }
         .onAppear {

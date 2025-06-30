@@ -71,7 +71,7 @@ struct LocationGroup {
         case .cluster:
             // Check if original positions are far enough apart for expansion
             let minDistance = radius * 1.5
-            var positionsAreSeparated = checkPositionsSeparation(minDistance: minDistance)
+            let positionsAreSeparated = checkPositionsSeparation(minDistance: minDistance)
             
             if positionsAreSeparated && count <= 4 {
                 // Use original positions as they are well separated

@@ -45,6 +45,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
     let locationManager = CLLocationManager()
     var firebaseService = FirebaseService()
     private var userActivityTimer: Timer?
+    private var backgroundLocationDelegate: BackgroundLocationDelegate?
     
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         
@@ -176,21 +177,29 @@ class AppDelegate: NSObject, UIApplicationDelegate {
     }
     
     func updateLocationInBackground(userId: String, completion: @escaping () -> Void) {
-        // Get the current location
-        locationManager.desiredAccuracy = kCLLocationAccuracyHundredMeters // Lower accuracy for background
-        locationManager.requestLocation()
-        
-        // Create a timeout
-        let timer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: false) { _ in
-            completion()
+            // Get the current location
+            locationManager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+            locationManager.requestLocation()
+            
+            // Create a timeout
+            let timer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: false) { _ in
+                completion()
+            }
+            
+            // Create and store the delegate with strong reference
+            backgroundLocationDelegate = BackgroundLocationDelegate(
+                userId: userId,
+                firebaseService: firebaseService
+            ) { [weak self] in
+                timer.invalidate()
+                completion()
+                // Clear the delegate after completion
+                self?.backgroundLocationDelegate = nil
+            }
+            
+            // Set up location manager callback
+            locationManager.delegate = backgroundLocationDelegate
         }
-        
-        // Set up location manager callback
-        locationManager.delegate = BackgroundLocationDelegate(userId: userId, firebaseService: firebaseService) {
-            timer.invalidate()
-            completion()
-        }
-    }
     
     func scheduleLocationCleanUp() {
         let timer = Timer.scheduledTimer(withTimeInterval: 6 * 60 * 60, repeats: true) { [weak self] _ in

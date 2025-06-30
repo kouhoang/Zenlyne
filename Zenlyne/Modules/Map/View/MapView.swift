@@ -539,22 +539,29 @@ struct MapView: View {
             .store(in: &cancellables)
     }
     
+    @MainActor
     private func loadCurrentUserAvatar() {
         guard let currentUserId = Auth.auth().currentUser?.uid else { return }
         
-        let firebaseService = FirebaseService()
-        firebaseService.getUserAvatar(userId: currentUserId) { avatarUrl in
-            DispatchQueue.main.async {
-                if let avatarUrl = avatarUrl {
-                    print("DEBUG: Loaded current user avatar: \(avatarUrl)")
-                    self.viewModel.currentUser.avatarUrl = avatarUrl
-                    self.viewModel.currentUser.profileImageUrl = avatarUrl
-                } else {
-                    print("DEBUG: No avatar found for current user")
+        Task {
+            let firebaseService = FirebaseService()
+            
+            let avatarUrl = await withCheckedContinuation { continuation in
+                firebaseService.getUserAvatar(userId: currentUserId) { url in
+                    continuation.resume(returning: url)
                 }
+            }
+            
+            if let avatarUrl = avatarUrl {
+                print("DEBUG: Loaded current user avatar: \(avatarUrl)")
+                viewModel.currentUser.avatarUrl = avatarUrl
+                viewModel.currentUser.profileImageUrl = avatarUrl
+            } else {
+                print("DEBUG: No avatar found for current user")
             }
         }
     }
+
     
     private func setupNotificationListeners() {
         // Set up a listener to select friends on the map
@@ -625,27 +632,28 @@ struct MapView: View {
             
             print("DEBUG: Same-location group selected with \(friendIds.count) friends")
             
-            // Get the users at this location
-            let usersAtLocation = self.viewModel.friends.filter { friendIds.contains($0.id) }
-            
-            // Set the data for the sheet
-            self.sameLocationUsers = usersAtLocation
-            self.sameLocationCoordinate = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
-            
-            // Show the sheet
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                self.showSameLocationSheet = true
-            }
-            
-            // Optional: Focus on the location (but don't interrupt user)
-            if !self.isUserInteractingWithMap {
-                self.viewModel.cameraOptions = CameraOptions(
-                    center: CLLocationCoordinate2D(latitude: latitude, longitude: longitude),
-                    zoom: 15.0,
-                    bearing: 0,
-                    pitch: 0
-                )
-                self.viewModel.shouldUpdateCamera = true
+            Task { @MainActor in
+                let usersAtLocation = self.viewModel.friends.filter { friendIds.contains($0.id) }
+                
+                // Set the data for the sheet
+                self.sameLocationUsers = usersAtLocation
+                self.sameLocationCoordinate = CLLocationCoordinate2D(latitude: latitude, longitude: longitude)
+                
+                // Show the sheet
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                    self.showSameLocationSheet = true
+                }
+                
+                // Optional: Focus on the location (but don't interrupt user)
+                if !self.isUserInteractingWithMap {
+                    self.viewModel.cameraOptions = CameraOptions(
+                        center: CLLocationCoordinate2D(latitude: latitude, longitude: longitude),
+                        zoom: 15.0,
+                        bearing: 0,
+                        pitch: 0
+                    )
+                    self.viewModel.shouldUpdateCamera = true
+                }
             }
         }
         
@@ -682,7 +690,7 @@ struct MapView: View {
         ) { notification in
             guard let userInfo = notification.userInfo,
                   let clusterId = userInfo["clusterId"] as? String,
-                  let positions = userInfo["positions"] as? [String: CLLocationCoordinate2D],
+                  let _ = userInfo["positions"] as? [String: CLLocationCoordinate2D],
                   let progress = userInfo["progress"] as? Double,
                   let type = userInfo["type"] as? String else {
                 return
@@ -784,18 +792,21 @@ struct MapView: View {
             return
         }
         
-        if userId == Auth.auth().currentUser?.uid {
-            print("DEBUG: Updating current user avatar: \(avatarUrl)")
-            viewModel.currentUser.avatarUrl = avatarUrl
-            viewModel.currentUser.profileImageUrl = avatarUrl
-        }
-        
-        if let friendIndex = viewModel.friends.firstIndex(where: { $0.id == userId }) {
-            print("DEBUG: Updating friend avatar for \(viewModel.friends[friendIndex].fullName): \(avatarUrl)")
-            viewModel.friends[friendIndex].avatarUrl = avatarUrl
-            viewModel.friends[friendIndex].profileImageUrl = avatarUrl
+        Task { @MainActor in
+            if userId == Auth.auth().currentUser?.uid {
+                print("DEBUG: Updating current user avatar: \(avatarUrl)")
+                self.viewModel.currentUser.avatarUrl = avatarUrl
+                self.viewModel.currentUser.profileImageUrl = avatarUrl
+            }
+            
+            if let friendIndex = self.viewModel.friends.firstIndex(where: { $0.id == userId }) {
+                print("DEBUG: Updating friend avatar for \(self.viewModel.friends[friendIndex].fullName): \(avatarUrl)")
+                self.viewModel.friends[friendIndex].avatarUrl = avatarUrl
+                self.viewModel.friends[friendIndex].profileImageUrl = avatarUrl
+            }
         }
     }
+
     
     private func checkPendingFriendRequests() {
         guard let userId = authViewModel.currentUser?.id else { return }

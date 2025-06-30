@@ -88,16 +88,18 @@ class MarkerAnimationManager {
     }
     
     // Apply bounce animation to marker
-    private func applyBounceToMarker(
+    func applyBounceToMarker(
         annotationManager: PointAnnotationManager,
         annotationId: String,
         bounceValue: Double
     ) {
         // Find the annotation
-        guard let annotationIndex = annotationManager.annotations.firstIndex(where: { $0.id == annotationId }),
-              var annotation = annotationManager.annotations[annotationIndex] as? PointAnnotation else {
+        guard let annotationIndex = annotationManager.annotations.firstIndex(where: { $0.id == annotationId }) else {
             return
         }
+        
+        // Get annotation directly without casting
+        var annotation = annotationManager.annotations[annotationIndex]
         
         // Update annotation size
         annotation.iconSize = bounceValue

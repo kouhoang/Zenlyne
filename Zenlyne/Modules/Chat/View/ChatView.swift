@@ -102,12 +102,12 @@ struct ChatView: View {
                 .padding(.top, 16)
                 .padding(.bottom, 8)
             }
-            .onChange(of: viewModel.messages.count) { _ in
+            .onChange(of: viewModel.messages.count) {
                 withAnimation(.easeOut(duration: 0.3)) {
                     scrollView.scrollTo("bottom", anchor: .bottom)
                 }
             }
-            .onChange(of: scrollToBottom) { _ in
+            .onChange(of: scrollToBottom) {
                 withAnimation(.easeOut(duration: 0.3)) {
                     scrollView.scrollTo("bottom", anchor: .bottom)
                 }

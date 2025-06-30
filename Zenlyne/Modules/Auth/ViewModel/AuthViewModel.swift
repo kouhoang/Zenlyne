@@ -15,7 +15,6 @@ protocol AuthentiicationFormProtocol {
     var formIsValid: Bool { get }
 }
 
-
 @MainActor
 class AuthViewModel: ObservableObject {
     // MARK: - Published Properties (Giữ nguyên để tương thích)
@@ -28,6 +27,9 @@ class AuthViewModel: ObservableObject {
     // MARK: - Combine Publishers
     @Published private var authState: AuthState = .idle
     private var cancellables = Set<AnyCancellable>()
+    
+    // MARK: - Auth State Listener Handle
+    private var authStateListenerHandle: AuthStateDidChangeListenerHandle?
     
     // MARK: - Computed Properties
     var authStatePublisher: Published<AuthState>.Publisher { $authState }
@@ -60,10 +62,18 @@ class AuthViewModel: ObservableObject {
         }
     }
     
+    // MARK: - Deinit
+    deinit {
+        // Remove auth state listener when view model is deallocated
+        if let handle = authStateListenerHandle {
+            Auth.auth().removeStateDidChangeListener(handle)
+        }
+    }
+    
     // MARK: - Private Methods
     private func setupAuthStateListener() {
-        // Listen to Firebase Auth state changes
-        Auth.auth().addStateDidChangeListener { [weak self] _, user in
+        // Lưu trữ listener handle để có thể remove sau này
+        authStateListenerHandle = Auth.auth().addStateDidChangeListener { [weak self] _, user in
             Task { @MainActor in
                 self?.userSessions = user
                 if user != nil {
@@ -87,16 +97,8 @@ class AuthViewModel: ObservableObject {
             await fetchUser()
             self.isSignedOut = false
             
-            // Set user as online after login
-            let db = Firestore.firestore()
-            db.collection("users").document(result.user.uid).updateData([
-                "isOnline": true,
-                "lastSeen": FieldValue.serverTimestamp()
-            ]) { error in
-                if let error = error {
-                    print("DEBUG: Error setting user online after login: \(error.localizedDescription)")
-                }
-            }
+            // Set user as online after login - Sử dụng async version
+            await setUserOnlineStatus(userId: result.user.uid, isOnline: true)
             
             if let user = currentUser {
                 authState = .authenticated(user)
@@ -117,13 +119,16 @@ class AuthViewModel: ObservableObject {
             self.userSessions = result.user
             
             let user = User(id: result.user.uid, fullName: fullName, email: email)
-            let userData: [String: Any] = [
-                "id": user.id,
-                "fullName": user.fullName,
-                "email": user.email,
-                "friendIds": []
-            ]
-            try await Firestore.firestore().collection("users").document(user.id).setData(userData)
+            
+            // Tạo userData trước khi vào async context để tránh sendable issues
+            let userData = UserData(
+                id: user.id,
+                fullName: user.fullName,
+                email: user.email,
+                friendIds: []
+            )
+            
+            try await Firestore.firestore().collection("users").document(user.id).setData(userData.toDictionary())
             
             let changeRequest = result.user.createProfileChangeRequest()
             changeRequest.displayName = fullName
@@ -160,36 +165,48 @@ class AuthViewModel: ObservableObject {
     }
     
     func signOut() {
-        do {
-            if let currentUserId = Auth.auth().currentUser?.uid {
-                let db = Firestore.firestore()
-                
-                let semaphore = DispatchSemaphore(value: 0)
-                
-                db.collection("users").document(currentUserId).updateData([
-                    "isOnline": false,
-                    "lastSeen": FieldValue.serverTimestamp()
-                ]) { error in
-                    if let error = error {
-                        print("DEBUG: Error setting user offline on logout: \(error.localizedDescription)")
-                    } else {
-                        print("DEBUG: Successfully set user offline on logout")
-                    }
-                    semaphore.signal()
+        Task {
+            do {
+                if let currentUserId = Auth.auth().currentUser?.uid {
+                    // Sử dụng async version thay vì synchronous version
+                    await setUserOnlineStatus(userId: currentUserId, isOnline: false)
                 }
                 
-                _ = semaphore.wait(timeout: .now() + 1.0)
+                try Auth.auth().signOut()
+                
+                // Đảm bảo UI updates trên main actor
+                await MainActor.run {
+                    self.userSessions = nil
+                    self.currentUser = nil
+                    self.isSignedOut = true
+                    self.authState = .unauthenticated
+                }
+                
+            } catch {
+                print("DEBUG: Failed to sign out with error \(error.localizedDescription)")
+                await MainActor.run {
+                    self.authState = .error(error.localizedDescription)
+                }
             }
+        }
+    }
+    
+    // MARK: - Helper Methods
+    
+    private func setUserOnlineStatus(userId: String, isOnline: Bool) async {
+        do {
+            // Tạo updateData struct để tránh sendable issues
+            let updateData = OnlineStatusUpdate(isOnline: isOnline)
             
-            try Auth.auth().signOut()
-            self.userSessions = nil
-            self.currentUser = nil
-            self.isSignedOut = true
-            self.authState = .unauthenticated
+            try await Firestore.firestore()
+                .collection("users")
+                .document(userId)
+                .updateData(updateData.toDictionary())
+            
+            print("DEBUG: Successfully set user \(isOnline ? "online" : "offline")")
             
         } catch {
-            print("DEBUG: Failed to sign out with error \(error.localizedDescription)")
-            authState = .error(error.localizedDescription)
+            print("DEBUG: Error setting user online status: \(error.localizedDescription)")
         }
     }
     
@@ -205,9 +222,9 @@ class AuthViewModel: ObservableObject {
             changeRequest.displayName = newName
             try await changeRequest.commitChanges()
             
-            try await Firestore.firestore().collection("users").document(currentUser.uid).updateData([
-                "fullName": newName
-            ])
+            // Sử dụng sendable struct thay vì dictionary literal
+            let nameUpdate = UserNameUpdate(fullName: newName)
+            try await Firestore.firestore().collection("users").document(currentUser.uid).updateData(nameUpdate.toDictionary())
             
             await fetchUser()
             
@@ -292,11 +309,14 @@ class AuthViewModel: ObservableObject {
                         let newUser = User(id: uid, fullName: fullName, email: email)
                         
                         // Migrate data to 'users' collection
-                        try await Firestore.firestore().collection("users").document(uid).setData([
-                            "id": newUser.id,
-                            "fullName": newUser.fullName,
-                            "email": newUser.email
-                        ])
+                        let migrationData = UserData(
+                            id: newUser.id,
+                            fullName: newUser.fullName,
+                            email: newUser.email,
+                            friendIds: []
+                        )
+                        
+                        try await Firestore.firestore().collection("users").document(uid).setData(migrationData.toDictionary())
                         self.currentUser = newUser
                         authState = .authenticated(newUser)
                         print("DEBUG: Migrated user data from 'user' to 'users' collection")
@@ -308,11 +328,14 @@ class AuthViewModel: ObservableObject {
                                           fullName: user.displayName ?? "User",
                                           email: user.email ?? "")
                         
-                        try await Firestore.firestore().collection("users").document(uid).setData([
-                            "id": newUser.id,
-                            "fullName": newUser.fullName,
-                            "email": newUser.email
-                        ])
+                        let newUserData = UserData(
+                            id: newUser.id,
+                            fullName: newUser.fullName,
+                            email: newUser.email,
+                            friendIds: []
+                        )
+                        
+                        try await Firestore.firestore().collection("users").document(uid).setData(newUserData.toDictionary())
                         self.currentUser = newUser
                         authState = .authenticated(newUser)
                         print("DEBUG: Created new user document based on Auth info")
@@ -330,39 +353,39 @@ class AuthViewModel: ObservableObject {
         }
     }
     
-    func updateUserProfileImage(imageUrl: String) {
+    func updateUserProfileImage(imageUrl: String) async {
         guard let uid = self.userSessions?.uid else { return }
         
         let userRef = Firestore.firestore().collection("users").document(uid)
-        userRef.updateData(["profileImageUrl": imageUrl]) { [weak self] error in
-            if let error = error {
-                print("DEBUG: Failed to update user data with error: \(error.localizedDescription)")
-                
-                if let currentUser = self?.currentUser {
-                    let userData: [String: Any] = [
-                        "id": currentUser.id,
-                        "fullName": currentUser.fullName,
-                        "email": currentUser.email,
-                        "profileImageUrl": imageUrl
-                    ]
-                    
-                    userRef.setData(userData, merge: true) { error in
-                        if let error = error {
-                            print("DEBUG: Failed to set user data with error: \(error.localizedDescription)")
-                        } else {
-                            print("DEBUG: Successfully set user data with image URL")
-                            Task { @MainActor in
-                                await self?.fetchUser()
-                            }
-                        }
-                    }
-                }
-                return
-            }
-            
+        
+        // Tạo update data struct để tránh sendable issues
+        let profileUpdate = ProfileImageUpdate(profileImageUrl: imageUrl)
+        
+        do {
+            try await userRef.updateData(profileUpdate.toDictionary())
             print("DEBUG: Successfully updated user data with image URL")
-            Task { @MainActor in
-                await self?.fetchUser()
+            await fetchUser()
+            
+        } catch {
+            print("DEBUG: Failed to update user data with error: \(error.localizedDescription)")
+            
+            // Fallback: create document if it doesn't exist
+            if let currentUser = self.currentUser {
+                let userData = UserData(
+                    id: currentUser.id,
+                    fullName: currentUser.fullName,
+                    email: currentUser.email,
+                    profileImageUrl: imageUrl,
+                    friendIds: []
+                )
+                
+                do {
+                    try await userRef.setData(userData.toDictionary(), merge: true)
+                    print("DEBUG: Successfully set user data with image URL")
+                    await fetchUser()
+                } catch {
+                    print("DEBUG: Failed to set user data with error: \(error.localizedDescription)")
+                }
             }
         }
     }
@@ -382,14 +405,14 @@ class AuthViewModel: ObservableObject {
             if !docSnapshot.exists {
                 print("DEBUG: Creating missing user document for \(currentUser.email ?? "unknown email")")
                 
-                let userData: [String: Any] = [
-                    "id": currentUser.uid,
-                    "fullName": currentUser.displayName ?? "User",
-                    "email": currentUser.email ?? "",
-                    "friendIds": []
-                ]
+                let userData = UserData(
+                    id: currentUser.uid,
+                    fullName: currentUser.displayName ?? "User",
+                    email: currentUser.email ?? "",
+                    friendIds: []
+                )
                 
-                try await docRef.setData(userData)
+                try await docRef.setData(userData.toDictionary())
                 print("DEBUG: Successfully created user document")
                 
                 await fetchUser()
@@ -402,6 +425,83 @@ class AuthViewModel: ObservableObject {
         }
     }
 }
+
+// MARK: - Sendable Data Structures
+
+struct UserData: Sendable {
+    let id: String
+    let fullName: String
+    let email: String
+    let profileImageUrl: String?
+    let avatarUrl: String?
+    let friendIds: [String]
+    
+    init(id: String, fullName: String, email: String, profileImageUrl: String? = nil, avatarUrl: String? = nil, friendIds: [String] = []) {
+        self.id = id
+        self.fullName = fullName
+        self.email = email
+        self.profileImageUrl = profileImageUrl
+        self.avatarUrl = avatarUrl
+        self.friendIds = friendIds
+    }
+    
+    func toDictionary() -> [String: Any] {
+        var dict: [String: Any] = [
+            "id": id,
+            "fullName": fullName,
+            "email": email,
+            "friendIds": friendIds
+        ]
+        
+        if let profileImageUrl = profileImageUrl {
+            dict["profileImageUrl"] = profileImageUrl
+        }
+        
+        if let avatarUrl = avatarUrl {
+            dict["avatarUrl"] = avatarUrl
+        }
+        
+        return dict
+    }
+}
+
+struct OnlineStatusUpdate: Sendable {
+    let isOnline: Bool
+    let timestamp: FieldValue
+    
+    init(isOnline: Bool) {
+        self.isOnline = isOnline
+        self.timestamp = FieldValue.serverTimestamp()
+    }
+    
+    func toDictionary() -> [String: Any] {
+        return [
+            "isOnline": isOnline,
+            "lastSeen": timestamp
+        ]
+    }
+}
+
+struct ProfileImageUpdate: Sendable {
+    let profileImageUrl: String
+    
+    func toDictionary() -> [String: Any] {
+        return [
+            "profileImageUrl": profileImageUrl
+        ]
+    }
+}
+
+struct UserNameUpdate: Sendable {
+    let fullName: String
+    
+    func toDictionary() -> [String: Any] {
+        return [
+            "fullName": fullName
+        ]
+    }
+}
+
 
 // MARK: - Combine Convenience Extensions
 extension AuthViewModel {

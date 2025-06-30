@@ -14,75 +14,6 @@ import FirebaseFirestore
 import FirebaseDatabase
 import Combine
 
-// MARK: - Map Style Options (same as before)
-enum MapStyle {
-    case streets
-    case satellite
-    case satelliteStreets
-    
-    var mapboxStyle: StyleURI {
-        switch self {
-        case .streets:
-            return .streets
-        case .satellite:
-            return .satellite
-        case .satelliteStreets:
-            return .satelliteStreets
-        }
-    }
-    
-    var displayName: String {
-        switch self {
-        case .streets:
-            return "Standard"
-        case .satellite:
-            return "Satellite"
-        case .satelliteStreets:
-            return "Hybrid"
-        }
-    }
-    
-    var iconName: String {
-        switch self {
-        case .streets:
-            return "map"
-        case .satellite:
-            return "globe"
-        case .satelliteStreets:
-            return "building.2"
-        }
-    }
-    
-    func nextStyle() -> MapStyle {
-        switch self {
-        case .streets:
-            return .satellite
-        case .satellite:
-            return .satelliteStreets
-        case .satelliteStreets:
-            return .streets
-        }
-    }
-}
-
-// MARK: - Location States (same as before)
-enum LocationTrackingState {
-    case idle
-    case requesting
-    case tracking
-    case denied
-    case error(String)
-}
-
-// MARK: - Camera Update Reason
-enum CameraUpdateReason {
-    case userLocation
-    case friendLocation(String)
-    case clusterFocus(String)
-    case userInitiated
-    case initialLoad
-    case none
-}
 
 @MainActor
 class LocationViewModel: NSObject, ObservableObject {
@@ -214,8 +145,10 @@ class LocationViewModel: NSObject, ObservableObject {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            self?.isUserInteractingWithMap = true
-            print("DEBUG: User interaction with map started")
+            Task { @MainActor in
+                self?.isUserInteractingWithMap = true
+                print("DEBUG: User interaction with map started")
+            }
         }
         
         NotificationCenter.default.addObserver(
@@ -224,7 +157,8 @@ class LocationViewModel: NSObject, ObservableObject {
             queue: .main
         ) { [weak self] _ in
             // Delay ending interaction to prevent immediate camera updates
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(1.0))
                 self?.isUserInteractingWithMap = false
                 print("DEBUG: User interaction with map ended")
             }
@@ -280,11 +214,9 @@ class LocationViewModel: NSObject, ObservableObject {
     }
     
     private func setupPeriodicCleanup() {
-        Task { @MainActor in
-            cleanupTimer = Timer.scheduledTimer(withTimeInterval: 30 * 60, repeats: true) { [weak self] _ in
-                Task { @MainActor in
-                    self?.cleanupExpiredLocations()
-                }
+        cleanupTimer = Timer.scheduledTimer(withTimeInterval: 30 * 60, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.cleanupExpiredLocations()
             }
         }
     }
@@ -340,19 +272,21 @@ class LocationViewModel: NSObject, ObservableObject {
         cameraUpdateDebounceTimer?.invalidate()
         
         cameraUpdateDebounceTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
-            guard let self = self else { return }
-            
-            // Double-check user is not interacting
-            guard !self.isUserInteractingWithMap else {
-                print("DEBUG: Camera update cancelled - user started interacting")
-                return
+            Task { @MainActor [weak self] in
+                guard let self = self else { return }
+                
+                // Double-check user is not interacting
+                guard !self.isUserInteractingWithMap else {
+                    print("DEBUG: Camera update cancelled - user started interacting")
+                    return
+                }
+                
+                self.lastCameraUpdateReason = reason
+                self.lastCameraUpdate = Date()
+                self.shouldUpdateCamera = true
+                
+                print("DEBUG: Camera update triggered for reason: \(reason)")
             }
-            
-            self.lastCameraUpdateReason = reason
-            self.lastCameraUpdate = Date()
-            self.shouldUpdateCamera = true
-            
-            print("DEBUG: Camera update triggered for reason: \(reason)")
         }
     }
     
@@ -480,8 +414,8 @@ class LocationViewModel: NSObject, ObservableObject {
     }
     
     func updateLocationInfo(for coordinate: CLLocationCoordinate2D) {
-            reverseGeocodingService.reverseGeocode(coordinate: coordinate)
-        }
+        reverseGeocodingService.reverseGeocode(coordinate: coordinate)
+    }
     
     func stopTrackingLocation() {
         print("DEBUG: Stopping location tracking")
@@ -548,8 +482,10 @@ class LocationViewModel: NSObject, ObservableObject {
         }
     }
     
-    private nonisolated func stopMonitoringFriends() {
-        Task { @MainActor in
+    private func stopMonitoringFriends() {
+        Task { @MainActor [weak self] in
+            guard let self = self else { return }
+            
             // Cancel all Combine subscriptions
             cancellables.removeAll()
             
@@ -572,7 +508,6 @@ class LocationViewModel: NSObject, ObservableObject {
     }
     
     // MARK: - Include all remaining methods from original LocationViewModel
-    // (Copy all the existing methods for friend observations, clustering, etc.)
     
     func startObservingFriendLocations(friendIds: [String]) {
         guard !friendIds.isEmpty else {
@@ -587,8 +522,6 @@ class LocationViewModel: NSObject, ObservableObject {
         }
         
         firebaseService.observeFriendLocations(userIds: friendIds) { [weak self] locations in
-            guard let self = self else { return }
-            
             let currentTime = Date().timeIntervalSince1970
             let expirationTime: TimeInterval = 72 * 60 * 60 // 72 hours
             
@@ -598,8 +531,8 @@ class LocationViewModel: NSObject, ObservableObject {
             
             print("DEBUG: Received \(validLocations.count) valid friend locations")
             
-            Task { @MainActor in
-                self.friendLocations = validLocations
+            Task { @MainActor [weak self] in
+                self?.friendLocations = validLocations
             }
         }
         
@@ -613,9 +546,9 @@ class LocationViewModel: NSObject, ObservableObject {
         
         for friendId in friendIds {
             firebaseService.observeUserOnlineStatus(userId: friendId) { [weak self] isOnline in
-                guard let self = self else { return }
-                
-                Task { @MainActor in
+                Task { @MainActor [weak self] in
+                    guard let self = self else { return }
+                    
                     if let index = self.friends.firstIndex(where: { $0.id == friendId }) {
                         self.friends[index].isOnline = isOnline
                         
@@ -624,8 +557,11 @@ class LocationViewModel: NSObject, ObservableObject {
                             database.child("users").child(friendId).child("lastSeen").observeSingleEvent(of: .value) { snapshot in
                                 if let timestamp = snapshot.value as? Double {
                                     let date = Date(timeIntervalSince1970: timestamp / 1000)
-                                    Task { @MainActor in
-                                        self.friends[index].lastSeen = date
+                                    Task { @MainActor [weak self] in
+                                        guard let self = self else { return }
+                                        if let index = self.friends.firstIndex(where: { $0.id == friendId }) {
+                                            self.friends[index].lastSeen = date
+                                        }
                                     }
                                 }
                             }
@@ -680,17 +616,37 @@ class LocationViewModel: NSObject, ObservableObject {
     // MARK: - Cleanup
     
     deinit {
-        Task { @MainActor in
-            cleanupTimer?.invalidate()
-            cameraUpdateDebounceTimer?.invalidate()
-        }
+        cleanupTimer?.invalidate()
+        cameraUpdateDebounceTimer?.invalidate()
         NotificationCenter.default.removeObserver(self)
     }
 }
 
-// MARK: - LocationServiceDelegate (same as before)
+// MARK: - LocationServiceDelegate
 extension LocationViewModel: LocationServiceDelegate {
-    func locationService(_ service: LocationServiceProtocol, didUpdateLocation location: CLLocation) {
+    
+    // Create nonisolated wrapper methods to satisfy protocol requirements
+    nonisolated func locationService(_ service: LocationServiceProtocol, didUpdateLocation location: CLLocation) {
+        Task { @MainActor in
+            handleLocationUpdate(location)
+        }
+    }
+    
+    nonisolated func locationService(_ service: LocationServiceProtocol, didFailWithError error: Error) {
+        Task { @MainActor in
+            handleLocationError(error)
+        }
+    }
+    
+    nonisolated func locationService(_ service: LocationServiceProtocol, didChangeAuthorization status: CLAuthorizationStatus) {
+        Task { @MainActor in
+            handleAuthorizationChange(status)
+        }
+    }
+    
+    // Main actor isolated implementations
+    @MainActor
+    private func handleLocationUpdate(_ location: CLLocation) {
         userLocation = location.coordinate
         locationTrackingState = .tracking
         
@@ -702,12 +658,14 @@ extension LocationViewModel: LocationServiceDelegate {
         }
     }
     
-    func locationService(_ service: LocationServiceProtocol, didFailWithError error: Error) {
+    @MainActor
+    private func handleLocationError(_ error: Error) {
         print("DEBUG: Location error: \(error.localizedDescription)")
         locationTrackingState = .error(error.localizedDescription)
     }
     
-    func locationService(_ service: LocationServiceProtocol, didChangeAuthorization status: CLAuthorizationStatus) {
+    @MainActor
+    private func handleAuthorizationChange(_ status: CLAuthorizationStatus) {
         print("DEBUG: Location authorization status changed: \(status.rawValue)")
         
         switch status {
@@ -723,6 +681,7 @@ extension LocationViewModel: LocationServiceDelegate {
         }
     }
 }
+
 
 // MARK: - Combine Publishers (enhanced)
 extension LocationViewModel {

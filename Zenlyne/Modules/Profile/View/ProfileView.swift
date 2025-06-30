@@ -83,13 +83,26 @@ struct ProfileView: View {
     }
 }
 
+// MARK: - Sendable Data Structures
+struct FriendRemovalUpdate: Sendable {
+    let userIdToRemove: String
+    
+    func toDictionary() -> [String: Any] {
+        return [
+            "friendIds": FieldValue.arrayRemove([userIdToRemove])
+        ]
+    }
+}
+
 // MARK: - Account Deletion Service
 actor AccountDeletionService {
     static let shared = AccountDeletionService()
     
     func deleteAccount(completion: @escaping (Result<Void, Error>) -> Void) async {
         guard let user = Auth.auth().currentUser else {
-            completion(.failure(ProfileError.authenticationFailed("No user found")))
+            await MainActor.run {
+                completion(.failure(ProfileError.authenticationFailed("No user found")))
+            }
             return
         }
         
@@ -104,9 +117,12 @@ actor AccountDeletionService {
                 .whereField("friendIds", arrayContains: user.uid)
                 .getDocuments()
             
+            // Create sendable update data before using
+            let friendRemovalUpdate = FriendRemovalUpdate(userIdToRemove: user.uid)
+            
             for document in friendsSnapshot.documents {
                 try await db.collection("users").document(document.documentID)
-                    .updateData(["friendIds": FieldValue.arrayRemove([user.uid])])
+                    .updateData(friendRemovalUpdate.toDictionary())
             }
             
             // 3. Delete authentication account

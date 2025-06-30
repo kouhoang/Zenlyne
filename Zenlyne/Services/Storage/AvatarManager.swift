@@ -145,7 +145,7 @@ class AvatarManager: ObservableObject {
         currentUserAvatarUrl = nil
         
         // Stop all observers
-        for (_, listener) in avatarObservers {
+        for (_, _) in avatarObservers {
             // Remove listeners
         }
         avatarObservers.removeAll()

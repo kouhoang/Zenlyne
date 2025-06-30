@@ -59,8 +59,8 @@ struct AvatarView: View {
                 imageLoader.loadImage(from: avatarUrl)
             }
         }
-        .onChange(of: user?.profileImageUrl) { newUrl in
-            if let url = newUrl {
+        .onChange(of: user?.profileImageUrl) { oldValue, newValue in
+            if let url = newValue {
                 imageLoader.loadImage(from: url)
             } else {
                 imageLoader.image = nil
@@ -84,7 +84,7 @@ class ImageLoader: ObservableObject {
         guard let url = URL(string: urlString) else { return }
         
         URLSession.shared.dataTask(with: url) { [weak self] data, _, error in
-            guard let data = data, 
+            guard let data = data,
                   let image = UIImage(data: data),
                   error == nil else { return }
             
